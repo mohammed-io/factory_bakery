@@ -1,5 +1,6 @@
 require 'ffaker'
 require 'factory_bakery'
+require_relative 'generator_registry'
 
 module FactoryBakery
   class FFakerGenerator

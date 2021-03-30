@@ -1,23 +1,38 @@
 module FactoryBakery
   class FactoryBakery
-    self.class.attr_accessor :generator
-    self.generator = FFakerGenerator.new
+    def self.instance
+      @instance ||= new
+    end
 
-    attr_writer :generator
+    self.class.attr_accessor :first_generator
+    self.class.attr_accessor :second_generator
 
-    def generator
-      @generator || self.class.generator
+    self.first_generator = FFakerGenerator.new
+    attr_writer :first_generator, :second_generator
+    def first_generator
+      @first_generator || self.class.first_generator
+    end
+
+    def second_generator
+      @second_generator || self.class.second_generator
     end
 
     def bake(model, custom_values = {}, &block)
       klass = model.is_a?(Class) ? model : model.class
-      params = make_fake_params(klass.attribute_types)
 
       if model.is_a? Class
-        puts params
-        model.new(**params, **custom_values, &block)
+        model.new(
+          **make_fake_params(klass.attribute_types, first_generator),
+          **make_fake_params(klass.attribute_types, second_generator),
+          **custom_values, &block
+        )
       else
-        model.assign_attributes(**params, **custom_values, **model.attributes)
+        model.assign_attributes(
+          **make_fake_params(klass.attribute_types, first_generator),
+          **make_fake_params(klass.attribute_types, second_generator),
+          **custom_values,
+          **model.attributes
+        )
         model
       end
     end
@@ -29,7 +44,9 @@ module FactoryBakery
       result
     end
 
-    def make_fake_params(attributes)
+    def make_fake_params(attributes, generator)
+      return {} unless generator
+
       attributes
         .reject { |key| key.to_s == 'id' }
         .map do |key, attr|
