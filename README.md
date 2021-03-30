@@ -9,7 +9,7 @@ TODO: Delete this and the text above, and describe your gem
 Add this line to your application's Gemfile:
 
 ```ruby
-gem 'factory_bakery', git: 'https://github.com/mohammed-io/factory_bakery'
+gem 'factory_bakery', git: 'git://github.com/mohammed-io/factory_bakery.git'
 ```
 
 And then execute:
