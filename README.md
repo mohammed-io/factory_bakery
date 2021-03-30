@@ -24,6 +24,9 @@ Or install it yourself as (**Coming soon**):
 
     $ gem install factory_bakery
 
+## Limitation
+This gem works only for the Active Record models that are backed by database. Because it depends on the `MODEL_CLASS.attribute_types` method which is available only on the models.
+
 ## Usage
 
 ### Using The Default Generator
@@ -61,9 +64,10 @@ After checking out the repo, run `bin/setup` to install dependencies. Then, run 
 To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
 
 ## Todos
-* [ ] Write some test
-* [ ] Use symbols along with Model classes
-* [ ] How to write generators?
+* [ ] Write some test.
+* [ ] Smart handle of the relations.
+* [ ] Use symbols along with Model classes.
+* [ ] How to write custom generators?
 * [ ] Support non-active record models?
 
 ## Contributing
