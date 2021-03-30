@@ -3,7 +3,7 @@ require 'factory_bakery'
 
 module FactoryBakery
   class FFakerGenerator
-    include FactoryBakery::GeneratorRegistry
+    include GeneratorRegistry
 
     def call(attr_descriptor)
       registry[attr_descriptor.type].try(:call, attr_descriptor)

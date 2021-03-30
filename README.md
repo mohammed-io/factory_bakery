@@ -16,7 +16,7 @@ And then execute:
 
     $ bundle install
 
-Or install it yourself as:
+Or install it yourself as (Coming soon):
 
     $ gem install factory_bakery
 
