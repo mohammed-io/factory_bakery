@@ -55,7 +55,17 @@ Then you should get a result like this:
 #<User id: nil, email: "john@example.com", first_name: "pw7meuwq16zinefai0qhq8btqg8zqe", last_name: "qthti7af61n5rlvb8njg3ygncmsofz", phone: "vs8e4lpy63sdv6u", address: "agseb6fjt51who6yel0o6h0t7b1ndr3abn7u0yyc">
 ```
 
-The data is just gebrish at the moment. This how the basic generator works. Which can be extended or improved later.
+The data is just gibberish at the moment. This how the basic generator works. Which can be extended or improved later.
+
+### Password Hashing Note
+Because the password will be hashed, then it will take time to do the calculation, thus will make the generation slower.
+
+To skip it, simply add `password: nil` as the following:
+```ruby
+ bake(User, {email: 'john@example.com', password: nil })
+ # OR
+ bake!(User, {email: 'john@example.com', password: nil })
+```
 
 ## Development
 
