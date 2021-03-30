@@ -46,8 +46,10 @@ The time you want to make a fake model object, you can use:
 The `MODEL_CLASS` is the model that you want to fill with fake values. For instance, if you want to fill the `User` with fake data, but with a valid specific email, it can be as following:
 ```ruby
  bake(User, {email: 'john@example.com' })
+ bake(User, email: 'john@example.com') # This works as well
  # OR
  bake!(User, {email: 'john@example.com' })
+ bake!(User, email: 'john@example.com') # This works as well
 ```
 
 Then you should get a result like this:
@@ -62,9 +64,9 @@ Because the password will be hashed, then it will take time to do the calculatio
 
 To skip it, simply add `password: nil` as the following:
 ```ruby
- bake(User, {email: 'john@example.com', password: nil })
+ bake(User, email: 'john@example.com', password: nil)
  # OR
- bake!(User, {email: 'john@example.com', password: nil })
+ bake!(User, email: 'john@example.com', password: nil)
 ```
 
 ## Development
