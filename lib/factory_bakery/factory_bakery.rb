@@ -20,16 +20,18 @@ module FactoryBakery
     def bake(model, custom_values = {}, &block)
       klass = model.is_a?(Class) ? model : model.class
 
+      keys_to_skip = custom_values.keys.map(&:to_s)
+
       if model.is_a? Class
         model.new(
-          **make_fake_params(klass.attribute_types.except(*custom_values.keys), first_generator),
-          **make_fake_params(klass.attribute_types.except(*custom_values.keys), second_generator),
+          **make_fake_params(klass.attribute_types.except(*keys_to_skip), first_generator),
+          **make_fake_params(klass.attribute_types.except(*keys_to_skip), second_generator),
           **custom_values, &block
         )
       else
         model.assign_attributes(
-          **make_fake_params(klass.attribute_types.except(*custom_values.keys), first_generator),
-          **make_fake_params(klass.attribute_types.except(*custom_values.keys), second_generator),
+          **make_fake_params(klass.attribute_types.except(*keys_to_skip), first_generator),
+          **make_fake_params(klass.attribute_types.except(*keys_to_skip), second_generator),
           **custom_values,
           **model.attributes
         )
@@ -46,7 +48,7 @@ module FactoryBakery
 
     def make_fake_params(attributes, generator)
       return {} unless generator
-
+      puts attributes.count
       attributes
         .reject { |key| key.to_s == 'id' }
         .map do |key, attr|
