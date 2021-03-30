@@ -22,14 +22,14 @@ module FactoryBakery
 
       if model.is_a? Class
         model.new(
-          **make_fake_params(klass.attribute_types, first_generator),
-          **make_fake_params(klass.attribute_types, second_generator),
+          **make_fake_params(klass.attribute_types.except(*custom_values.keys), first_generator),
+          **make_fake_params(klass.attribute_types.except(*custom_values.keys), second_generator),
           **custom_values, &block
         )
       else
         model.assign_attributes(
-          **make_fake_params(klass.attribute_types, first_generator),
-          **make_fake_params(klass.attribute_types, second_generator),
+          **make_fake_params(klass.attribute_types.except(*custom_values.keys), first_generator),
+          **make_fake_params(klass.attribute_types.except(*custom_values.keys), second_generator),
           **custom_values,
           **model.attributes
         )
