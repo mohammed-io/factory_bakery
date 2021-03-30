@@ -48,7 +48,7 @@ module FactoryBakery
 
     def make_fake_params(attributes, generator)
       return {} unless generator
-      puts attributes.count
+
       attributes
         .reject { |key| key.to_s == 'id' }
         .map do |key, attr|
