@@ -18,6 +18,7 @@ module FactoryBakery
         model.new(**params, **custom_values, &block)
       else
         model.assign_attributes(**params, **custom_values, **model.attributes)
+        model
       end
     end
 
