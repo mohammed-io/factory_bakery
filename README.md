@@ -33,14 +33,14 @@ This gem works only for the Active Record models that are backed by database. Be
 
 Once you install it, you will get 2 global functions `bake` and `bake`.
 
-The first one generates the model without touching the database (i.e. `save`). While the second one updates the record in the database.
+The first one generates the model without touching the database. While the second one updates the record in the database.
 
 The time you want to make a fake model object, you can use:
 
 ```ruby
  bake(MODEL_CLASS, {specific_attribute: 'specific_value' })
  # OR
- bake!(MODEL_CLASS, {specific_attribute: 'specific_value' })
+ bake!(MODEL_CLASS, {specific_attribute: 'specific_value' }) # Saves on the db
 ```
 
 The `MODEL_CLASS` is the model that you want to fill with fake values. For instance, if you want to fill the `User` with fake data, but with a valid specific email, it can be as following:
