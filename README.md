@@ -45,11 +45,9 @@ The time you want to make a fake model object, you can use:
 
 The `MODEL_CLASS` is the model that you want to fill with fake values. For instance, if you want to fill the `User` with fake data, but with a valid specific email, it can be as following:
 ```ruby
- bake(User, {email: 'john@example.com' })
- bake(User, email: 'john@example.com') # This works as well
+ bake(User, email: 'john@example.com')
  # OR
- bake!(User, {email: 'john@example.com' })
- bake!(User, email: 'john@example.com') # This works as well
+ bake!(User, email: 'john@example.com')
 ```
 
 Then you should get a result like this:
