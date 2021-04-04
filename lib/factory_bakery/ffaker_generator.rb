@@ -22,7 +22,7 @@ module FactoryBakery
         FFaker.rand(descriptor.limit).to_f
       end
     end
-    register(:decimal, &registry[:decimal])
+    register(:decimal, &registry[:float])
 
     register(:string) do |descriptor|
       choices_or_else(descriptor) do
