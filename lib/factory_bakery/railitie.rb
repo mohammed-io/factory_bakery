@@ -4,14 +4,10 @@ require_relative 'ffaker_generator'
 module FactoryBakery
   class Railtie < Rails::Railtie
     config.factory_bakery = ActiveSupport::OrderedOptions.new
-    config.factory_bakery.first_generator = FFakerGenerator.new
+    config.factory_bakery.generators ||= [FFakerGenerator.new]
 
-    initializer "factory_bakery.first_generator" do
-      FactoryBakery.first_generator = config.factory_bakery.first_generator
-    end
-
-    initializer "factory_bakery.second_generator" do
-      FactoryBakery.second_generator = config.factory_bakery.second_generator
+    initializer "factory_bakery.generators" do
+      FactoryBakery.generators = config.factory_bakery.generators
     end
 
     config.after_initialize do |app|

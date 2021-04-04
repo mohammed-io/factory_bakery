@@ -4,17 +4,14 @@ module FactoryBakery
       @instance ||= new
     end
 
-    self.class.attr_accessor :first_generator
-    self.class.attr_accessor :second_generator
+    self.class.attr_accessor :generators
 
-    self.first_generator = FFakerGenerator.new
-    attr_writer :first_generator, :second_generator
-    def first_generator
-      @first_generator || self.class.first_generator
-    end
+    self.generators = [FFakerGenerator.new]
 
-    def second_generator
-      @second_generator || self.class.second_generator
+    attr_writer :generators
+
+    def generators
+      @generators || self.class.generators
     end
 
     def bake(model, custom_values = {}, &block)
@@ -22,16 +19,20 @@ module FactoryBakery
 
       keys_to_skip = custom_values.keys.map(&:to_s)
 
+      params_from_generators = generators.map do |generator|
+        make_fake_params(klass.attribute_types.except(*keys_to_skip), generator)
+      end.reduce({}) do |result, hash|
+        hash.merge(result)
+      end
+
       if model.is_a? Class
         model.new(
-          **make_fake_params(klass.attribute_types.except(*keys_to_skip), first_generator),
-          **make_fake_params(klass.attribute_types.except(*keys_to_skip), second_generator),
+          **params_from_generators,
           **custom_values, &block
         )
       else
         model.assign_attributes(
-          **make_fake_params(klass.attribute_types.except(*keys_to_skip), first_generator),
-          **make_fake_params(klass.attribute_types.except(*keys_to_skip), second_generator),
+          **params_from_generators,
           **custom_values,
           **model.attributes
         )
