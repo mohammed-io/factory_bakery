@@ -1,4 +1,6 @@
 appraise "rails5.0" do
+  ruby '2.7.2'
+
   gem "byebug"
   gem "listen", "~> 3.0.5"
   gem "puma", "~> 3.0"
@@ -9,6 +11,8 @@ appraise "rails5.0" do
 end
 
 appraise "rails5.1" do
+  ruby '2.7.2'
+
   gem "byebug"
   gem "listen", ">= 3.0.5", "< 3.2"
   gem "puma", "~> 3.7"
@@ -19,6 +23,8 @@ appraise "rails5.1" do
 end
 
 appraise "rails5.2" do
+  ruby '2.7.2'
+
   gem "byebug"
   gem "listen", ">= 3.0.5", "< 3.2"
   gem "puma", "~> 3.11"
@@ -29,6 +35,8 @@ appraise "rails5.2" do
 end
 
 appraise "rails6.0" do
+  ruby '2.7.2'
+
   gem "byebug"
   gem "listen", "~> 3.2"
   gem "puma", "~> 4.1"
@@ -39,6 +47,8 @@ appraise "rails6.0" do
 end
 
 appraise "rails6.1" do
+  ruby '2.7.2'
+
   gem "byebug"
   gem "listen", "~> 3.2"
   gem "puma", "~> 5.0"
