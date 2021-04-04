@@ -34,6 +34,7 @@ module FactoryBakery
       end
     end
     register(:immutable_string, &registry[:string])
+    register(:text, &registry[:string])
 
     register(:datetime) do |descriptor|
       choices_or_else(descriptor) do

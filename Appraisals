@@ -5,7 +5,7 @@ appraise "rails5.0" do
   gem "rails", "~> 5.0.7", ">= 5.0.7.2"
   gem "spring", "!= 2.1.1"
   gem "spring-watcher-listen", "~> 2.0.0"
-  gem "sqlite3", "~> 1.4"
+  gem 'sqlite3', '~> 1.3.0'
 end
 
 appraise "rails5.1" do
@@ -15,7 +15,7 @@ appraise "rails5.1" do
   gem "rails", "~> 5.1.7"
   gem "spring", "!= 2.1.1"
   gem "spring-watcher-listen", "~> 2.0.0"
-  gem "sqlite3", "~> 1.4"
+  gem 'sqlite3', '~> 1.3.0'
 end
 
 appraise "rails5.2" do
@@ -42,7 +42,7 @@ appraise "rails6.1" do
   gem "byebug"
   gem "listen", "~> 3.2"
   gem "puma", "~> 5.0"
-  gem "rails", "~> 6.1.0", ">= 6.1.0.0"
+  gem "rails", "~> 6.1.3.1", ">= 6.1.3.1"
   gem "spring", "!= 2.1.1"
   gem "spring-watcher-listen", "~> 2.0.0"
   gem "sqlite3", "~> 1.4"
