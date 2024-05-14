@@ -20,7 +20,7 @@ module FactoryBakery
       keys_to_skip = custom_values.keys.map(&:to_s)
 
       params_from_generators = generators.map do |generator|
-        make_fake_params(klass.attribute_types.except(*keys_to_skip), generator)
+        make_fake_params(klass.attribute_types.except('type', *keys_to_skip), generator)
       end.reduce({}) do |result, hash|
         hash.merge(result)
       end
