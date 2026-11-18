@@ -31,7 +31,7 @@ module FactoryBakery
         end
       end
 
-      def call
+      def call(_context = nil)
         # 1. Absence validator takes precedence
         return nil if absence_required?
 

@@ -17,7 +17,7 @@ module FactoryBakery
         @source_value = value
       end
 
-      def call
+      def call(_context = nil)
         # Return the same value as the source attribute
         @source_value || ''
       end

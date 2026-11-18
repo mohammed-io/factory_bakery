@@ -54,6 +54,40 @@ module FactoryBakery
         @forbidden_values&.include?(value)
       end
 
+      # Rails comparison/numericality options accept literals, Procs and
+      # Symbols (cross-attribute references). Resolve them at bake time,
+      # against the object being built when one is available. An unresolved
+      # reference becomes nil, so no NoMethodError escapes a bake.
+      def resolve_option_value(option, context)
+        case option
+        when Symbol
+          context&.value_for(option)
+        when Proc
+          resolve_option_value(call_option_proc(option, context), context)
+        else
+          option
+        end
+      end
+
+      def call_option_proc(option, context)
+        return option.call if option.arity.zero?
+
+        option.call(context&.object)
+      end
+
+      # Resolve a Range option whose endpoints may themselves be Procs or
+      # Symbols. Beginless/endless ranges and unresolved endpoints are ignored
+      # so the filler falls back to its ordinary bound generation.
+      def resolve_range(range, context)
+        return nil unless range.is_a?(Range)
+
+        first = resolve_option_value(range.begin, context)
+        last = resolve_option_value(range.end, context)
+        return nil if first.nil? || last.nil?
+
+        range.exclude_end? ? (first...last) : (first..last)
+      end
+
       # POROs have no schema and may have no ActiveModel validators either.
       # Schema and validator lookups are optional so fillers can run on any
       # target that exposes the relevant information.

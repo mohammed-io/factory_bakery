@@ -32,7 +32,7 @@ module FactoryBakery
         end
       end
 
-      def call
+      def call(_context = nil)
         # Return the accepted value for the acceptance validator
         @accept_value || '1'
       end

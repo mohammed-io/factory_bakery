@@ -36,7 +36,7 @@ module FactoryBakery
         apply_common_validator(validator)
       end
 
-      def call
+      def call(_context = nil)
         # 1. Absence validator takes precedence
         return nil if absence_required?
 

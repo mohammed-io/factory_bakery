@@ -81,7 +81,7 @@ module FactoryBakery
       evaluate_declarations(traits)
 
       object = instantiate
-      apply_values(object, resolved_values(overrides), explicit_names(overrides))
+      apply_values(object, resolved_values(overrides, object), explicit_names(overrides))
       run_after_instantiate(object)
       object
     ensure
@@ -170,7 +170,7 @@ module FactoryBakery
     # layer mentioning any member wins the whole group; lower layers are dropped
     # before any block runs. Groups are derived from reflections at bake time so
     # definition files can still load before their models.
-    def resolved_values(overrides)
+    def resolved_values(overrides, object)
       normalized_overrides = normalize_keys(overrides)
       groups = alias_groups
       winning_declarations = declared_values(normalized_overrides, groups)
@@ -179,15 +179,33 @@ module FactoryBakery
       # A plugin-supplied group member suppresses every other member of that
       # group in the heuristic layer, so a nil FK cannot clobber the object.
       plugin_skip = plugin_values.keys.flat_map { |name| groups.fetch(name, [name]) }
-      skip = suppressed_names(normalized_overrides, groups) + plugin_skip
+      skip = (suppressed_names(normalized_overrides, groups) + plugin_skip).uniq
 
-      generated = heuristic_values(skip.uniq)
+      counter_values = counter_cache_values
+      # Initialize_with values are already on the object (possibly transformed
+      # by a custom constructor), so they are bound inputs but are never
+      # re-applied through setters.
+      bound_values = counter_values
+                     .merge(normalize_keys(@initialize_with_attributes))
+                     .merge(plugin_values)
+                     .merge(winning_declarations)
+                     .merge(normalized_overrides)
+      assign_values(object, counter_values.merge(plugin_values).merge(winning_declarations).merge(normalized_overrides))
+
+      resolver = AttributeFillers::BakeTimeValues.new(
+        @model_klass, bound_values, (skip + [primary_key_name]).compact, object
+      )
+      generated = heuristic_values(skip, resolver)
       @heuristic_attribute_names = generated.keys
       generated
-        .merge(counter_cache_values)
+        .merge(counter_values)
         .merge(plugin_values)
         .merge(winning_declarations)
         .merge(normalized_overrides)
+    end
+
+    def primary_key_name
+      @model_klass.primary_key.to_s if column_backed?
     end
 
     # Names already decided at a higher layer (declarations, traits, overrides
@@ -283,16 +301,14 @@ module FactoryBakery
         counter_cache_column_names).uniq
     end
 
-    def heuristic_values(skip)
-      candidate_attribute_names.each_with_object({}) do |attribute_name, values|
+    def heuristic_values(skip, resolver)
+      candidate_attribute_names.each do |attribute_name|
         next if column_backed? && attribute_name == @model_klass.primary_key.to_s
         next if skip.include?(attribute_name)
 
-        filler = AttributeFillers::FillerSelector.new(@model_klass, attribute_name).call
-        next if heuristic_skip?(filler)
-
-        values[attribute_name] = filler.call
+        resolver.value_for(attribute_name)
       end
+      resolver.values
     end
 
     def skipped_attribute_names
@@ -316,11 +332,6 @@ module FactoryBakery
         column = @model_klass.columns_hash[name]
         values[name] = 0 if column && !column.null && column.default.nil?
       end
-    end
-
-    def heuristic_skip?(filler)
-      filler.is_a?(AttributeFillers::NoopFiller) ||
-        filler.is_a?(AttributeFillers::ConfirmationFiller)
     end
 
     def column_backed?
@@ -397,12 +408,15 @@ module FactoryBakery
     end
 
     def apply_values(object, values, reserved)
+      assign_values(object, values)
+      apply_confirmations(object, reserved)
+    end
+
+    def assign_values(object, values)
       values.each do |name, value|
         setter = "#{name}="
         object.public_send(setter, value) if object.respond_to?(setter)
       end
-
-      apply_confirmations(object, reserved)
     end
 
     def apply_confirmations(object, reserved)

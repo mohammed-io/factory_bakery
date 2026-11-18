@@ -50,7 +50,7 @@ module FactoryBakery
         end
       end
 
-      def call
+      def call(context = nil)
         # 1. Absence validator takes precedence
         return nil if absence_required?
 
@@ -58,13 +58,13 @@ module FactoryBakery
         return pick_from_allowed if allowed_values?
 
         # 3. Generate value respecting constraints
-        value = generate_value
+        value = generate_value(context)
 
         # 4. Apply precision/scale if specified
         value = apply_precision_scale(value)
 
         # 5. Ensure not in exclusion set
-        avoid_forbidden(value)
+        avoid_forbidden(value, context)
       end
 
       private
@@ -86,6 +86,7 @@ module FactoryBakery
         @less_than = opts[:less_than]
         @less_than_or_equal_to = opts[:less_than_or_equal_to]
         @other_than = opts[:other_than]
+        @in_range = opts[:in] if opts[:in]
       end
 
       def pick_from_allowed
@@ -93,16 +94,18 @@ module FactoryBakery
         value.is_a?(Numeric) ? value : value.to_f
       end
 
-      def generate_value
+      def generate_value(context)
         # Priority 1: Equal to constraint
-        return @equal_to.to_f if @equal_to
+        equal_to = resolve_option_value(@equal_to, context)
+        return equal_to.to_f if equal_to
 
         # Priority 2: Range constraint
-        return generate_in_range if @in_range
+        in_range = resolve_range(resolve_option_value(@in_range, context), context)
+        return generate_in_range(in_range) if in_range
 
         # Priority 3: Comparison constraints
-        lower_bound = calculate_lower_bound
-        upper_bound = calculate_upper_bound
+        lower_bound = calculate_lower_bound(context)
+        upper_bound = calculate_upper_bound(context)
 
         # Priority 4: Attribute name patterns
         return generate_by_pattern if lower_bound.nil? && upper_bound.nil?
@@ -111,26 +114,29 @@ module FactoryBakery
         generate_in_bounds(lower_bound, upper_bound)
       end
 
-      def calculate_lower_bound
-        if @greater_than_or_equal_to
-          @greater_than_or_equal_to.to_f
-        elsif @greater_than
-          @greater_than.to_f + 0.01
-        end
+      def calculate_lower_bound(context)
+        greater_than_or_equal_to = resolve_option_value(@greater_than_or_equal_to, context)
+        return greater_than_or_equal_to.to_f if greater_than_or_equal_to
+
+        greater_than = resolve_option_value(@greater_than, context)
+        return greater_than.to_f + 0.01 if greater_than
+
+        nil
       end
 
-      def calculate_upper_bound
-        if @less_than_or_equal_to
-          @less_than_or_equal_to.to_f
-        elsif @less_than
-          @less_than.to_f - 0.01
-        end
+      def calculate_upper_bound(context)
+        less_than_or_equal_to = resolve_option_value(@less_than_or_equal_to, context)
+        return less_than_or_equal_to.to_f if less_than_or_equal_to
+
+        less_than = resolve_option_value(@less_than, context)
+        return less_than.to_f - 0.01 if less_than
+
+        nil
       end
 
-      def generate_in_range
+      def generate_in_range(range)
         # Handle both integer and float ranges
         # Float ranges can't use .to_a directly
-        range = @in_range
         if range.first.is_a?(Float) || range.last.is_a?(Float)
           rand(range.first.to_f..range.last.to_f)
         else
@@ -141,11 +147,22 @@ module FactoryBakery
       end
 
       def generate_in_bounds(lower, upper)
+        lower_was_nil = lower.nil?
+        upper_was_nil = upper.nil?
         lower ||= 0.0
         upper ||= 100.0
 
-        # Swap if bounds are inverted
-        lower, upper = upper, lower if lower > upper
+        if lower > upper
+          # Extend a default side when only one bound was supplied; swapping
+          # would put the generated value outside the supplied constraint.
+          if lower_was_nil
+            lower = upper
+          elsif upper_was_nil
+            upper = lower
+          else
+            lower, upper = upper, lower
+          end
+        end
 
         rand(lower..upper)
       end
@@ -169,12 +186,12 @@ module FactoryBakery
         value.round(@scale)
       end
 
-      def avoid_forbidden(value)
+      def avoid_forbidden(value, context)
         return value unless @forbidden_values
 
         attempts = 0
         while forbidden_values?(value) && attempts < 20
-          value = generate_value
+          value = generate_value(context)
           value = apply_precision_scale(value)
           attempts += 1
         end

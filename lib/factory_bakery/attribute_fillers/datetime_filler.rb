@@ -45,7 +45,7 @@ module FactoryBakery
         end
       end
 
-      def call
+      def call(context = nil)
         # 1. Absence validator takes precedence
         return nil if absence_required?
 
@@ -53,29 +53,20 @@ module FactoryBakery
         return pick_from_allowed if allowed_values?
 
         # 3. Generate datetime respecting constraints
-        generate_datetime
+        generate_datetime(context)
       end
 
       private
 
       def apply_comparison_validator(opts)
-        @greater_than_attribute = resolve_comparison_value(opts[:greater_than])
-        @greater_than_or_equal_to_attribute = resolve_comparison_value(opts[:greater_than_or_equal_to])
-        @less_than_attribute = resolve_comparison_value(opts[:less_than])
-        @less_than_or_equal_to_attribute = resolve_comparison_value(opts[:less_than_or_equal_to])
-        @equal_to_attribute = resolve_comparison_value(opts[:equal_to])
-        @other_than_attribute = resolve_comparison_value(opts[:other_than])
-      end
-
-      def resolve_comparison_value(value)
-        case value
-        when Symbol
-          value # Reference to another attribute
-        when Proc
-          value.call
-        else
-          value
-        end
+        # Keep the raw Rails option forms; symbols and procs are resolved at
+        # bake time against the object being built, not at filler creation.
+        @greater_than_attribute = opts[:greater_than]
+        @greater_than_or_equal_to_attribute = opts[:greater_than_or_equal_to]
+        @less_than_attribute = opts[:less_than]
+        @less_than_or_equal_to_attribute = opts[:less_than_or_equal_to]
+        @equal_to_attribute = opts[:equal_to]
+        @other_than_attribute = opts[:other_than]
       end
 
       def pick_from_allowed
@@ -83,13 +74,14 @@ module FactoryBakery
         value.is_a?(DateTime) || value.is_a?(Time) ? value : value.to_datetime
       end
 
-      def generate_datetime
+      def generate_datetime(context)
         # Priority 1: Equal to constraint
-        return resolve_datetime_value(@equal_to_attribute) if @equal_to_attribute
+        equal_to = resolved_datetime_bound(@equal_to_attribute, context)
+        return equal_to if equal_to
 
         # Priority 2: Comparison constraints with other attributes
-        lower_bound = calculate_lower_bound
-        upper_bound = calculate_upper_bound
+        lower_bound = calculate_lower_bound(context)
+        upper_bound = calculate_upper_bound(context)
 
         # Priority 3: Attribute name patterns (e.g., created_at, updated_at)
         return generate_by_pattern if lower_bound.nil? && upper_bound.nil?
@@ -97,26 +89,34 @@ module FactoryBakery
         generate_in_bounds(lower_bound, upper_bound)
       end
 
-      def calculate_lower_bound
-        if @greater_than_or_equal_to_attribute
-          resolve_datetime_value(@greater_than_or_equal_to_attribute)
-        elsif @greater_than_attribute
-          resolve_datetime_value(@greater_than_attribute) + 1.second
-        end
+      def resolved_datetime_bound(option, context)
+        resolve_datetime_value(resolve_option_value(option, context))
       end
 
-      def calculate_upper_bound
-        if @less_than_or_equal_to_attribute
-          resolve_datetime_value(@less_than_or_equal_to_attribute)
-        elsif @less_than_attribute
-          resolve_datetime_value(@less_than_attribute) - 1.second
-        end
+      def calculate_lower_bound(context)
+        greater_than_or_equal_to = resolved_datetime_bound(@greater_than_or_equal_to_attribute, context)
+        return greater_than_or_equal_to if greater_than_or_equal_to
+
+        greater_than = resolved_datetime_bound(@greater_than_attribute, context)
+        return greater_than + 1.second if greater_than
+
+        nil
+      end
+
+      def calculate_upper_bound(context)
+        less_than_or_equal_to = resolved_datetime_bound(@less_than_or_equal_to_attribute, context)
+        return less_than_or_equal_to if less_than_or_equal_to
+
+        less_than = resolved_datetime_bound(@less_than_attribute, context)
+        return less_than - 1.second if less_than
+
+        nil
       end
 
       def resolve_datetime_value(value)
         case value
-        when Symbol
-          # Reference to another attribute - not supported without context
+        when Symbol, Proc
+          # Unresolved reference (no bake-time context): no bound.
           nil
         when Time, DateTime, ActiveSupport::TimeWithZone
           value
@@ -136,11 +136,22 @@ module FactoryBakery
       end
 
       def generate_in_bounds(lower, upper)
+        lower_was_nil = lower.nil?
+        upper_was_nil = upper.nil?
         lower ||= Time.now - 1.year
         upper ||= Time.now + 1.year
 
-        # Swap if bounds are inverted
-        lower, upper = upper, lower if lower > upper
+        if lower > upper
+          # Extend a default side when only one bound was supplied; swapping
+          # would put the generated value outside the supplied constraint.
+          if lower_was_nil
+            lower = upper
+          elsif upper_was_nil
+            upper = lower
+          else
+            lower, upper = upper, lower
+          end
+        end
 
         seconds_diff = (upper - lower).to_i
         lower + rand(0..seconds_diff).seconds

@@ -9,7 +9,7 @@ module FactoryBakery
         true
       end
 
-      def call
+      def call(_context = nil)
         nil
       end
     end
