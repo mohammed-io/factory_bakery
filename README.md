@@ -1,93 +1,265 @@
 # FactoryBakery
 
-Have you ever wanted to generate a model without the need to configure or write extra stuff like Fixtures or Factories?
+FactoryBakery builds fully populated test objects **from your model's own metadata**. Validators and database column types decide what goes into each attribute; factory definitions are a thin customization layer for the few attributes a test actually cares about.
 
-You've found the right gem!
+The gem is inspired by Python's [model-bakery](https://pypi.org/project/model-bakery/). It is deliberately **not** a [factory_bot](https://github.com/thoughtbot/factory_bot) mirror: you do not describe every attribute. You describe the exceptions, and heuristics fill the rest.
 
-This gem is inspired by Python's [model-bakery](https://pypi.org/project/model-bakery/) and [factory_bot_rails](https://github.com/thoughtbot/factory_bot_rails). Thanks for them for the development effort and the inspiration!
+```ruby
+user = FactoryBakery.bake(User, email: 'john@example.com')
+user.email # => "john@example.com" — every other attribute was filled heuristically
+```
 
-This gem let you fill a model object with fake data (just like [model-bakery](https://pypi.org/project/model-bakery/)), according to the attribute's data type. By default, it handles the types defined by ActiveRecord.
+## Requirements
+
+- Ruby >= 3.2
+- Rails 7.1, 7.2, or 8.0
 
 ## Installation
 
-Add this line to your application's Gemfile:
+Add this line to your application's Gemfile. The gem is installed from git for now:
 
 ```ruby
 gem 'factory_bakery', git: 'https://github.com/mohammed-io/factory_bakery.git'
 ```
 
-And then execute:
+Then run:
 
-    $ bundle install
-
-Or install it yourself as (**Coming soon**):
-
-    $ gem install factory_bakery
-
-## Limitation
-This gem works only for the Active Record models that are backed by database. Because it depends on the `MODEL_CLASS.attribute_types` method which is available only on the models.
-
-## Usage
-
-### Using The Default Generator
-
-Once you install it, you will get 2 global functions `bake` and `bake`.
-
-The first one generates the model without touching the database. While the second one updates the record in the database.
-
-The time you want to make a fake model object, you can use:
-
-```ruby
- bake(MODEL_CLASS, {specific_attribute: 'specific_value' })
- # OR
- bake!(MODEL_CLASS, {specific_attribute: 'specific_value' }) # Saves on the db
+```sh
+bundle install
 ```
 
-The `MODEL_CLASS` is the model that you want to fill with fake values. For instance, if you want to fill the `User` with fake data, but with a valid specific email, it can be as following:
+## Quick start
+
+`require 'factory_bakery'` is all the setup there is. `bake` returns an unsaved object; `bake!` calls `save!` when the object supports it.
+
 ```ruby
- bake(User, email: 'john@example.com')
- # OR
- bake!(User, email: 'john@example.com')
+require 'factory_bakery'
+
+user = FactoryBakery.bake(User)
+user.new_record? # => true
+
+user = FactoryBakery.bake!(User)
+user.persisted? # => true
+
+# Override just the value under test; everything else is still filled.
+user = FactoryBakery.bake(User, email: 'john@example.com')
+user.email # => "john@example.com"
 ```
 
-Then you should get a result like this:
+Overrides are keyword arguments. Several can be passed at once, and attributes you do not pass keep their heuristic values. Baking a class requires no factory definition and no configuration.
+
+## Factory definitions
+
+Register a definition once, in any file loaded by your app or test suite:
+
 ```ruby
-#<User id: nil, email: "john@example.com", first_name: "pw7meuwq16zinefai0qhq8btqg8zqe", last_name: "qthti7af61n5rlvb8njg3ygncmsofz", phone: "vs8e4lpy63sdv6u", address: "agseb6fjt51who6yel0o6h0t7b1ndr3abn7u0yyc">
+FactoryBakery.define(User) do
+  name  { 'Ada Lovelace' }
+  email { "user#{rand(1_000_000)}@example.com" }
+
+  trait :admin do
+    role { 'admin' }
+  end
+
+  trait :vip do
+    role  { 'vip' }
+    level { 'gold' }
+  end
+end
 ```
 
-The data is just gibberish at the moment. This how the basic generator works. Which can be extended or improved later.
+Attribute values are **lazy blocks**: `name { 'Ada Lovelace' }` rather than `name: 'Ada Lovelace'`. The block is evaluated on every bake, so repeated bakes get fresh values (which is how uniqueness-validated columns stay unique). There is no static-value shorthand.
 
-### Password Hashing Note
-Because the password will be hashed, then it will take time to do the calculation, thus will make the generation slower.
+Apply the definition by baking the class, optionally with traits and overrides:
 
-To skip it, simply add `password: nil` as the following:
 ```ruby
- bake(User, email: 'john@example.com', password: nil)
- # OR
- bake!(User, email: 'john@example.com', password: nil)
+FactoryBakery.bake(User)                         # base definition
+FactoryBakery.bake(User, :admin)                 # base + :admin
+FactoryBakery.bake(User, :admin, :vip)           # base + :admin + :vip
+FactoryBakery.bake(User, :admin, name: 'Grace')  # overrides beat every trait
 ```
+
+Traits are applied in the order given, so later traits win for overlapping attributes. In `bake(User, :admin, :vip)`, `role` ends up `'vip'`. Precedence for any attribute is:
+
+> call-site overrides > traits (in application order) > factory declaration blocks > heuristics
+
+Undeclared attributes are still filled heuristically. Requesting an unknown trait raises `FactoryBakery::Error`, as does baking an unregistered symbol.
+
+### Constructors: `initialize_with`
+
+When a constructor needs arguments, declare them with `initialize_with`. It accepts a hash:
+
+```ruby
+class Invoice
+  attr_reader :number
+
+  def initialize(number:)
+    @number = number
+  end
+end
+
+FactoryBakery.define(Invoice) do
+  initialize_with(number: 'INV-001')
+end
+
+FactoryBakery.bake(Invoice).number # => "INV-001"
+```
+
+For a class with a zero-argument constructor (including most POROs), the same hash is applied through setters. For an ActiveRecord model it is passed to `new` as attributes.
+
+### Named factories
+
+Definitions can be keyed by a symbol instead of a class. Use `klass:` to bind the name to a class explicitly:
+
+```ruby
+FactoryBakery.define(:customer, klass: User) do
+  name { 'Ada' }
+end
+
+FactoryBakery.bake(:customer) # => a User named 'Ada'
+```
+
+A bare symbol resolves its class lazily at the **first bake**, by camelizing the symbol (`:admin_user` becomes `AdminUser`). This lets definition files load before the application models exist:
+
+```ruby
+# spec/factories/admin_users.rb — may be loaded before AdminUser is defined
+FactoryBakery.define(:admin_user) do
+  name { 'Admin' }
+end
+
+# Later, once the constant exists:
+FactoryBakery.bake(:admin_user) # => an AdminUser
+```
+
+If the constant cannot be resolved, `FactoryBakery::Error` is raised naming the symbol; the failure is not cached, so a later bake succeeds once the constant exists. Class and symbol registrations are independent keys, and re-registering either one replaces the previous definition silently (last one wins).
+
+## Plain Ruby objects (POROs)
+
+ActiveRecord is not required. Any object with setters can be a target: declared attributes and overrides are assigned through those setters, and `bake!` simply returns the object if it has no `save!` method.
+
+```ruby
+class Contact
+  attr_accessor :name, :email, :note
+end
+
+FactoryBakery.define(Contact) do
+  name { 'Ada' }
+end
+
+contact = FactoryBakery.bake(Contact, email: 'ada@example.com')
+contact.name  # => "Ada"
+contact.email # => "ada@example.com"
+contact.note  # => nil (no declaration, override, or heuristic information)
+
+FactoryBakery.bake!(Contact) # => a Contact, with no persistence attempted
+```
+
+POROs that include `ActiveModel::Model` / `ActiveModel::Validations` also get validator-driven heuristics for their undeclared attributes. With no schema and no validators, attributes that have no value supplied are left `nil` rather than raising.
+
+## Definition loading
+
+### In Rails
+
+Definition files are loaded automatically after the application initializes. FactoryBakery uses the first existing directory among:
+
+1. `spec/factories`
+2. `test/factories`
+3. `factories`
+
+All `*.rb` files under it are loaded recursively, so the usual test-framework layouts work without any `require`. To use a different location, set the paths in `config/application.rb` (or an environment file):
+
+```ruby
+config.factory_bakery.definition_paths = [Rails.root.join('custom/factories').to_s]
+```
+
+A single string is accepted as well as an array. This works identically under RSpec and Minitest.
+
+### Outside Rails
+
+Set the paths yourself and call `find_definitions`:
+
+```ruby
+FactoryBakery.definition_paths = ['spec/factories', 'test/factories']
+FactoryBakery.find_definitions
+```
+
+Nonexistent paths are skipped, and calling `find_definitions` again re-evaluates the files, which makes reloading safe.
+
+## In your test suite
+
+FactoryBakery never installs global `bake` methods. Opt in with `FactoryBakery::Methods` — the same module in both frameworks.
+
+**RSpec** — in `spec/spec_helper.rb`:
+
+```ruby
+RSpec.configure do |config|
+  config.include FactoryBakery::Methods
+end
+```
+
+```ruby
+RSpec.describe User do
+  it 'bakes a user with a known email' do
+    user = bake(User, email: 'john@example.com')
+
+    expect(user.email).to eq('john@example.com')
+  end
+end
+```
+
+**Minitest** — include it in your test class (or a shared base class):
+
+```ruby
+require 'minitest/autorun'
+require 'factory_bakery'
+
+class UserTest < Minitest::Test
+  include FactoryBakery::Methods
+
+  def test_bakes_a_user_with_a_known_email
+    user = bake(User, email: 'john@example.com')
+
+    assert_equal 'john@example.com', user.email
+  end
+end
+```
+
+Both `bake` and `bake!` are available bare after the include, with exactly the same arguments as `FactoryBakery.bake` / `FactoryBakery.bake!`. You can always use the fully qualified module methods instead.
+
+## How heuristics work
+
+For each attribute not supplied by a declaration, a trait, or an override, FactoryBakery picks a filler. ActiveRecord models contribute their column types; any ActiveModel-compatible object contributes its validators. The filler then reads the validator options to produce a valid value:
+
+| Metadata | Example | Result |
+| --- | --- | --- |
+| Column type | `title: :string`, `count: :integer`, `published_at: :datetime` | A type-appropriate fake value (strings come from [FFaker](https://github.com/ffaker/ffaker)) |
+| `inclusion` | `inclusion: { in: %w[pending done] }` | One of the allowed values |
+| `exclusion` | `exclusion: { in: %w[www ftp] }` | A generated value outside the forbidden set |
+| `length` | `length: { is: 5 }`, `{ in: 3..8 }` | A string padded or truncated to the required length |
+| `numericality`, `comparison` | `greater_than: 18`, `in: 1..10` | A number inside the permitted bounds |
+| `format` | `with: /\A[a-z]+\z/` | A string generated from the regex where possible |
+| `acceptance` | `acceptance: { accept: 'yes' }` | The accepted value |
+| `confirmation` | `confirmation: true` on `password` | `password_confirmation` is copied from `password`; overriding the source propagates |
+| `presence`, `absence` | `presence: true`, `absence: true` | A non-blank value, or `nil` |
+| `enum` | `enum status: { pending: 0, done: 1 }` | One of the defined enum keys |
+| Column default | `default: 'draft'` | Left to the database; the database default is kept |
+| Primary key | `id` | Skipped |
+| No information | A PORO attribute with no validator | Left `nil` |
+
+This is why a zero-setup `bake(User)` usually produces a valid record: the same validators that check your data are used to generate it. Complex or deliberately unusual values are what factory declarations and traits are for.
+
+## Not supported yet
+
+These are planned, not shipped: association auto-building, sequences, callbacks, and transient attributes. See [docs/associations-design.md](docs/associations-design.md) for the association design.
 
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
-
-To install this gem onto your local machine, run `bundle exec rake install`. To release a new version, update the version number in `version.rb`, and then run `bundle exec rake release`, which will create a git tag for the version, push git commits and the created tag, and push the `.gem` file to [rubygems.org](https://rubygems.org).
-
-## Todos
-* [ ] Write some test.
-* [ ] Smart handle of the relations.
-* [ ] Use symbols along with Model classes.
-* [ ] How to write custom generators?
-* [ ] Support non-active record models?
+After checking out the repo, run `bin/setup` to install dependencies. Run the suite with `bundle exec rspec`, and the linter with `bundle exec rubocop`. The Rails 7.1 / 7.2 / 8.0 appraisal gemfiles live in `gemfiles/`; run one with `BUNDLE_GEMFILE=gemfiles/rails8.0.gemfile bundle exec rspec`.
 
 ## Contributing
 
-Bug reports and pull requests are welcome on GitHub at https://github.com/mohammed-io/factory_bakery. This project is intended to be a safe, welcoming space for collaboration, and contributors are expected to adhere to the [code of conduct](https://github.com/[USERNAME]/factory_bakery/blob/master/CODE_OF_CONDUCT.md).
+Bug reports and pull requests are welcome at https://github.com/mohammed-io/factory_bakery. Everyone participating is expected to follow the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-The gem is available as open source under the terms of the [MIT License](https://opensource.org/licenses/MIT).
-
-## Code of Conduct
-
-Everyone interacting in the FactoryBakery project's codebases, issue trackers, chat rooms and mailing lists is expected to follow the [code of conduct](https://github.com/[USERNAME]/factory_bakery/blob/master/CODE_OF_CONDUCT.md).
+The gem is available as open source under the terms of the [MIT License](LICENSE.txt).
