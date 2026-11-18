@@ -142,6 +142,7 @@ module FactoryBakery
     def resolved_values(overrides)
       normalized_overrides = normalize_keys(overrides)
       heuristic_values
+        .merge(counter_cache_values)
         .merge(declared_values(normalized_overrides))
         .merge(normalized_overrides)
     end
@@ -151,7 +152,7 @@ module FactoryBakery
     end
 
     def heuristic_values
-      skip = declared_names + normalize_keys(@initialize_with_attributes).keys
+      skip = skipped_attribute_names
 
       candidate_attribute_names.each_with_object({}) do |attribute_name, values|
         next if column_backed? && attribute_name == @model_klass.primary_key.to_s
@@ -161,6 +162,29 @@ module FactoryBakery
         next if heuristic_skip?(filler)
 
         values[attribute_name] = filler.call
+      end
+    end
+
+    def skipped_attribute_names
+      declared_names + normalize_keys(@initialize_with_attributes).keys + counter_cache_column_names
+    end
+
+    def counter_cache_column_names
+      @counter_cache_column_names ||= column_backed? ? CounterCacheDetector.new(@model_klass).column_names : []
+    end
+
+    # Rails maintains counter caches, so they are never randomly filled. A
+    # database default (and a naturally nil nullable column) is left untouched;
+    # a NOT NULL counter without a default becomes 0. This sits in the heuristic
+    # layer, so declarations and overrides still win.
+    def counter_cache_values
+      explicitly_set = declared_names + normalize_keys(@initialize_with_attributes).keys
+
+      counter_cache_column_names.each_with_object({}) do |name, values|
+        next if explicitly_set.include?(name)
+
+        column = @model_klass.columns_hash[name]
+        values[name] = 0 if column && !column.null && column.default.nil?
       end
     end
 

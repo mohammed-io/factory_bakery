@@ -4,6 +4,7 @@ require 'ffaker'
 require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/railitie'
 require_relative 'factory_bakery/bakery_builder'
+require_relative 'factory_bakery/counter_cache_detector'
 require_relative 'factory_bakery/definition_loader'
 require_relative 'factory_bakery/methods'
 
