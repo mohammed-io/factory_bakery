@@ -4,6 +4,7 @@ module FactoryBakery
   module AttributeFillers
     class FloatFiller
       include CommonValidators
+      include NumericConstraintHygiene
 
       def initialize(model_class, attr_name)
         @model_class = model_class
@@ -57,14 +58,9 @@ module FactoryBakery
         # 2. Inclusion validator - pick from allowed set
         return pick_from_allowed(context) if allowed_values?
 
-        # 3. Generate value respecting constraints
-        value = generate_value(context)
-
-        # 4. Apply precision/scale if specified
-        value = apply_precision_scale(value)
-
-        # 5. Ensure not in exclusion set
-        avoid_forbidden(value, context)
+        # 3. Generate value respecting constraints and check the result after
+        #    precision/scale has been applied (other_than / exclusion)
+        generate_numeric_value(context) { apply_precision_scale(generate_value(context)) }
       end
 
       private
@@ -186,16 +182,9 @@ module FactoryBakery
         value.round(@scale)
       end
 
-      def avoid_forbidden(value, context)
-        return value unless @forbidden_values
-
-        attempts = 0
-        while forbidden_values?(value, context) && attempts < 20
-          value = generate_value(context)
-          value = apply_precision_scale(value)
-          attempts += 1
-        end
-        value
+      def resolve_other_than(context)
+        resolved = resolve_option_value(@other_than, context)
+        resolved.nil? ? nil : resolved.to_f
       end
     end
   end

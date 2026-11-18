@@ -4,6 +4,7 @@ module FactoryBakery
   module AttributeFillers
     class IntegerFiller
       include CommonValidators
+      include NumericConstraintHygiene
 
       def initialize(model_class, attr_name)
         @model_class = model_class
@@ -57,11 +58,8 @@ module FactoryBakery
         # 2. Inclusion validator - pick from allowed set
         return pick_from_allowed(context) if allowed_values?
 
-        # 3. Generate value respecting constraints
-        value = generate_value(context)
-
-        # 4. Ensure not in exclusion set
-        avoid_forbidden(value, context)
+        # 3. Generate a value checked against every post-generation constraint
+        generate_numeric_value(context) { generate_value(context) }
       end
 
       private
@@ -108,8 +106,12 @@ module FactoryBakery
         # Priority 4: Attribute name patterns
         return generate_by_pattern if lower_bound.nil? && upper_bound.nil?
 
-        # Generate within bounds
-        generate_in_bounds(lower_bound, upper_bound)
+        # Generate within bounds. Only explicitly supplied sides are hard
+        # limits for the parity fix-up; defaulted sides may be widened by one
+        # when the required parity cannot otherwise be reached.
+        generate_in_bounds(lower_bound, upper_bound,
+                           lower_explicit: !lower_bound.nil?,
+                           upper_explicit: !upper_bound.nil?)
       end
 
       def calculate_lower_bound(context)
@@ -134,11 +136,14 @@ module FactoryBakery
 
       def generate_in_range(range)
         values = range.to_a
-        value = values.sample
-        apply_odd_even_constraint(value.to_i)
+        return nil if values.empty?
+
+        value = values.sample.to_i
+        apply_odd_even_constraint(value, values.first.to_i, values.last.to_i,
+                                  lower_explicit: true, upper_explicit: true)
       end
 
-      def generate_in_bounds(lower, upper)
+      def generate_in_bounds(lower, upper, lower_explicit: false, upper_explicit: false)
         lower_was_nil = lower.nil?
         upper_was_nil = upper.nil?
         lower ||= 0
@@ -157,7 +162,9 @@ module FactoryBakery
         end
 
         value = rand(lower..upper)
-        apply_odd_even_constraint(value)
+        apply_odd_even_constraint(value, lower, upper,
+                                  lower_explicit: lower_explicit && !lower_was_nil,
+                                  upper_explicit: upper_explicit && !upper_was_nil)
       end
 
       def generate_by_pattern
@@ -173,29 +180,48 @@ module FactoryBakery
         when /number/
           generate_in_bounds(1, 999)
         else
-          apply_odd_even_constraint(rand(1..100))
+          generate_in_bounds(1, 100)
         end
       end
 
-      def apply_odd_even_constraint(value)
-        if @odd_only
-          value.even? ? value + 1 : value
-        elsif @even_only
-          value.odd? ? value + 1 : value
-        else
-          value
+      # Parity is reached by moving to an adjacent value that still fits the
+      # constraint window, never by stepping past an explicit bound (the old
+      # `value + 1` bug turned `even: true, <= 7` into 8). When no adjacent
+      # value fits, only a non-explicit side may be widened by one.
+      def apply_odd_even_constraint(value, lower = nil, upper = nil,
+                                    lower_explicit: false, upper_explicit: false)
+        return value unless @odd_only || @even_only
+        return value if parity_matches?(value)
+
+        candidates = [value + 1, value - 1].select { |candidate| parity_matches?(candidate) }
+
+        inside = candidates.select { |candidate| within_numeric_bounds?(candidate, lower, upper) }
+        return inside.first unless inside.empty?
+
+        candidates.each do |candidate|
+          next if lower_explicit && lower && candidate < lower
+          next if upper_explicit && upper && candidate > upper
+
+          return candidate
         end
+
+        raise numeric_constraint_error(value, "parity within #{lower.inspect}..#{upper.inspect}")
       end
 
-      def avoid_forbidden(value, context)
-        return value unless @forbidden_values
+      def parity_matches?(value)
+        @odd_only ? value.odd? : value.even?
+      end
 
-        attempts = 0
-        while forbidden_values?(value, context) && attempts < 20
-          value = generate_value(context)
-          attempts += 1
-        end
-        value
+      def within_numeric_bounds?(value, lower, upper)
+        return false if lower && value < lower
+        return false if upper && value > upper
+
+        true
+      end
+
+      def resolve_other_than(context)
+        resolved = resolve_option_value(@other_than, context)
+        resolved.nil? ? nil : resolved.to_i
       end
     end
   end

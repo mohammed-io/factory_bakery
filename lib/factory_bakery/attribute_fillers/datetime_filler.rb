@@ -4,6 +4,7 @@ module FactoryBakery
   module AttributeFillers
     class DateTimeFiller
       include CommonValidators
+      include NumericConstraintHygiene
 
       def initialize(model_class, attr_name)
         @model_class = model_class
@@ -52,8 +53,8 @@ module FactoryBakery
         # 2. Inclusion validator - pick from allowed set
         return pick_from_allowed(context) if allowed_values?
 
-        # 3. Generate datetime respecting constraints
-        generate_datetime(context)
+        # 3. Generate a datetime checked against other_than / exclusion
+        generate_numeric_value(context) { generate_datetime(context) }
       end
 
       private
@@ -111,6 +112,10 @@ module FactoryBakery
         return less_than - 1.second if less_than
 
         nil
+      end
+
+      def resolve_other_than(context)
+        resolved_datetime_bound(@other_than_attribute, context)
       end
 
       def resolve_datetime_value(value)
