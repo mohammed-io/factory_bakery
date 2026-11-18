@@ -79,20 +79,42 @@ module FactoryBakery
 
       object = instantiate
       apply_values(object, resolved_values(overrides), explicit_names(overrides))
+      run_after_instantiate(object)
       object
     ensure
       @build_is_in_progress = false
     end
 
     def method_missing(method_name, *, &block)
+      # A DSL name owned by an unloaded plugin must fail loudly rather than be
+      # captured as an attribute declaration with a nil block.
+      message = PluginRegistry.reserved_error_message(method_name)
+      raise FactoryBakery::Error, message if message
+
       # Defer attribute blocks so they run once per build, after the whole
       # definition block has registered traits and initialize_with.
       @methods_to_be_called_on_object << [method_name, block]
     end
 
+    # Called by plugin DSL modules to record a declaration for the current
+    # build. The registry knows which plugin's DSL method is executing, so the
+    # entry lands in that plugin's own bucket and is handed back to its
+    # after_instantiate hook.
+    def record_plugin_declaration(entry)
+      plugin = PluginRegistry.current
+      raise FactoryBakery::Error, 'No plugin DSL call is in progress' unless plugin
+
+      plugin_declarations(plugin) << entry
+      entry
+    end
+
     private
 
     def evaluate_declarations(traits)
+      @plugin_declarations = Hash.new { |hash, plugin| hash[plugin] = [] }
+      scope = PluginRegistry.dsl_scope_module
+      extend(scope) if scope
+
       @methods_to_be_called_on_object = []
       instance_eval(&@builder_proc) if @builder_proc
 
@@ -149,11 +171,74 @@ module FactoryBakery
       normalized_overrides = normalize_keys(overrides)
       groups = alias_groups
       winning_declarations = declared_values(normalized_overrides, groups)
+      plugin_values = plugin_heuristic_values(taken_names(normalized_overrides, groups), groups)
 
-      heuristic_values(suppressed_names(normalized_overrides, groups))
+      # A plugin-supplied group member suppresses every other member of that
+      # group in the heuristic layer, so a nil FK cannot clobber the object.
+      plugin_skip = plugin_values.keys.flat_map { |name| groups.fetch(name, [name]) }
+      skip = suppressed_names(normalized_overrides, groups) + plugin_skip
+
+      heuristic_values(skip.uniq)
         .merge(counter_cache_values)
+        .merge(plugin_values)
         .merge(winning_declarations)
         .merge(normalized_overrides)
+    end
+
+    # Names already decided at a higher layer (declarations, traits, overrides
+    # and initialize_with), with alias groups expanded so a plugin never sees
+    # just one spelling of an association.
+    def taken_names(overrides, groups)
+      names = declared_names + overrides.keys + normalize_keys(@initialize_with_attributes).keys
+      names.flat_map { |name| groups.fetch(name, [name]) }.uniq
+    end
+
+    # Plugin values live in the heuristic layer. Plugins are consulted in
+    # registration order; a later plugin wins on the same key. Within one alias
+    # group the association name wins over its FK/type columns regardless of
+    # hash insertion order.
+    def plugin_heuristic_values(taken, groups)
+      context = BuildContext.current
+      supplied = PluginRegistry.plugins.each_with_object({}) do |plugin, all|
+        next unless plugin.respond_to?(:heuristic_values)
+
+        values = plugin.heuristic_values(@model_klass, context, taken)
+        next unless values.respond_to?(:each_pair)
+
+        normalize_keys(values).each do |name, value|
+          all[name] = value unless taken.include?(name)
+        end
+      end
+
+      association_names = belongs_to_association_names
+      groups.each_value do |members|
+        present = members.select { |member| supplied.key?(member) }
+        winner = present.find { |member| association_names.include?(member) }
+        next unless winner
+
+        present.each { |member| supplied.delete(member) unless member == winner }
+      end
+
+      supplied
+    end
+
+    def belongs_to_association_names
+      return [] unless @model_klass.respond_to?(:reflect_on_all_associations)
+
+      @model_klass.reflect_on_all_associations(:belongs_to).map { |reflection| reflection.name.to_s }
+    end
+
+    def plugin_declarations(plugin)
+      (@plugin_declarations ||= Hash.new { |hash, key| hash[key] = [] })[plugin]
+    end
+
+    def run_after_instantiate(object)
+      context = BuildContext.current
+      PluginRegistry.plugins.each do |plugin|
+        next unless plugin.respond_to?(:after_instantiate)
+
+        plugin.after_instantiate(object, plugin_declarations(plugin), context)
+      end
     end
 
     def explicit_names(overrides)

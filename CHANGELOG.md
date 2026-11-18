@@ -1,5 +1,8 @@
 ## [Unreleased]
 
+- Added a plugin hook API: `FactoryBakery.register_plugin` registers a plugin implementing any subset of `dsl_module` (DSL methods available inside `define` blocks and traits), `heuristic_values(model_klass, context, taken)` (values in the heuristic layer) and `after_instantiate(object, declarations, context)` (runs after all plain values are applied). Plugins compose in registration order, duplicate DSL method names raise, and registration is idempotent. `unregister_plugin` and `reset_plugins!` are available for test isolation.
+- Changed `association :x` in a definition with no plugin loaded to raise `FactoryBakery::Error` naming `require 'factory_bakery/associations'`, instead of being silently ignored.
+
 - Changed `bake!` to wrap graph building, nested `bake!` calls and the root `save!` in one savepoint-capable transaction. Any failure now rolls back every row the bake wrote, even when the caller rescues inside an outer transaction.
 - Added `FactoryBakery::IncompletePersistenceError` (a `FactoryBakery::Error`), raised when a generated associated record is still unsaved after the root `save!` (for example with `autosave: false`, or `validate: false` on an invalid child). The error names the record and its association. `bake` stays database-free.
 - Changed heuristics to leave `belongs_to` FK columns (including every component of a composite FK) and polymorphic `*_type` columns unset. Optional associations now bake with `nil` instead of a random dangling value; declarations and call-site overrides still supply values.

@@ -3,6 +3,7 @@
 require 'ffaker'
 require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/railitie'
+require_relative 'factory_bakery/plugin_registry'
 require_relative 'factory_bakery/bakery_builder'
 require_relative 'factory_bakery/build_context'
 require_relative 'factory_bakery/counter_cache_detector'
@@ -44,6 +45,22 @@ module FactoryBakery
 
     def find_definitions
       DefinitionLoader.call(definition_paths)
+    end
+
+    # Registers a plugin implementing any subset of dsl_module,
+    # heuristic_values and after_instantiate. Registration is idempotent per
+    # plugin object and invocation follows registration order.
+    def register_plugin(plugin)
+      PluginRegistry.register(plugin)
+    end
+
+    def unregister_plugin(plugin)
+      PluginRegistry.unregister(plugin)
+    end
+
+    # Test support: clears all plugins so examples stay isolated.
+    def reset_plugins!
+      PluginRegistry.reset!
     end
 
     def define(target, klass: nil, &block)

@@ -82,6 +82,12 @@ module FactoryBakery
       @path.length
     end
 
+    # Records generated so far by the current top-level bake. Plugins read this
+    # from the build context they are passed (for example to share objects).
+    def generated_records
+      self.class.generated_records
+    end
+
     def append(klass)
       self.class.new(@path + [klass])
     end
