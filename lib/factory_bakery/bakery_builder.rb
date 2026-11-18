@@ -14,14 +14,51 @@ module FactoryBakery
 
     @definitions = {}
 
+    # A registered factory: its declaration block and the class explicitly
+    # bound to it when declared with `klass:`.
+    Definition = Struct.new(:builder_proc, :klass)
+
     class << self
       attr_reader :definitions
-    end
 
-    # Registers a definition block for a class. Re-registering overwrites the
-    # previous block so definition files can be reloaded safely.
-    def self.for(model_klass, &blk)
-      @definitions[model_klass] = blk
+      # Registers a definition under a class or a symbol name. Class and symbol
+      # keys are independent, and re-registering a key overwrites it so
+      # definition files can be reloaded safely.
+      def register(target, klass: nil, &blk)
+        definitions[target] = Definition.new(blk, klass)
+      end
+
+      # Normalizes a bake target into the class to instantiate and the
+      # declaration block to apply. Classes bake with or without registration;
+      # symbols must be registered and never fall back to constantization here.
+      def resolve(target)
+        case target
+        when Class
+          [target, definitions[target]&.builder_proc]
+        when Symbol
+          definition = definitions[target]
+          raise FactoryBakery::Error, "No factory is registered for #{target.inspect}" unless definition
+
+          [definition.klass || constantize(target), definition.builder_proc]
+        else
+          raise FactoryBakery::Error,
+                "Unsupported bake target #{target.inspect}; pass a class or a registered symbol"
+        end
+      end
+
+      private
+
+      # Resolves :admin_user to AdminUser without eval. Called at bake time so
+      # definition files can load before the model constants they name exist.
+      # A missing constant is only ever reported as a clear error naming the
+      # symbol; failures are not cached so a later bake can succeed.
+      def constantize(symbol)
+        name = symbol.to_s.split('_').map(&:capitalize).join
+        Object.const_get(name)
+      rescue NameError
+        raise FactoryBakery::Error,
+              "Could not resolve a class for factory #{symbol.inspect} (tried #{name.inspect}); pass klass: when defining it"
+      end
     end
 
     def initialize_with(attributes)

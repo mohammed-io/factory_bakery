@@ -23,17 +23,17 @@ module FactoryBakery
   class Error < StandardError; end
 
   class << self
-    def define(klass, &block)
-      BakeryBuilder.for(klass, &block)
+    def define(target, klass: nil, &block)
+      BakeryBuilder.register(target, klass: klass, &block)
     end
 
-    def bake(klass, *traits, **overrides)
-      definition = BakeryBuilder.definitions[klass]
-      BakeryBuilder.new(klass, definition).build(overrides: overrides, traits: traits)
+    def bake(target, *traits, **overrides)
+      model_klass, definition = BakeryBuilder.resolve(target)
+      BakeryBuilder.new(model_klass, definition).build(overrides: overrides, traits: traits)
     end
 
-    def bake!(klass, *traits, **overrides)
-      object = bake(klass, *traits, **overrides)
+    def bake!(target, *traits, **overrides)
+      object = bake(target, *traits, **overrides)
       object.save! if object.respond_to?(:save!)
       object
     end
