@@ -3,11 +3,18 @@
 module FactoryBakery
   module Associations
     # The plugin object registered with core on require. It evaluates explicit
-    # `association` declarations; no mode auto-builds anything yet.
+    # `association` declarations and, in :required_only mode, auto-builds
+    # required belongs_to through core's heuristic_values hook.
     module Plugin
       class << self
         def dsl_module
           DSL
+        end
+
+        # Auto-build values live in the heuristics layer, so declarations,
+        # traits, overrides and initialize_with keys suppress them via `taken`.
+        def heuristic_values(klass, context, taken)
+          RequiredBuilder.values(klass, context, taken)
         end
 
         # Association declarations run after core has applied plain attributes,

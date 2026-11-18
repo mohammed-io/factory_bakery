@@ -223,15 +223,13 @@ RSpec.describe 'FactoryBakery associations plugin' do
       expect(account_model.count).to eq(0)
     end
 
-    it 'still builds nothing in the accepted-but-not-yet-implemented modes' do
+    it 'still builds nothing in :all mode until that ticket lands' do
       account_model, user_model = define_account_and_user('AssocFutureModeUser')
 
-      %i[required_only all].each do |mode|
-        FactoryBakery::Associations.mode = mode
+      FactoryBakery::Associations.mode = :all
 
-        expect(FactoryBakery.bake(user_model).account).to be_nil
-        expect(account_model.count).to eq(0)
-      end
+      expect(FactoryBakery.bake(user_model).account).to be_nil
+      expect(account_model.count).to eq(0)
     end
   end
 end

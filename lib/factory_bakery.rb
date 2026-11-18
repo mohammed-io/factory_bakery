@@ -28,6 +28,7 @@ require_relative 'factory_bakery/attribute_fillers/filler_selector'
 module FactoryBakery
   class Error < StandardError; end
   class NestingTooDeepError < Error; end
+  class CyclicAssociationError < Error; end
   class IncompletePersistenceError < Error; end
 
   class << self

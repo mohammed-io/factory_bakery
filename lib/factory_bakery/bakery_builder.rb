@@ -187,10 +187,19 @@ module FactoryBakery
 
     # Names already decided at a higher layer (declarations, traits, overrides
     # and initialize_with), with alias groups expanded so a plugin never sees
-    # just one spelling of an association.
+    # just one spelling of an association. Plugin DSL declarations (for example
+    # `association :account`) are declarations too, so they suppress heuristic
+    # values such as :required_only auto-building just like plain attributes.
     def taken_names(overrides, groups)
-      names = declared_names + overrides.keys + normalize_keys(@initialize_with_attributes).keys
-      names.flat_map { |name| groups.fetch(name, [name]) }.uniq
+      names = declared_names + plugin_declared_names + overrides.keys +
+              normalize_keys(@initialize_with_attributes).keys
+      names.flat_map { |name| groups.fetch(name.to_s, [name.to_s]) }.uniq
+    end
+
+    def plugin_declared_names
+      (@plugin_declarations || {}).values.flatten.map do |entry|
+        entry.respond_to?(:name) ? entry.name.to_s : entry.to_s
+      end
     end
 
     # Plugin values live in the heuristic layer. Plugins are consulted in

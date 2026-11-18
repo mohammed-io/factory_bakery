@@ -7,9 +7,8 @@ module FactoryBakery
     MODES = %i[none required_only all].freeze
 
     class << self
-      # :required_only is the approved default, but only :none is implemented
-      # in this slice. Values other than :none are accepted here and behave
-      # exactly like :none until their tickets land.
+      # :required_only is the default once the plugin is loaded. :none and
+      # :all are accepted here; :all behaves like :none until its ticket lands.
       def mode
         @mode ||= :required_only
       end
