@@ -3,7 +3,7 @@
 module FactoryBakery
   module AttributeFillers
     module CommonValidators
-      attr_reader :allowed_values, :forbidden_values, :unique_required,
+      attr_reader :allowed_values, :forbidden_values,
                   :absence_required, :must_be_present
 
       def apply_common_validator(validator)
@@ -13,9 +13,6 @@ module FactoryBakery
           true
         when 'ActiveModel::Validations::ExclusionValidator'
           @forbidden_values = Array(validator.options[:in])
-          true
-        when 'ActiveRecord::Validations::UniquenessValidator'
-          @unique_required = true
           true
         when 'ActiveModel::Validations::PresenceValidator'
           @must_be_present = true
@@ -39,10 +36,6 @@ module FactoryBakery
         else
           values
         end
-      end
-
-      def unique_required?
-        @unique_required == true
       end
 
       def absence_required?

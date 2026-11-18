@@ -4,12 +4,15 @@ module FactoryBakery
   class BakeryBuilder
     class BuildingInProgress < StandardError; end
 
+    attr_reader :heuristic_attribute_names
+
     def initialize(model_klass, builder_proc = nil)
       @model_klass = model_klass
       @builder_proc = builder_proc
 
       @methods_to_be_called_on_object = []
       @traits = {}
+      @heuristic_attribute_names = []
     end
 
     @definitions = {}
@@ -178,7 +181,9 @@ module FactoryBakery
       plugin_skip = plugin_values.keys.flat_map { |name| groups.fetch(name, [name]) }
       skip = suppressed_names(normalized_overrides, groups) + plugin_skip
 
-      heuristic_values(skip.uniq)
+      generated = heuristic_values(skip.uniq)
+      @heuristic_attribute_names = generated.keys
+      generated
         .merge(counter_cache_values)
         .merge(plugin_values)
         .merge(winning_declarations)

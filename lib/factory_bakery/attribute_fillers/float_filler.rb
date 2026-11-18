@@ -28,7 +28,6 @@ module FactoryBakery
         # Common validator attributes
         @allowed_values = nil
         @forbidden_values = nil
-        @unique_required = false
         @must_be_present = false
         @absence_required = false
 

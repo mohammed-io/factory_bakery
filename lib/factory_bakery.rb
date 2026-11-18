@@ -24,6 +24,7 @@ require_relative 'factory_bakery/attribute_fillers/enum_filler'
 require_relative 'factory_bakery/attribute_fillers/acceptance_filler'
 require_relative 'factory_bakery/attribute_fillers/confirmation_filler'
 require_relative 'factory_bakery/attribute_fillers/filler_selector'
+require_relative 'factory_bakery/uniqueness_enforcer'
 
 module FactoryBakery
   class Error < StandardError; end
@@ -105,7 +106,9 @@ module FactoryBakery
     private
 
     def build_object(model_klass, definition, overrides, traits)
-      object = BakeryBuilder.new(model_klass, definition).build(overrides: overrides, traits: traits)
+      builder = BakeryBuilder.new(model_klass, definition)
+      object = builder.build(overrides: overrides, traits: traits)
+      UniquenessEnforcer.new(object, builder.heuristic_attribute_names).call
       BuildContext.record_generated(object)
       object
     end

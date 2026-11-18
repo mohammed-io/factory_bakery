@@ -22,7 +22,6 @@ module FactoryBakery
         @format_regex = nil
         @allowed_values = nil
         @forbidden_values = nil
-        @unique_required = false
         @must_be_present = false
         @absence_required = false
 
