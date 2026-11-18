@@ -6,6 +6,7 @@ require_relative 'factory_bakery/railitie'
 require_relative 'factory_bakery/bakery_builder'
 require_relative 'factory_bakery/build_context'
 require_relative 'factory_bakery/counter_cache_detector'
+require_relative 'factory_bakery/persistence_verifier'
 require_relative 'factory_bakery/definition_loader'
 require_relative 'factory_bakery/methods'
 
@@ -26,6 +27,7 @@ require_relative 'factory_bakery/attribute_fillers/filler_selector'
 module FactoryBakery
   class Error < StandardError; end
   class NestingTooDeepError < Error; end
+  class IncompletePersistenceError < Error; end
 
   class << self
     attr_writer :definition_paths, :max_bake_depth
@@ -51,14 +53,48 @@ module FactoryBakery
     def bake(target, *traits, **overrides)
       model_klass, definition = BakeryBuilder.resolve(target)
       BuildContext.push(model_klass) do
-        BakeryBuilder.new(model_klass, definition).build(overrides: overrides, traits: traits)
+        build_object(model_klass, definition, overrides, traits)
       end
     end
 
+    # `bake!` has a persistence contract: graph building (including nested
+    # `bake!` calls from declaration blocks), the root `save!` and the
+    # verify-and-raise step all run inside one transaction opened with
+    # `requires_new`. That is a savepoint when the caller already has a
+    # transaction, so a failure rolls back every row this bake wrote without
+    # disturbing the caller's transaction.
     def bake!(target, *traits, **overrides)
-      object = bake(target, *traits, **overrides)
-      object.save! if object.respond_to?(:save!)
+      model_klass, definition = BakeryBuilder.resolve(target)
+
+      unless model_klass.respond_to?(:transaction)
+        object = bake(target, *traits, **overrides)
+        object.save! if object.respond_to?(:save!)
+        return object
+      end
+
+      object = nil
+      model_klass.transaction(requires_new: true) do
+        object = BuildContext.push(model_klass) do
+          record = build_object(model_klass, definition, overrides, traits)
+          record.save! if record.respond_to?(:save!)
+          verify_persistence!(record)
+          record
+        end
+      end
       object
+    end
+
+    private
+
+    def build_object(model_klass, definition, overrides, traits)
+      object = BakeryBuilder.new(model_klass, definition).build(overrides: overrides, traits: traits)
+      BuildContext.record_generated(object)
+      object
+    end
+
+    def verify_persistence!(root)
+      entries = BuildContext.records_under(BuildContext.current.path)
+      PersistenceVerifier.new(root, entries).call
     end
   end
 end
