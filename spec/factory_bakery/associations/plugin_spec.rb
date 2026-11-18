@@ -11,11 +11,12 @@ RSpec.describe 'FactoryBakery associations plugin' do
   before do
     FactoryBakery.reset_plugins!
     FactoryBakery.register_plugin(FactoryBakery::Associations::Plugin)
+    FactoryBakery::Associations.reset_configuration!
   end
 
   after do
     FactoryBakery.reset_plugins!
-    FactoryBakery::Associations.mode = :required_only
+    FactoryBakery::Associations.reset_configuration!
   end
 
   # Counts SQL INSERTs through a public notification, the same observable

@@ -9,11 +9,12 @@ RSpec.describe 'association options' do
   before do
     FactoryBakery.reset_plugins!
     FactoryBakery.register_plugin(FactoryBakery::Associations::Plugin)
+    FactoryBakery::Associations.reset_configuration!
   end
 
   after do
     FactoryBakery.reset_plugins!
-    FactoryBakery::Associations.mode = :required_only
+    FactoryBakery::Associations.reset_configuration!
   end
 
   def define_author_and_post(name = 'AssocOpt')

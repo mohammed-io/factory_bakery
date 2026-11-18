@@ -17,7 +17,7 @@ RSpec.describe 'FactoryBakery association collections and has_one (A12)' do
 
   after do
     FactoryBakery.reset_plugins!
-    FactoryBakery::Associations.mode = :required_only
+    FactoryBakery::Associations.reset_configuration!
   end
 
   def inserts_in

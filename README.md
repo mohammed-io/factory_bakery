@@ -264,6 +264,31 @@ Children are built through the association, so its scope attributes (including t
 
 Literal overrides are applied to every child. If an overridden column also has a `uniqueness` validation, the children will collide: FactoryBakery does not make literal values unique. Use a declaration block or leave the value to heuristics when each child needs a distinct value.
 
+### Configuration and scoping
+
+The plugin's defaults are process-wide and validated:
+
+```ruby
+FactoryBakery::Associations.mode = :required_only   # :none | :required_only | :all (default)
+FactoryBakery::Associations.max_depth = 2           # non-negative Integer (default 2)
+FactoryBakery::Associations.default_count = 1       # non-negative Integer (default 1)
+```
+
+Invalid modes, negative or non-integer numbers, and unknown scope keys raise `ArgumentError`. The readers (`mode`, `max_depth`, `default_count`) report the *effective* value: the scoped override when one is active, otherwise the global value.
+
+Use `Associations.with` to override settings for one graph. It applies to every bake inside the block, including nested bakes from declaration blocks, is fiber-local (parallel threads and fibers never see each other's scope), nests with the inner scope winning, and restores the previous values even when the block raises. It returns the block's value.
+
+```ruby
+FactoryBakery::Associations.mode = :required_only
+FactoryBakery::Associations.with(mode: :all, max_depth: 3) do
+  FactoryBakery::Associations.mode    # => :all
+  FactoryBakery.bake!(Post)           # whole graph built in :all within depth 3
+end
+FactoryBakery::Associations.mode      # => :required_only
+```
+
+`with` takes a block rather than a `bake` keyword because `**overrides` shares its namespace with model attributes: an `associations:` kwarg could collide with a real column. For test isolation, `FactoryBakery::Associations.reset_configuration!` restores the global defaults and clears the current fiber's scope.
+
 ## Not supported yet
 
 These are planned, not shipped: sequences, callbacks, and transient attributes. See [docs/associations-design.md](docs/associations-design.md) for the association design.

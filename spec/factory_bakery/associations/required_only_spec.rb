@@ -17,7 +17,7 @@ RSpec.describe 'FactoryBakery associations :required_only mode' do
 
   after do
     FactoryBakery.reset_plugins!
-    FactoryBakery::Associations.mode = :required_only
+    FactoryBakery::Associations.reset_configuration!
   end
 
   # Counts SQL INSERTs through a public notification.

@@ -20,9 +20,7 @@ RSpec.describe 'FactoryBakery associations :all mode' do
 
   after do
     FactoryBakery.reset_plugins!
-    FactoryBakery::Associations.mode = :required_only
-    FactoryBakery::Associations.max_depth = 2
-    FactoryBakery::Associations.default_count = 1
+    FactoryBakery::Associations.reset_configuration!
   end
 
   def inserts_in
