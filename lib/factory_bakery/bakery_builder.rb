@@ -140,9 +140,10 @@ module FactoryBakery
 
     # Precedence: heuristics < declarations (base, then traits) < call-site overrides.
     def resolved_values(overrides)
+      normalized_overrides = normalize_keys(overrides)
       heuristic_values
-        .merge(declared_values)
-        .merge(normalize_keys(overrides))
+        .merge(declared_values(normalized_overrides))
+        .merge(normalized_overrides)
     end
 
     def explicit_names(overrides)
@@ -195,9 +196,22 @@ module FactoryBakery
       end.uniq
     end
 
-    def declared_values
-      @methods_to_be_called_on_object.each_with_object({}) do |(name, block), values|
-        values[name.to_s] = block.call if block
+    # Only winning declarations are evaluated: a losing block's value would be
+    # discarded, and the block may have side effects (e.g. an INSERT via bake!).
+    # The last block declared for an attribute wins (base, then traits in
+    # order); a call-site override suppresses every declaration for that name.
+    # Plain declarations without a block carry no value, so they never shadow
+    # an earlier block. Keeping a local (not a private method) avoids reserving
+    # another name in the method_missing-based declaration DSL.
+    def declared_values(overrides)
+      winners = @methods_to_be_called_on_object.each_with_object({}) do |(name, block), result|
+        result[name.to_s] = block if block
+      end
+
+      winners.each_with_object({}) do |(name, block), values|
+        next if overrides.key?(name)
+
+        values[name] = block.call
       end
     end
 
