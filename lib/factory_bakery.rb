@@ -23,8 +23,13 @@ module FactoryBakery
   class Error < StandardError; end
 
   class << self
+    def define(klass, &block)
+      BakeryBuilder.for(klass, &block)
+    end
+
     def bake(klass, **overrides)
-      BakeryBuilder.new(klass).build(overrides: overrides)
+      definition = BakeryBuilder.definitions[klass]
+      BakeryBuilder.new(klass, definition).build(overrides: overrides)
     end
 
     def bake!(klass, **overrides)

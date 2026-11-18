@@ -18,10 +18,10 @@ module FactoryBakery
       attr_reader :definitions
     end
 
+    # Registers a definition block for a class. Re-registering overwrites the
+    # previous block so definition files can be reloaded safely.
     def self.for(model_klass, &blk)
-      instance = new(model_klass, blk)
-      @definitions[model_klass] = instance
-      instance
+      @definitions[model_klass] = blk
     end
 
     def initialize_with(attributes)
@@ -33,15 +33,12 @@ module FactoryBakery
     end
 
     def build(overrides: {}, trait: nil)
-      evaluate_builder
       raise BuildingInProgress if @build_is_in_progress
 
       # Prevent recursive calls to build method.
       @build_is_in_progress = true
 
-      # Evaluate declarations again so their blocks run fresh on every build.
-      # Trait evaluation follows the top-level block so registered traits are available.
-      evaluate_builder_proc(trait)
+      evaluate_declarations(trait)
 
       object = instantiate
       apply_values(object, resolved_values(overrides), explicit_names(overrides))
@@ -51,25 +48,17 @@ module FactoryBakery
     end
 
     def method_missing(method_name, *, &block)
-      # Add methods to be called later, because we would like to
-      # prioritize calling this class methods such as `initialize_with`.
+      # Defer attribute blocks so they run once per build, after the whole
+      # definition block has registered traits and initialize_with.
       @methods_to_be_called_on_object << [method_name, block]
     end
 
     private
 
-    def evaluate_builder
+    def evaluate_declarations(trait)
       return unless @builder_proc
 
-      instance_eval(&@builder_proc)
-      # Reset the methods to be called, because this pass should not apply any
-      # declarations. It only registers traits and initialize_with.
       @methods_to_be_called_on_object = []
-    end
-
-    def evaluate_builder_proc(trait)
-      return unless @builder_proc
-
       instance_eval(&@builder_proc)
       instance_eval(&@traits.fetch(trait)) if trait && @traits.key?(trait)
     end
