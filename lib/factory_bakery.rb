@@ -4,6 +4,7 @@ require 'ffaker'
 require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/railitie'
 require_relative 'factory_bakery/bakery_builder'
+require_relative 'factory_bakery/definition_loader'
 
 # Attribute fillers
 require_relative 'factory_bakery/attribute_fillers/common_validators'
@@ -23,6 +24,17 @@ module FactoryBakery
   class Error < StandardError; end
 
   class << self
+    attr_writer :definition_paths
+
+    # No paths are configured until the host app (or the Railtie) sets them.
+    def definition_paths
+      @definition_paths ||= []
+    end
+
+    def find_definitions
+      DefinitionLoader.call(definition_paths)
+    end
+
     def define(target, klass: nil, &block)
       BakeryBuilder.register(target, klass: klass, &block)
     end
