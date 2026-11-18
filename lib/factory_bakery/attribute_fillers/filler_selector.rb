@@ -10,6 +10,30 @@ module FactoryBakery
 
       attr_reader :model_class, :attr_name
 
+      # Fillers capture schema and validator constraints at construction and
+      # are otherwise stateless: every `call` samples a fresh value. A bake
+      # resolves the same model/attribute pair many times (once to generate,
+      # again for confirmations, and once per uniqueness regeneration), so the
+      # resolved filler is kept on the model class, not in the per-bake
+      # builder. Reloading a model drops its cache with it.
+      def self.cached_for(model_class, attr_name)
+        return new(model_class, attr_name).call if model_class.frozen?
+
+        cache = model_class.instance_variable_get(:@factory_bakery_fillers) ||
+                model_class.instance_variable_set(:@factory_bakery_fillers, {})
+
+        key = attr_name.to_s
+        cached = cache[key]
+        return cached if cached
+
+        filler = new(model_class, key).call
+        # ConfirmationFiller exposes a mutable source value. It is only used
+        # for its class in the gem, but never share that state with callers.
+        return filler if defined?(ConfirmationFiller) && filler.is_a?(ConfirmationFiller)
+
+        cache[key] = filler
+      end
+
       def initialize(model_class, attr_name)
         @model_class = model_class
         @attr_name = attr_name.to_s

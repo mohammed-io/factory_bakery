@@ -31,8 +31,7 @@ module FactoryBakery
     end
 
     def child_reflections
-      @model_class.reflect_on_all_associations(:has_many) +
-        @model_class.reflect_on_all_associations(:has_one)
+      ReflectionCache.many(@model_class) + ReflectionCache.one(@model_class)
     end
 
     def columns_for(reflection)
@@ -50,7 +49,7 @@ module FactoryBakery
       child = associated_class(reflection)
       return [] unless child.respond_to?(:reflect_on_all_associations)
 
-      child.reflect_on_all_associations(:belongs_to).filter_map do |inverse|
+      ReflectionCache.belongs_to(child).filter_map do |inverse|
         next unless points_back_to_model?(inverse) && cached_counter?(inverse)
 
         counter_column(inverse)

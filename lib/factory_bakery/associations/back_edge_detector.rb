@@ -10,7 +10,7 @@ module FactoryBakery
         def edges(target, source_klass, reflection)
           return [] unless target.respond_to?(:reflect_on_all_associations)
 
-          target.reflect_on_all_associations
+          ReflectionCache.all(target)
                 .select { |candidate| back_edge?(candidate, source_klass, reflection) }
                 .map { |candidate| [target.name, candidate.name.to_s] }
         end

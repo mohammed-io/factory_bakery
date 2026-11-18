@@ -257,7 +257,7 @@ module FactoryBakery
     def belongs_to_association_names
       return [] unless @model_klass.respond_to?(:reflect_on_all_associations)
 
-      @model_klass.reflect_on_all_associations(:belongs_to).map { |reflection| reflection.name.to_s }
+      ReflectionCache.belongs_to(@model_klass).map { |reflection| reflection.name.to_s }
     end
 
     def plugin_declarations(plugin)
@@ -283,7 +283,7 @@ module FactoryBakery
     def alias_groups
       return {} unless @model_klass.respond_to?(:reflect_on_all_associations)
 
-      @model_klass.reflect_on_all_associations(:belongs_to).each_with_object({}) do |reflection, groups|
+      ReflectionCache.belongs_to(@model_klass).each_with_object({}) do |reflection, groups|
         members = [reflection.name.to_s, *Array(reflection.foreign_key).map(&:to_s)]
         members << reflection.foreign_type.to_s if reflection.polymorphic?
         members.uniq!
@@ -346,7 +346,7 @@ module FactoryBakery
     def belongs_to_column_names
       return [] unless column_backed? && @model_klass.respond_to?(:reflect_on_all_associations)
 
-      @model_klass.reflect_on_all_associations(:belongs_to).flat_map do |reflection|
+      ReflectionCache.belongs_to(@model_klass).flat_map do |reflection|
         names = Array(reflection.foreign_key).map(&:to_s)
         names << reflection.foreign_type.to_s if reflection.polymorphic?
         names
@@ -423,7 +423,7 @@ module FactoryBakery
       candidate_attribute_names.each do |attribute_name|
         next if reserved.include?(attribute_name)
 
-        filler = AttributeFillers::FillerSelector.new(@model_klass, attribute_name).call
+        filler = AttributeFillers::FillerSelector.cached_for(@model_klass, attribute_name)
         next unless filler.is_a?(AttributeFillers::ConfirmationFiller)
 
         source_name = attribute_name.sub(/_confirmation$/, '')

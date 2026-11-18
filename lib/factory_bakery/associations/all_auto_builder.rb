@@ -24,7 +24,7 @@ module FactoryBakery
         private
 
         def reflections(object)
-          object.class.reflect_on_all_associations.select { |reflection| auto_buildable?(reflection) }
+          ReflectionCache.all(object.class).select { |reflection| auto_buildable?(reflection) }
         end
 
         def auto_buildable?(reflection)

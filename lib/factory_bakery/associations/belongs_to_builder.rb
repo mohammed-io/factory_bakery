@@ -37,7 +37,7 @@ module FactoryBakery
         end
 
         def reflections_to_build(klass, context)
-          reflections = klass.reflect_on_all_associations(:belongs_to)
+          reflections = ReflectionCache.belongs_to(klass)
           required = reflections.select { |reflection| required?(klass, reflection) }
           return required unless Associations.mode == :all && !Associations.past_depth?(context)
 

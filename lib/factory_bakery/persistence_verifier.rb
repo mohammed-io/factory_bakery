@@ -53,7 +53,7 @@ module FactoryBakery
     end
 
     def association_on(object, record)
-      object.class.reflect_on_all_associations.each do |reflection|
+      ReflectionCache.all(object.class).each do |reflection|
         next unless object.respond_to?(reflection.name)
 
         value = associated_value(object, reflection.name)

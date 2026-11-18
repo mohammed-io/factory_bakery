@@ -42,7 +42,7 @@ module FactoryBakery
 
       def generate(key)
         @resolving << key
-        filler = FillerSelector.new(@model_class, key).call
+        filler = FillerSelector.cached_for(@model_class, key)
         # Same exclusions as the builder's old heuristic pass: these fillers
         # never contribute an assigned value to the object.
         return nil if filler.is_a?(NoopFiller) || filler.is_a?(ConfirmationFiller)

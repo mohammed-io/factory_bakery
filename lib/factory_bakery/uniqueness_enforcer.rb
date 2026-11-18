@@ -64,7 +64,7 @@ module FactoryBakery
     end
 
     def regenerate(attribute)
-      filler = AttributeFillers::FillerSelector.new(@record.class, attribute).call
+      filler = AttributeFillers::FillerSelector.cached_for(@record.class, attribute)
       filler.call
     end
 
