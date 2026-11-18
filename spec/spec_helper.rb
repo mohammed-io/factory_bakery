@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'factory_bakery'
+require_relative 'support/database'
 require_relative 'support/macros/define_constant'
 
 RSpec.configure do |config|

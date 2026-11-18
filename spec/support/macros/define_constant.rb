@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'active_record'
+require_relative '../database'
 
 module DefineConstantMacros
   def define_class(path, base = Object, &block)
@@ -23,19 +24,21 @@ module DefineConstantMacros
 
   def define_model(name, columns = {}, &block)
     # Create table first (needed for enum support)
-    table_name = ActiveRecord::Base.table_name_prefix + name.pluralize
+    # Lowercase plural names match ActiveRecord's own conventions and keep
+    # foreign keys resolvable on case-sensitive databases (PostgreSQL).
+    table_name = ActiveRecord::Base.table_name_prefix + name.underscore.pluralize
 
     connection = ActiveRecord::Base.connection
-    connection.execute("DROP TABLE IF EXISTS #{table_name}")
+    connection.drop_table(table_name, if_exists: true)
     connection.create_table(table_name) do |table|
       columns.each do |column_name, type_or_options|
         if type_or_options.is_a?(Hash)
           # Support { type: :string, limit: 8 } syntax
           column_type = type_or_options.delete(:type)
-          table.column(column_name, column_type, **type_or_options)
+          table.column(column_name, DatabaseSupport.column_type(column_type), **type_or_options)
         else
           # Support simple :string syntax
-          table.column column_name, type_or_options
+          table.column column_name, DatabaseSupport.column_type(type_or_options)
         end
       end
     end
@@ -65,12 +68,12 @@ module DefineConstantMacros
     connection = ActiveRecord::Base.connection
 
     begin
-      connection.execute("DROP TABLE IF EXISTS #{table_name}")
+      connection.drop_table(table_name, if_exists: true)
       connection.create_table(table_name, &block)
       created_tables << table_name
       connection
     rescue Exception => e # rubocop:disable Lint::RescueException
-      connection.execute("DROP TABLE IF EXISTS #{table_name}")
+      connection.drop_table(table_name, if_exists: true)
       raise e
     end
   end
@@ -83,7 +86,7 @@ module DefineConstantMacros
 
     # Drop the table
     table_name = name.pluralize
-    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{table_name}")
+    ActiveRecord::Base.connection.drop_table(table_name, if_exists: true)
 
     # Remove from tracking
     created_constants.delete(name)
@@ -92,9 +95,10 @@ module DefineConstantMacros
   end
 
   def clear_generated_tables
-    # Only drop tables - RSpec's stub_const will handle constant cleanup
-    created_tables.each do |table_name|
-      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{table_name}")
+    # Drop in reverse creation order: children are created after their
+    # parents, and real FK constraints reject dropping a referenced parent.
+    created_tables.reverse_each do |table_name|
+      ActiveRecord::Base.connection.drop_table(table_name, if_exists: true)
     end
     created_tables.clear
 
@@ -104,9 +108,7 @@ module DefineConstantMacros
   end
 
   def clear_generated_table(table_name)
-    ActiveRecord::Base
-      .connection
-      .execute("DROP TABLE IF EXISTS #{table_name}")
+    ActiveRecord::Base.connection.drop_table(table_name, if_exists: true)
   end
 
   private
@@ -128,10 +130,7 @@ RSpec.configure do |config|
   config.include DefineConstantMacros
 
   config.before(:all) do
-    ActiveRecord::Base.establish_connection(
-      adapter: 'sqlite3',
-      database: ':memory:'
-    )
+    DatabaseSupport.establish_connection!
   end
 
   config.after do

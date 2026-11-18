@@ -5,10 +5,12 @@ source "https://rubygems.org"
 gem "rake"
 gem "rspec"
 gem "rubocop"
+gem "rails", "~> 7.2"
+gem "pg", "~> 1.5"
+gem "mysql2", "~> 0.5"
 gem "activerecord-jdbcsqlite3-adapter", platforms: [:jruby]
 gem "sqlite3", "~> 1.4"
 gem "appraisal"
 gem "puma"
-gem "rails", "~> 7.2"
 
 gemspec path: "../"

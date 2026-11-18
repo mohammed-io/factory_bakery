@@ -181,7 +181,7 @@ RSpec.describe FactoryBakery::AttributeFillers::FloatFiller do
 
       before do
         # Drop table if exists, then create with decimal column having scale
-        ActiveRecord::Base.connection.execute('DROP TABLE IF EXISTS prices')
+        ActiveRecord::Base.connection.drop_table(:prices, if_exists: true)
         ActiveRecord::Base.connection.create_table(:prices) do |t|
           t.decimal :amount, precision: 10, scale: 2
         end

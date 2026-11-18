@@ -1,0 +1,88 @@
+name: Test matrix
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  sqlite:
+    name: SQLite / ${{ matrix.gemfile }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gemfile: [rails7.1, rails7.2, rails8.0]
+    env:
+      BUNDLE_GEMFILE: gemfiles/${{ matrix.gemfile }}.gemfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.3'
+          bundler-cache: true
+      - run: bundle exec rspec --format progress
+
+  postgres:
+    name: PostgreSQL / ${{ matrix.gemfile }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gemfile: [rails7.1, rails7.2, rails8.0]
+    env:
+      BUNDLE_GEMFILE: gemfiles/${{ matrix.gemfile }}.gemfile
+      DATABASE_URL: postgres://postgres:postgres@127.0.0.1:5432/factory_bakery_test
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: factory_bakery_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.3'
+          bundler-cache: true
+      - run: bundle exec rspec --format progress
+
+  mysql:
+    name: MySQL / ${{ matrix.gemfile }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        gemfile: [rails7.1, rails7.2, rails8.0]
+    env:
+      BUNDLE_GEMFILE: gemfiles/${{ matrix.gemfile }}.gemfile
+      DATABASE_URL: mysql2://root:root@127.0.0.1:3306/factory_bakery_test?encoding=utf8mb4
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: factory_bakery_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysql -uroot -proot -e 'SELECT 1'"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MySQL client headers for mysql2
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libmysqlclient-dev
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.4.3'
+          bundler-cache: true
+      - run: bundle exec rspec --format progress

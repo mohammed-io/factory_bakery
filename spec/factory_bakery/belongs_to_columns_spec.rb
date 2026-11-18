@@ -17,7 +17,7 @@ RSpec.describe 'FactoryBakery belongs_to columns' do
       define_class('User', ActiveRecord::Base) { belongs_to :account, optional: true }
     end
 
-    before { ActiveRecord::Base.connection.execute('PRAGMA foreign_keys = ON') }
+    before { DatabaseSupport.enable_foreign_keys! }
 
     it 'leaves the FK nil after bake' do
       expect(FactoryBakery.bake(user_model).account_id).to be_nil

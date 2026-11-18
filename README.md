@@ -295,7 +295,57 @@ These are planned, not shipped: sequences, callbacks, and transient attributes. 
 
 ## Development
 
-After checking out the repo, run `bin/setup` to install dependencies. Run the suite with `bundle exec rspec`, and the linter with `bundle exec rubocop`. The Rails 7.1 / 7.2 / 8.0 appraisal gemfiles live in `gemfiles/`; run one with `BUNDLE_GEMFILE=gemfiles/rails8.0.gemfile bundle exec rspec`.
+After checking out the repo, run `bin/setup` to install dependencies. Run the linter with `bundle exec rubocop`.
+
+The Railtie requires Rails at load time, so `rails` (plus `pg` and `mysql2`, so any adapter can be selected from any gemfile) are development dependencies in the root `Gemfile`. That fixes plain `bundle exec rspec`, which previously failed with `cannot load such file -- rails`. The alternative — making the Railtie require conditional — was rejected because the Railtie specs boot a real `Rails::Application` and would still need Rails installed.
+
+### Rails matrix on in-memory SQLite
+
+One command runs every supported Rails version against in-memory SQLite:
+
+```bash
+mise exec -- bundle exec appraisal rspec
+```
+
+A single version can be run with `BUNDLE_GEMFILE=gemfiles/rails8.0.gemfile bundle exec rspec`, or with the root Gemfile via `bundle exec rspec` (Rails 8.x). With no `DATABASE_URL`, foreign-key enforcement is enabled on the SQLite connection and there are no skips.
+
+### Full Rails × database matrix
+
+`DATABASE_URL` selects the adapter for the whole suite; in-memory SQLite remains the default. The same specs, macros and tables run on all three databases.
+
+```bash
+# PostgreSQL
+DATABASE_URL=postgres://localhost/factory_bakery_test \
+  BUNDLE_GEMFILE=gemfiles/rails8.0.gemfile mise exec -- bundle exec rspec
+
+# MySQL (utf8mb4)
+DATABASE_URL='mysql2://root@127.0.0.1/factory_bakery_test?encoding=utf8mb4' \
+  BUNDLE_GEMFILE=gemfiles/rails8.0.gemfile mise exec -- bundle exec rspec
+```
+
+Local throwaway servers can be started with Docker:
+
+```bash
+docker run -d --name fb_pg -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=factory_bakery_test -p 55432:5432 postgres:16-alpine
+docker run -d --name fb_my -e MYSQL_ROOT_PASSWORD=root \
+  -e MYSQL_DATABASE=factory_bakery_test -p 53306:3306 mysql:8.4
+```
+
+CI runs the 3 × 3 matrix (Rails 7.1 / 7.2 / 8.0 × SQLite / PostgreSQL / MySQL) with service containers; see `.github/workflows/test-matrix.yml`.
+
+| Rails (resolved) | SQLite | PostgreSQL | MySQL |
+| --- | --- | --- | --- |
+| 7.1 (7.2.3) | ✅ | ✅ | ✅ |
+| 7.2 (7.2.3) | ✅ | ✅ | ✅ |
+| 8.0 (8.1.2) | ✅ | ✅ | ✅ |
+
+### Adapter notes
+
+- Real FK constraints are asserted on every adapter by attempting a dangling insert and expecting `ActiveRecord::InvalidForeignKey`. SQLite needs `PRAGMA foreign_keys = ON`; PostgreSQL and MySQL enforce FKs by default. Table cleanup drops children before parents so FK-constrained tables can be removed.
+- PostgreSQL uses `jsonb` for adapter-appropriate JSON columns; `json` has no equality operator, so a uniqueness-validated JSON column uses `jsonb` there.
+- MySQL uses `utf8mb4`. Its case-insensitive collation means `:reuse` string matches can be case-insensitive, unlike SQLite/PostgreSQL. JSON columns also cannot be compared to a bound string without `CAST(... AS JSON)`, so ActiveRecord's uniqueness validator cannot observe a duplicate JSON payload on MySQL; the uniqueness spec documents that behavior instead of faking a collision.
+- The `rails7.1` appraisal currently resolves Rails 7.2.3 (its constraint is `~> 7.1, >= 7.1`); the resolved versions are shown in the table above.
 
 ## Contributing
 
