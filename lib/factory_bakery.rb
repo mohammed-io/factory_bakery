@@ -21,5 +21,16 @@ require_relative 'factory_bakery/attribute_fillers/filler_selector'
 
 module FactoryBakery
   class Error < StandardError; end
-  # Your code goes here...
+
+  class << self
+    def bake(klass, **overrides)
+      BakeryBuilder.new(klass).build(overrides: overrides)
+    end
+
+    def bake!(klass, **overrides)
+      object = bake(klass, **overrides)
+      object.save! if object.respond_to?(:save!)
+      object
+    end
+  end
 end
