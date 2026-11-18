@@ -13,4 +13,8 @@
 .idea
 .vscode
 .serena/
+# Ignore smoke-test cache (deterministic pipeline artifacts)
+.smoke-tests/
+
+# macOS
 .DS_Store
