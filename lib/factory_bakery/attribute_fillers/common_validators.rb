@@ -56,6 +56,21 @@ module FactoryBakery
       def forbidden_values?(value)
         @forbidden_values&.include?(value)
       end
+
+      # POROs have no schema and may have no ActiveModel validators either.
+      # Schema and validator lookups are optional so fillers can run on any
+      # target that exposes the relevant information.
+      def column_for(model_class, attr_name)
+        return nil unless model_class.respond_to?(:columns_hash)
+
+        model_class.columns_hash[attr_name.to_s]
+      end
+
+      def validators_for(model_class, attr_name)
+        return [] unless model_class.respond_to?(:validators_on)
+
+        model_class.validators_on(attr_name)
+      end
     end
   end
 end

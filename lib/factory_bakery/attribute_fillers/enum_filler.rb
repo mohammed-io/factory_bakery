@@ -10,7 +10,7 @@ module FactoryBakery
         @attr_name = attr_name.to_s
 
         # Schema constraints
-        @column = model_class.columns_hash[@attr_name]
+        @column = column_for(model_class, attr_name)
         @nullable = @column&.null
         @has_default = @column&.default
 
@@ -27,7 +27,7 @@ module FactoryBakery
         load_enum_definition
 
         # Process all validators
-        model_class.validators_on(attr_name).each do |validator|
+        validators_for(model_class, attr_name).each do |validator|
           apply_validator(validator)
         end
       end
@@ -62,7 +62,7 @@ module FactoryBakery
         # Fallback: try to detect from inclusion validator with string array
         return unless @enum_values.empty?
 
-        @model_class.validators_on(@attr_name).each do |validator|
+        validators_for(@model_class, @attr_name).each do |validator|
           next unless validator.instance_of?(ActiveModel::Validations::InclusionValidator)
 
           values = validator.options[:in]

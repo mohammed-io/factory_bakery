@@ -10,7 +10,7 @@ module FactoryBakery
         @attr_name = attr_name.to_s
 
         # Schema constraints from columns_hash
-        @column = model_class.columns_hash[@attr_name]
+        @column = column_for(model_class, attr_name)
         @db_limit = @column&.limit
         @nullable = @column&.null
         @has_default = @column&.default
@@ -27,7 +27,7 @@ module FactoryBakery
         @absence_required = false
 
         # Process all validators for this attribute
-        model_class.validators_on(attr_name).each do |validator|
+        validators_for(model_class, attr_name).each do |validator|
           apply_validator(validator)
         end
       end

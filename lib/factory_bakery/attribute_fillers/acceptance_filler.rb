@@ -8,8 +8,10 @@ module FactoryBakery
         @attr_name = attr_name.to_s
         @accept_value = nil
 
-        # Process all validators to find acceptance validator
-        model_class.validators_on(attr_name).each do |validator|
+        # Process all validators to find acceptance validator. Targets without
+        # ActiveModel validators simply have no accepted value to discover.
+        validators = model_class.respond_to?(:validators_on) ? model_class.validators_on(attr_name) : []
+        validators.each do |validator|
           apply_validator(validator)
         end
       end

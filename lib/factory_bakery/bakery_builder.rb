@@ -108,11 +108,34 @@ module FactoryBakery
     end
 
     def instantiate
-      if @initialize_with_attributes
-        @model_klass.new(@initialize_with_attributes)
-      else
-        @model_klass.new
+      return @model_klass.new unless @initialize_with_attributes
+
+      parameters = @model_klass.instance_method(:initialize).parameters
+      return build_with_setters if parameters.empty?
+      return @model_klass.new(**symbolized_initialize_with) if keyword_initializer?(parameters)
+
+      @model_klass.new(@initialize_with_attributes)
+    end
+
+    def keyword_initializer?(parameters)
+      parameters.all? { |type, _| %i[key keyreq keyrest].include?(type) }
+    end
+
+    def symbolized_initialize_with
+      @initialize_with_attributes.each_with_object({}) do |(name, value), attributes|
+        attributes[name.to_sym] = value
       end
+    end
+
+    # POROs whose constructor takes no arguments receive their initialize_with
+    # values through setters, just like declared attributes.
+    def build_with_setters
+      object = @model_klass.new
+      normalize_keys(@initialize_with_attributes).each do |name, value|
+        setter = "#{name}="
+        object.public_send(setter, value) if object.respond_to?(setter)
+      end
+      object
     end
 
     # Precedence: heuristics < declarations (base, then traits) < call-site overrides.
@@ -127,20 +150,49 @@ module FactoryBakery
     end
 
     def heuristic_values
-      return {} unless @model_klass.respond_to?(:columns_hash)
-
       skip = declared_names + normalize_keys(@initialize_with_attributes).keys
 
-      @model_klass.columns_hash.each_key.with_object({}) do |column_name, values|
-        next if column_name.to_s == @model_klass.primary_key.to_s
-        next if skip.include?(column_name.to_s)
+      candidate_attribute_names.each_with_object({}) do |attribute_name, values|
+        next if column_backed? && attribute_name == @model_klass.primary_key.to_s
+        next if skip.include?(attribute_name)
 
-        filler = AttributeFillers::FillerSelector.new(@model_klass, column_name).call
-        next if filler.is_a?(AttributeFillers::NoopFiller)
-        next if filler.is_a?(AttributeFillers::ConfirmationFiller)
+        filler = AttributeFillers::FillerSelector.new(@model_klass, attribute_name).call
+        next if heuristic_skip?(filler)
 
-        values[column_name.to_s] = filler.call
+        values[attribute_name] = filler.call
       end
+    end
+
+    def heuristic_skip?(filler)
+      filler.is_a?(AttributeFillers::NoopFiller) ||
+        filler.is_a?(AttributeFillers::ConfirmationFiller)
+    end
+
+    def column_backed?
+      @model_klass.respond_to?(:columns_hash)
+    end
+
+    # ActiveRecord targets enumerate their columns. POROs have no schema, so
+    # the only attributes that can carry heuristic information are the ones
+    # their validators declare.
+    def candidate_attribute_names
+      return @model_klass.columns_hash.keys.map(&:to_s) if column_backed?
+
+      validator_attribute_names
+    end
+
+    def validator_attribute_names
+      return [] unless @model_klass.respond_to?(:validators)
+
+      @model_klass.validators.flat_map do |validator|
+        names = Array(validator.attributes).map(&:to_s)
+        class_name = validator.class.name
+        if class_name == 'ActiveModel::Validations::ConfirmationValidator'
+          names + names.map { |name| "#{name}_confirmation" }
+        else
+          names
+        end
+      end.uniq
     end
 
     def declared_values
@@ -163,17 +215,16 @@ module FactoryBakery
     end
 
     def apply_confirmations(object, reserved)
-      return unless @model_klass.respond_to?(:columns_hash)
+      candidate_attribute_names.each do |attribute_name|
+        next if reserved.include?(attribute_name)
 
-      @model_klass.columns_hash.each_key do |column_name|
-        next if reserved.include?(column_name.to_s)
-
-        filler = AttributeFillers::FillerSelector.new(@model_klass, column_name).call
+        filler = AttributeFillers::FillerSelector.new(@model_klass, attribute_name).call
         next unless filler.is_a?(AttributeFillers::ConfirmationFiller)
 
-        source_name = column_name.to_s.sub(/_confirmation$/, '')
+        source_name = attribute_name.sub(/_confirmation$/, '')
         source_value = object.public_send(source_name) if object.respond_to?(source_name)
-        object.public_send("#{column_name}=", source_value)
+        setter = "#{attribute_name}="
+        object.public_send(setter, source_value) if object.respond_to?(setter)
       end
     end
 

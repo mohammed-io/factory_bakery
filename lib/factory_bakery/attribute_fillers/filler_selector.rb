@@ -17,7 +17,37 @@ module FactoryBakery
         # Priority 2: Acceptance attribute
         return acceptance_filler if acceptance_attribute?
 
-        # Get column info for type-based routing
+        # Non-ActiveRecord targets have no schema to route by. Use whatever
+        # validator information the target exposes instead.
+        return validator_routed_filler unless active_record_target?
+
+        column_routed_filler
+      end
+
+      private
+
+      def confirmation_attribute?
+        attr_name.end_with?('_confirmation')
+      end
+
+      def acceptance_attribute?
+        attr_name.end_with?('_accepted') ||
+          validators_for(attr_name).any? do |v|
+            v.instance_of?(ActiveModel::Validations::AcceptanceValidator)
+          end
+      end
+
+      def active_record_target?
+        model_class.respond_to?(:columns_hash)
+      end
+
+      def validators_for(name)
+        return [] unless model_class.respond_to?(:validators_on)
+
+        model_class.validators_on(name)
+      end
+
+      def column_routed_filler
         column = model_class.columns_hash[attr_name]
 
         # Priority 3: Has default or virtual attribute -> Noop
@@ -30,17 +60,75 @@ module FactoryBakery
         type_based_filler(column)
       end
 
-      private
-
-      def confirmation_attribute?
-        attr_name.end_with?('_confirmation')
+      def validator_named?(validators, name)
+        validators.any? do |validator|
+          class_name = validator.class.name
+          class_name == name
+        end
       end
 
-      def acceptance_attribute?
-        attr_name.end_with?('_accepted') ||
-          model_class.validators_on(attr_name).any? do |v|
-            v.instance_of?(ActiveModel::Validations::AcceptanceValidator)
-          end
+      # Route a schema-less target by the validators it declares. The attribute
+      # universe is already limited to validator-covered names by the builder,
+      # so no-information attributes never reach this path.
+      def validator_routed_filler
+        validators = validators_for(attr_name)
+        return noop_filler if validators.empty?
+
+        if (inclusion = find_validator(validators, 'ActiveModel::Validations::InclusionValidator'))
+          return inclusion_based_filler(inclusion)
+        end
+
+        return string_filler if validator_named?(validators, 'ActiveModel::Validations::LengthValidator')
+        return string_filler if validator_named?(validators, 'ActiveModel::Validations::FormatValidator')
+
+        if (numericality = find_numericality_validator(validators))
+          return numericality_filler(numericality)
+        end
+
+        # Presence, exclusion and other validators carry no value of their
+        # own; a name-derived string is still a valid generated default.
+        string_filler
+      end
+
+      def find_validator(validators, name)
+        validators.find do |validator|
+          class_name = validator.class.name
+          class_name == name
+        end
+      end
+
+      def find_numericality_validator(validators)
+        find_validator(validators, 'ActiveModel::Validations::NumericalityValidator') ||
+          find_validator(validators, 'ActiveRecord::Validations::NumericalityValidator')
+      end
+
+      def inclusion_based_filler(validator)
+        values = Array(validator.options[:in])
+        return noop_filler if values.empty?
+        return integer_filler if values.all? { |value| value.is_a?(Integer) }
+        return float_filler if values.all? { |value| value.is_a?(Numeric) }
+
+        string_filler
+      end
+
+      def numericality_filler(validator)
+        options = validator.options
+        return integer_filler if options[:only_integer]
+
+        comparison_values = [
+          options[:greater_than], options[:greater_than_or_equal_to], options[:equal_to],
+          options[:less_than], options[:less_than_or_equal_to], options[:other_than],
+          options[:in]
+        ].compact
+
+        comparison_values.any? { |value| float_value?(value) } ? float_filler : integer_filler
+      end
+
+      def float_value?(value)
+        return true if value.is_a?(Float)
+        return false unless value.is_a?(Range)
+
+        [value.first, value.last].any? { |bound| bound.is_a?(Float) }
       end
 
       def has_default?(column)
@@ -63,7 +151,7 @@ module FactoryBakery
           model_class.pluralized_enum_values.key?(pluralized_name)
         else
           # Check for inclusion validator with string array
-          model_class.validators_on(attr_name).any? do |v|
+          validators_for(attr_name).any? do |v|
             v.instance_of?(ActiveModel::Validations::InclusionValidator) &&
               Array(v.options[:in]).all? { |val| val.is_a?(String) }
           end
