@@ -151,6 +151,7 @@ module FactoryBakery
       winning_declarations = declared_values(normalized_overrides, groups)
 
       heuristic_values(suppressed_names(normalized_overrides, groups))
+        .merge(counter_cache_values)
         .merge(winning_declarations)
         .merge(normalized_overrides)
     end
@@ -175,10 +176,12 @@ module FactoryBakery
 
     # A group taken by a declaration, an override or initialize_with suppresses
     # every heuristic member of that group, not just the member that was named.
-    # Columns behind a belongs_to are always skipped (see belongs_to_column_names).
+    # Columns behind a belongs_to are always skipped (see belongs_to_column_names),
+    # and Rails-maintained counter caches are never randomly filled either.
     def suppressed_names(overrides, groups)
       names = declared_names + overrides.keys + normalize_keys(@initialize_with_attributes).keys
-      (names.flat_map { |name| groups.fetch(name, [name]) } + belongs_to_column_names).uniq
+      (names.flat_map { |name| groups.fetch(name, [name]) } + belongs_to_column_names +
+        counter_cache_column_names).uniq
     end
 
     def heuristic_values(skip)
@@ -190,6 +193,29 @@ module FactoryBakery
         next if heuristic_skip?(filler)
 
         values[attribute_name] = filler.call
+      end
+    end
+
+    def skipped_attribute_names
+      declared_names + normalize_keys(@initialize_with_attributes).keys + counter_cache_column_names
+    end
+
+    def counter_cache_column_names
+      @counter_cache_column_names ||= column_backed? ? CounterCacheDetector.new(@model_klass).column_names : []
+    end
+
+    # Rails maintains counter caches, so they are never randomly filled. A
+    # database default (and a naturally nil nullable column) is left untouched;
+    # a NOT NULL counter without a default becomes 0. This sits in the heuristic
+    # layer, so declarations and overrides still win.
+    def counter_cache_values
+      explicitly_set = declared_names + normalize_keys(@initialize_with_attributes).keys
+
+      counter_cache_column_names.each_with_object({}) do |name, values|
+        next if explicitly_set.include?(name)
+
+        column = @model_klass.columns_hash[name]
+        values[name] = 0 if column && !column.null && column.default.nil?
       end
     end
 
