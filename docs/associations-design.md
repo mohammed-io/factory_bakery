@@ -1,6 +1,7 @@
 # Associations: design study
 
-Status: **proposal, for review.** Follow-up to the scope issue #1 deferred ("Out of Scope: associations").
+Status: **proposal, revised after user review (2026-11-18).** Follow-up to the scope issue #1 deferred ("Out of Scope: associations").
+Revision: associations ship as an **opt-in plugin** with modes `:none` / `:required_only` / `:all` (approaches C and B both kept), a factory_bot-style `association` DSL, and a per-association `strategy:` of `:fresh` / `:reuse`. §1–§3 are unchanged analysis; §4 is the revised decision.
 Baseline: commit `d1f5c5f` (feat: PORO targets) on `mohd/v0.0.2`. All `file:line` citations refer to that commit.
 
 Evidence labels used below:
@@ -79,7 +80,7 @@ Every association gets an associated object, including has_many/has_one with N c
 - **DB-touch:** heavy on `bake!` (one INSERT per node). Even `bake` allocates the whole graph.
 - **Blast radius:** large. Every existing `bake` of a model with associations changes shape and speed, and test counts like `Comment.count` shift.
 - **Customization:** needs the full factory_bot vocabulary (`association`, strategies, `count`, transients, callbacks). Transients and callbacks are separately deferred, so this approach drags them in.
-- **Verdict:** contradicts the gem's "minimal valid object" heuristic identity. Reject as a default.
+- **Verdict:** contradicts the gem's "minimal valid object" heuristic identity as a *default*. **Revised: kept as the opt-in `:all` plugin mode, bounded by depth and inverse-edge rules (§4.3).** The `count:` option replaces the transients/callbacks dependency.
 
 ### C. Hybrid / required-only (model-bakery-style)
 
@@ -100,7 +101,7 @@ Auto-build **only required `belongs_to`** (validator or NOT NULL signal), recurs
 
 For a required FK, use `reflection.klass.first` (or a random row), and create one only if the table is empty.
 
-- Cheap, with fewer INSERTs. But it makes tests order-dependent and nondeterministic, couples them through shared rows, and turns `bake` into a DB read. That contradicts `bake` being DB-free (issue #1 story 13). **Reject.** It could come back later as an explicit opt-in (`_reuse: true`) if speed is ever a problem [guess].
+- Cheap, with fewer INSERTs. But it makes tests order-dependent and nondeterministic, couples them through shared rows, and turns `bake` into a DB read. That contradicts `bake` being DB-free (issue #1 story 13). **Rejected as a default. Revised: kept as the explicit `strategy: :reuse` for `belongs_to` only (§4.5).** It also fixes the diamond duplication in §3.8.
 
 ### E. Stubbed ids (factory_bot `build_stubbed`-style)
 
@@ -233,83 +234,222 @@ FactoryBakery's closest kin is model-bakery: auto-fill only what the schema says
 
 ---
 
-## 4. Recommendation
+## 4. Decision (revised): an opt-in associations plugin
 
-**Approach C (required-only hybrid), shipped in stages, with A's guard-rails first.** It is the smallest change that makes `bake!` pass on Rails-default schemas, it keeps `bake` DB-free, and it matches the gem's identity: the validators and the schema say what is required, and the gem fills exactly that.
+Per user review: associations are a **separate, opt-in plugin**, a self-contained module in its own folder, loaded explicitly. It offers three modes (`:none`, `:required_only`, `:all`), a factory_bot-style `association` DSL, and a per-association `strategy:` (`:fresh` / `:reuse`). Core stays heuristic-only. It gains only the guard-rails and bug fixes that are wrong *today* regardless of the plugin, plus a small hook API.
 
-### Staged rollout
+### 4.1 Core vs plugin split
 
-- **Stage 0: fix today's hand-written association bugs (independent, ship first).** F8 (overridden blocks don't run), F9 (alias-group precedence), F10 (ambient build context + cycle/depth error). These hurt users of the DSL now, and stage 2 builds on all three.
-- **Stage 1: column guard-rails (approach A).** Nil FKs for every `belongs_to`, nil polymorphic pairs, untouched STI column, counter caches 0 or skipped.
-- **Stage 2: required `belongs_to` auto-build.** Validator or NOT NULL signal; unsaved on `bake`, autosaved atomically on `bake!`; loop closing via inverse, otherwise `CyclicAssociationError`; required polymorphic raises a clear error.
-- **Stage 3: explicit deep build (separate design pass, not scheduled).** Owner-aware association blocks (§3.14 a). Collection sugar only if real demand appears.
+| Concern | Lives in | Why |
+|---|---|---|
+| F8 overridden blocks don't run, F9 alias-group precedence | **core** | Precedence bugs in the existing DSL. They hurt hand-written associations today (F7). |
+| F10 ambient build context + cycle/depth error | **core** | Hand-written nested `bake` calls overflow today. The plugin reads the same context. |
+| STI column, FK + polymorphic pair not faked, counter caches (F3–F5) | **core** | These are filler correctness ("don't fake what can't be known"), not association building. Without the plugin, output must still be valid. |
+| Plugin hook API (§4.6) | **core** | ~40 lines. Also the future home for sequences/transients plugins. |
+| `association` reserved name | **core** | Without the plugin, `association :x` currently falls into `method_missing` (`bakery_builder.rb:87-91`) and is **silently ignored**: its block is nil, so `declared_values` skips it (`:200`). Core defines a stub that raises "`require 'factory_bakery/associations'` to use `association`". |
+| Modes, `association` DSL, strategies, building, inverse binding | **plugin** | Everything that instantiates associated objects. |
 
-### Config surface (minimal)
+Without the plugin, behavior equals the plugin's `:none` mode minus the DSL.
 
-```ruby
-FactoryBakery.associations = :required   # default from stage 2; :off restores stage-1 behavior
-FactoryBakery.max_association_depth = 5  # backstop, raises when exceeded
+### 4.2 Loading and folder layout
+
+```
+lib/factory_bakery/associations.rb            # entry point: requires folder, registers plugin
+lib/factory_bakery/associations/
+  configuration.rb   # mode, strategy, max_depth, default_count, .with { } scoping
+  dsl.rb             # `association` method mixed into the definition scope
+  declaration.rb     # Struct: name, traits, factory, count, strategy, overrides, block
+  planner.rb         # class → reflections to auto-build for the active mode (memoized per class)
+  modes.rb           # MODES = { none: ->(r) { false }, required_only: ..., all: ... }
+  resolver.rb        # :fresh / :reuse lookup for one reflection
+  assembler.rb       # builds, binds inverses, assigns, checks cycles via core context
+spec/factory_bakery/associations/*_spec.rb
 ```
 
-- No `:all` mode. It would be approach B, which this study rejects.
-- **No per-bake kwarg yet.** `**overrides` shares one namespace with model attributes (`factory_bakery.rb:30`), so a kwarg named `associations:` could collide with a real column. If one is ever needed, use a reserved underscore prefix (`_associations: :off`), following model-bakery's `_fill_optional`/`_save_related` convention. Per-association opt-out already exists: `account { nil }` or `bake(User, account: nil)`.
+- Plain Ruby: `require 'factory_bakery/associations'` registers the plugin on require, with the default mode `:required_only`.
+- Rails: `config.factory_bakery.associations = { mode: :required_only }` makes the Railtie require it (ties into issue #9). Leaving it unset means no plugin.
+- Modes are lambdas over a reflection, not classes. Three predicates don't earn a class hierarchy (YAGNI).
+- The layout is self-contained, so extracting it to a `factory_bakery-associations` gem later is a move, not a rewrite. The hooks are the only coupling.
 
-### Ticket breakdown (tracer-bullet slices)
+### 4.3 Modes
 
-Each ticket is a vertical slice through the public API (`bake`/`bake!`/`define`) with observable-behavior specs, in line with issue #1's testing decisions.
+| Mode | Auto-builds (when not declared/overridden) | Never auto-builds |
+|---|---|---|
+| `:none` | nothing; only explicit `association` declarations | — |
+| `:required_only` (default) | required `belongs_to` (validator or NOT NULL signal), recursively | optional `belongs_to`, `has_one`, `has_many`, through, HABTM |
+| `:all` | every non-polymorphic `belongs_to` (optional too), `has_one` (1), `has_many` (`default_count`, default 1) | through / HABTM (the join is the `has_many`'s job), optional polymorphic |
 
-**T1: Overridden declarations are not evaluated** (stage 0)
-- `bake(User, account: a)` does not execute the definition's `account { }` block (observable via a counter or a side effect).
-- Same for overrides that suppress a trait-declared attribute.
-- Existing precedence specs stay green.
+All modes: a required polymorphic association raises an actionable error unless declared (§3.2).
 
-**T2: Association/FK alias-group precedence** (stage 0, depends on T1)
-- With `account { bake(Account) }` declared, `bake(User, account_id: 7).account_id == 7`.
-- `bake(User, account: a).account_id == a.id` regardless of the heuristic FK.
-- Polymorphic: overriding `commentable:` sets both type and id. Overriding only `commentable_type`/`commentable_id` suppresses a declared `commentable`.
-- PORO and non-association attributes are unaffected.
+Rules that keep `:all` bounded (the problems in §3.8 and §3.14):
+1. **Never walk back the edge you came from.** Building `post.comments` binds each comment's inverse `belongs_to :post` to the owner (passed as an override), so the child never builds a second Post.
+2. **Depth budget truncates `:all` to `:required_only`.** It does not raise. Past `max_depth` (default 2 for `:all`), only required `belongs_to` keep being built, because objects must stay valid. The required chain stays bounded by cycle detection (§3.1).
+3. Cycles raise `CyclicAssociationError` with the path, unless an inverse closes the loop. Same rule in every mode.
 
-**T3: Cycle and depth detection across nested bakes** (stage 0)
-- Mutually recursive declarations raise `FactoryBakery::CyclicAssociationError` whose message contains the class path. No `SystemStackError`.
-- Nesting deeper than `max_association_depth` raises `FactoryBakery::Error`.
-- Non-cyclic nested bakes (User → Account) still work.
-- After a raised error, the next independent `bake` succeeds (context cleaned up in `ensure`).
+Scoping, from most specific to least:
+```ruby
+FactoryBakery::Associations.mode = :required_only                 # global
+FactoryBakery::Associations.with(mode: :all) { bake!(Post) }      # per call; ambient for the whole graph
+```
+Use a block scope rather than a kwarg: `**overrides` shares its namespace with model attributes (`factory_bakery.rb:30`). If a kwarg is ever wanted, use the reserved `_associations:` (model-bakery `_fill_optional` convention). Per-factory mode (`associations :all` inside `define`) is deferred until someone asks for it.
 
-**T4: STI type column left to Rails** (stage 1)
-- `bake(Admin).type == 'Admin'`. `bake!(Admin)` reloads as `Admin`.
-- `bake(User)` (base) has nil type.
-- `bake(Admin, type: 'User')` keeps the override.
+### 4.4 The `association` DSL
 
-**T5: belongs_to FK and polymorphic pair are not faked** (stage 1)
-- Optional `belongs_to`: `bake(User).account_id` is nil, and `bake!` passes with a DB FK constraint present (SQLite `PRAGMA foreign_keys = ON` in the spec).
-- Optional polymorphic: `commentable_type` and `commentable_id` are both nil. `bake!` passes.
-- A plain integer column that is not an FK is still heuristically filled.
+```ruby
+FactoryBakery.define(Post) do
+  title { 'Hello' }
 
-**T6: Counter-cache columns not faked** (stage 1)
-- `bake(Post).comments_count` is 0 or nil (per NOT NULL), never random, when `Comment belongs_to :post, counter_cache: true`.
+  association :author                                       # class from reflection; its factory + heuristics
+  association :author, :admin, factory: :editor, name: 'Ann' # traits, named factory, overrides for the child
+  association :category, strategy: :reuse                   # reuse an existing row (§4.5)
+  association :comments, count: 3, body: 'nice'             # has_many; inverse bound to this post
+  association :commentable, factory: :post                  # polymorphic: names the target
+  association(:reviewer) { |post| FactoryBakery.bake(User, team: post.team) } # escape hatch, owner-aware
 
-**T7: Required belongs_to auto-built** (stage 2, depends on T2, T3, T5)
-- With `optional: false` (explicit in the spec, see §3.15), `bake(User).account` is a new, unsaved, valid `Account`, and `bake` performs zero INSERTs.
-- `bake!(User)` persists both records. If the User fails validation, no Account row remains (atomicity).
-- A NOT NULL FK with `optional: true` is also auto-built.
-- The parent class's registered factory and traits-free definition apply (`define(Account) { name { 'Acme' } }` → `'Acme'`).
-- `account { nil }` in a definition and `bake(User, account: nil)` both suppress auto-build.
-- `FactoryBakery.associations = :off` restores T5 behavior.
-- POROs: no change, no error.
+  trait :anonymous do
+    author { nil }                                          # opt-out = existing attribute block
+  end
+end
+```
 
-**T8: Cycles in auto-build** (stage 2, depends on T3, T7)
-- Mutual required `belongs_to` with `inverse_of` closes the loop in memory, and `bake` succeeds without building a second root.
-- Without an inverse: `CyclicAssociationError` naming both reflections, with an opt-out hint.
-- Required self-referential `belongs_to`: a clear error with a hint.
+Signature: `association(name, *traits, factory: nil, count: nil, strategy: nil, **overrides, &block)`.
 
-**T9: Required polymorphic gives an actionable error** (stage 2, depends on T7)
-- `bake(Comment)` with required `belongs_to :commentable, polymorphic: true` raises `FactoryBakery::Error` that names the association and suggests a declaration or override.
-- With `commentable { bake(Post) }` declared, `bake!` passes and the type is `'Post'`.
+- **Evaluated after instantiation**, so the owner exists. That fixes F11 and enables inverse binding. The plugin's `after_instantiate` hook does it (§4.6).
+- `name` is checked against `reflect_on_association` **at bake time**, not at definition time, because definition files load before models (issue #1 story 8). An unknown name raises `FactoryBakery::Error`.
+- It sits in the **declarations layer**: traits can redeclare (later wins). Call-site overrides of `author:` or `author_id:` suppress it (alias group, F9 fix). Mode auto-build stays in the heuristics layer.
+- `count:` on a singular association raises. Overrides apply to every child.
+- Persistence: `bake` builds unsaved. `bake!` relies on the root's autosave transaction (§3.9). No `strategy: :create` is needed.
 
-**T10 (not scheduled): owner-aware association blocks**, stage 3, needs a grilling/design pass first (§3.14).
+#### Other DSL/API pieces: needed vs rejected
 
-### Open questions for the user
+| Piece | Verdict | Why |
+|---|---|---|
+| `association(name, …)` | **needed** | Customizes one edge (traits, factory, overrides) without hand-writing `bake` calls, and is the only way to name a polymorphic target. |
+| Owner block arg `{ \|owner\| … }` | **needed** | Children must reference their parent (F11). It is explicit, so no factory_bot `instance` magic. It is backward compatible because blocks with arity 0 keep today's behavior. |
+| `count:` | **needed** | `has_many` in a single line. It replaces factory_bot's transient + `after(:create)` pattern, so transients and callbacks can stay deferred. |
+| `strategy: :fresh \| :reuse` | **needed** (your ask) | Graph size and speed, plus shared lookup rows. See §4.5. |
+| `Associations.with(mode:, strategy:) { }` | **needed** | A global mode can't vary per test. A kwarg would collide with attribute names. |
+| `max_depth`, `default_count` config | **needed** | Bound `:all`. |
+| `FactoryBakery.bake_list(target, n, …)` (core) | nice-to-have | `count:` uses it internally. Exposing it is cheap and useful outside associations. Separate ticket. |
+| `strategy: :build/:create` (factory_bot meaning) | rejected | Autosave plus the parent's own `bake`/`bake!` covers it. For a persisted parent under `bake`, pass `author: bake!(User)`. Reusing the word for build/create would also clash with `:fresh`/`:reuse`. |
+| `skip_association :x` | rejected | `x { nil }` / `x { [] }` already exists and composes with traits. |
+| Implicit association by attribute name (factory_bot) | rejected | Modes already do this from schema signals. Name-based magic collides with real attributes. |
+| `build_stubbed`-style stubs | rejected | §2 E. |
+| Double-underscore reach-in (`author__name:`) | deferred | `association :author, name: …` covers it in definitions. Revisit if call-site demand appears. |
+| Transients, callbacks | still deferred | `count:` plus the owner block cover the association use cases. |
 
-1. Cycle default: **raise** (recommended) or **nil one side and warn**?
-2. Should `if:`/`unless:` presence validators count as required (over-build, recommended)?
-3. Is the stage-2 default `:required` acceptable as a behavior change in a 0.0.x release, or should it ship `:off` by default for one version?
+### 4.5 Strategy: `:fresh` vs `:reuse`
+
+The names are `:fresh` (rather than "always_fresh") and `:reuse` (rather than "first_or_create"). The behavior is not literally `first_or_create`: it checks the current graph first, and `bake` never creates rows. A literal name would mislead.
+
+| | `:fresh` (default) | `:reuse` |
+|---|---|---|
+| Lookup | none | 1) an instance of the same class + factory + overrides already built **in this bake graph**; 2) `scope.where(column_overrides).order(primary_key).first`, where `scope` is the factory's class (STI-scoped automatically); 3) miss → fresh build |
+| Under `bake` | builds unsaved | DB **read**. On a miss it builds unsaved (no write). |
+| Under `bake!` | INSERT via root autosave | Reuses a row, or INSERTs via autosave on a miss |
+| Determinism | full | `order(primary_key)` picks the oldest row deterministically. Results still depend on what earlier code inserted. |
+
+Restrictions (fail loud):
+- **`belongs_to` only.** Reusing a `has_one`/`has_many` child would rewrite *its* FK, stealing it from another owner and mutating shared data. Raise `ArgumentError`.
+- **No traits with `:reuse`.** A trait can't be matched against an existing row, so a reused row would silently lack the trait's state. Raise. Overrides that map to columns are matched with `where`. A non-column override forces a fresh build.
+- A required polymorphic association still needs `factory:`, which names the class to search.
+
+Scoping: per association (`strategy: :reuse`) > `Associations.with(strategy: :reuse) { }` > global `Associations.strategy = :fresh`. The most specific setting wins, so a factory author's explicit choice on one edge isn't flipped by a test-wide default.
+
+Interplay: `:all` combined with `strategy: :reuse` collapses most `belongs_to` fan-out (diamonds share one User). The counter cache on a reused parent increments, which is correct Rails behavior. Scoped uniqueness on children of a shared parent now matters (§3.6). The filler's existing uniqueness handling has to carry it [guess: collisions are possible on small value sets].
+
+### 4.6 Plugin hook API (core)
+
+Options:
+1. **Prepend over `BakeryBuilder` private methods.** Zero core change, but every core refactor can silently break the plugin. Rejected.
+2. **Explicit hook registry (recommended).** A small core change and a stable contract. Multiple plugins compose, so future sequences/transients plugins can reuse it.
+3. **Builder subclass chosen by config.** Clean, but allows only one plugin at a time. Rejected.
+
+```ruby
+FactoryBakery.register_plugin(FactoryBakery::Associations::Plugin)
+# Plugin responds to (all optional):
+#   dsl_module                                   -> Module mixed into the definition scope
+#   heuristic_values(model_klass, context, taken) -> Hash merged into the heuristics layer (mode auto-build)
+#   after_instantiate(object, declarations, context) -> evaluates `association` declarations with the owner
+```
+`taken` is the set of names already covered by declarations, overrides and `initialize_with`, alias groups included. The core build context (F10) is passed in as `context`: stack, depth, and the graph-instance cache that `:reuse` uses.
+
+### 4.7 Staged rollout
+
+- **Stage 0 (core):** F8, F9, F10.
+- **Stage 1 (core):** guard-rails F3–F5, plus the hook API and the `association` stub.
+- **Stage 2 (plugin):** skeleton + `:none` + `association` for `belongs_to` (the tracer bullet), then `:required_only`.
+- **Stage 3 (plugin):** collections (`count:`, owner block, inverse binding), then `:all`, then `strategy: :reuse`.
+
+### 4.8 Ticket breakdown (tracer-bullet slices)
+
+Each ticket is a vertical slice through the public API, with observable-behavior specs only (issue #1 testing decisions). Plugin specs `require 'factory_bakery/associations'` and declare `optional: false` explicitly (§3.15).
+
+**Core**
+
+**C1: Overridden declarations are not evaluated**
+- `bake(User, account: a)` does not run the definition's `account { }` block (counter or side effect). The same holds for trait-declared attributes. Existing precedence specs stay green.
+
+**C2: Association/FK alias-group precedence** (after C1)
+- With `account { bake(Account) }` declared, `bake(User, account_id: 7).account_id == 7`. `bake(User, account: a).account_id == a.id`.
+- Polymorphic: `commentable:` sets both columns. Overriding only `commentable_type`/`_id` suppresses a declared `commentable`.
+
+**C3: Cycle and depth detection across nested bakes**
+- Mutually recursive declarations raise `FactoryBakery::CyclicAssociationError` with the class path (no `SystemStackError`). Exceeding the max depth raises `FactoryBakery::Error`. The next independent `bake` succeeds after an error.
+
+**C4: STI type column left to Rails**
+- `bake(Admin).type == 'Admin'`, and `bake!(Admin)` reloads as `Admin`. The base class gets nil. An explicit `type:` override is kept.
+
+**C5: belongs_to FK and polymorphic pair not faked**
+- An optional `belongs_to` FK is nil, and `bake!` passes with SQLite `PRAGMA foreign_keys = ON` and a real FK. An optional polymorphic pair is nil. Non-FK integers are still filled.
+
+**C6: Counter-cache columns not faked**
+- `comments_count` is 0 or nil (per NOT NULL), never random.
+
+**C7: Plugin hook API + `association` stub**
+- Without the plugin, `association :x` in a definition raises an error that names the require.
+- A test plugin registered in the spec can add DSL methods, contribute heuristic values (overridable by declarations and overrides), and act after instantiation with the owner.
+- Two registered plugins compose.
+
+**Plugin**
+
+**P1: Plugin skeleton, `:none` mode, `association` on `belongs_to`** (after C1–C3, C7)
+- Without the require: no plugin behavior. With it plus `mode = :none`: nothing auto-built.
+- `association :account` builds an unsaved `Account` under `bake` (zero INSERTs). `bake!` persists both, and a child validation failure leaves no Account row.
+- Traits, `factory:` and overrides are forwarded. An unknown association name raises at bake time. Call-site `account:`/`account_id:` win. `account { nil }` in a trait opts out.
+- POROs: `association` raises clearly, because a PORO has no reflections.
+
+**P2: `:required_only` mode** (after P1, C5)
+- Required `belongs_to` is auto-built (validator or NOT NULL signal). Optional stays nil. The parent's registered factory applies.
+- Mutual required with `inverse_of` closes the loop. Without it: `CyclicAssociationError` with an opt-out hint. Required self-reference gives a clear error.
+- Required polymorphic without a declaration gives an actionable error. With `association :commentable, factory: :post` it passes.
+
+**P3: Collections and owner-aware blocks** (after P1)
+- `association :comments, count: 3, body: 'x'` gives 3 comments, all bound to the owner. With `:required_only`, no extra Post rows exist after `bake!`.
+- `association(:reviewer) { |post| … }` receives the owner. `count:` on a singular association raises.
+- `has_one` builds one record, bound to the owner.
+
+**P4: `:all` mode** (after P2, P3)
+- Optional `belongs_to`, `has_one` and `has_many` (`default_count`) are built. Through/HABTM and optional polymorphic are not.
+- No back-edge rebuild (row counts asserted).
+- Past `max_depth`, only required `belongs_to` are built, and every object stays valid (`bake!` passes on a 4-level schema).
+
+**P5: `strategy: :reuse`** (after P1)
+- An existing row is reused (no INSERT). On a miss: unsaved under `bake`, created under `bake!`.
+- A diamond graph builds one shared parent. Column overrides are matched. Traits combined with `:reuse` raise. `:reuse` on `has_many`/`has_one` raises.
+- Precedence: per association > `with` > global.
+
+**P6: Scoping and Rails config** (after P2)
+- `Associations.with(mode:, strategy:) { }` applies to the whole nested graph and restores the previous values after the block, even when the block raises.
+- `config.factory_bakery.associations = { mode: … }` loads and configures the plugin (depends on issue #9's Railtie).
+
+**Core, optional:** `FactoryBakery.bake_list(target, n, *traits, **overrides)`.
+
+### 4.9 Open questions for the user
+
+1. Default mode when the plugin is required: `:required_only` (recommended) or `:none`?
+2. `:all` defaults: `default_count` 1 and `max_depth` 2. OK?
+3. Strategy precedence: the per-association setting beats the `with` scope (recommended). Or should the test scope win?
+4. Cycle default: **raise** (recommended), or nil one side and warn?
+5. Should `if:`/`unless:` presence validators count as required (over-build, recommended)?
+6. Plugin inside this gem behind a `require` (recommended for now), or a separate gem from day one?
