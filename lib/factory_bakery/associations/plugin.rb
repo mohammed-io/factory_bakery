@@ -3,8 +3,8 @@
 module FactoryBakery
   module Associations
     # The plugin object registered with core on require. It evaluates explicit
-    # `association` declarations and, in :required_only mode, auto-builds
-    # required belongs_to through core's heuristic_values hook.
+    # `association` declarations after the owner exists and, in :required_only
+    # mode, auto-builds required belongs_to through core's heuristic values hook.
     module Plugin
       class << self
         def dsl_module
@@ -18,7 +18,8 @@ module FactoryBakery
         end
 
         # Association declarations run after core has applied plain attributes,
-        # so an override or trait that already decided this alias group wins.
+        # so an override or trait that already decided this alias group wins and
+        # an owner block sees a fully populated owner.
         def after_instantiate(object, declarations, _context)
           return if declarations.empty?
 
@@ -41,28 +42,29 @@ module FactoryBakery
 
         def build(object, declaration)
           reflection = reflection_for(object, declaration.name)
+          validate!(object, declaration, reflection)
           return if suppressed?(object, reflection)
 
-          target = bake_target(object, declaration, reflection)
-          object.public_send("#{reflection.name}=", target)
+          if declaration.block
+            assign(object, reflection, declaration.block.call(object))
+          else
+            build_declared(object, declaration, reflection)
+          end
         end
 
-        # A child is always built through the public bake path, so its own
-        # registered factory, traits and heuristics apply. `bake` (not `bake!`)
-        # keeps the graph unsaved and DB-free; bake!'s autosave transaction
-        # persists the whole graph together.
-        def bake_target(object, declaration, reflection)
-          if reflection.polymorphic?
-            require_polymorphic_factory!(object, declaration, reflection)
-          elsif declaration.factory
-            ensure_compatible!(object, declaration, reflection)
+        def build_declared(object, declaration, reflection)
+          case reflection.macro
+          when :has_many
+            TargetBuilder.build_collection(object, declaration, reflection)
+          when :has_one
+            assign(object, reflection, TargetBuilder.bake_child(object, declaration, reflection))
+          else
+            assign(object, reflection, TargetBuilder.bake(object, declaration, reflection))
           end
+        end
 
-          FactoryBakery.bake(
-            declaration.factory || reflection.klass,
-            *declaration.traits,
-            **declaration.overrides
-          )
+        def assign(object, reflection, target)
+          object.public_send("#{reflection.name}=", target)
         end
 
         def reflection_for(object, name)
@@ -70,37 +72,37 @@ module FactoryBakery
           # before the models they name.
           reflection = object.class.reflect_on_association(name)
           raise FactoryBakery::Error, "#{object.class} has no association :#{name}" unless reflection
-          unless reflection.macro == :belongs_to
-            raise FactoryBakery::Error, "association :#{name} is a #{reflection.macro}; only belongs_to is supported"
-          end
 
           reflection
         end
 
-        def require_polymorphic_factory!(object, declaration, reflection)
-          return if declaration.factory
+        def validate!(object, declaration, reflection)
+          if unsupported_shape?(reflection)
+            raise FactoryBakery::Error,
+                  "#{object.class}##{reflection.name} (#{reflection.macro}) is not supported; " \
+                  'assign via an attribute block'
+          end
+          return if declaration.child_count.nil? || reflection.collection?
 
-          raise FactoryBakery::Error,
-                "#{object.class} has a polymorphic association :#{reflection.name}; " \
-                'pass factory: to name its target class'
+          raise ArgumentError,
+                "count: is only supported on collections, but #{object.class}##{reflection.name} " \
+                "is a #{reflection.macro} association"
         end
 
-        def ensure_compatible!(object, declaration, reflection)
-          resolved, = BakeryBuilder.resolve(declaration.factory)
-          expected = reflection.klass
-          return if resolved <= expected
+        def unsupported_shape?(reflection)
+          return true if reflection.macro == :has_and_belongs_to_many
 
-          raise FactoryBakery::Error,
-                "factory: #{declaration.factory.inspect} is incompatible with #{object.class}##{declaration.name}: " \
-                "expected #{expected} or a subclass, got #{resolved}"
+          reflection.respond_to?(:through_reflection) && !reflection.through_reflection.nil?
         end
 
         # Core hands us the instantiated object rather than the overrides hash.
         # An explicit association assignment (including nil from a trait) marks
         # the association loaded; a foreign-key override shows up on the column.
-        # Either one suppresses our declaration.
+        # Either one suppresses our declaration. For collections the FK lives on
+        # the child, so only the association's loaded state can suppress it.
         def suppressed?(object, reflection)
           return true if object.association(reflection.name).loaded?
+          return false unless reflection.macro == :belongs_to
 
           Array(reflection.foreign_key).any? { |key| !object.public_send(key).nil? }
         end

@@ -248,9 +248,25 @@ For each attribute not supplied by a declaration, a trait, or an override, Facto
 
 This is why a zero-setup `bake(User)` usually produces a valid record: the same validators that check your data are used to generate it. Complex or deliberately unusual values are what factory declarations and traits are for.
 
+## Associations (opt-in plugin)
+
+`require 'factory_bakery/associations'` enables association declarations and required `belongs_to` auto-building:
+
+```ruby
+FactoryBakery.define(Post) do
+  association :comments, count: 3, body: 'nice'  # has_many: three children bound to this post
+  association :profile                           # has_one: one child bound to the owner
+  association(:reviewer) { |post| FactoryBakery.bake(User, team: post.team) } # owner-aware escape hatch
+end
+```
+
+Children are built through the association, so its scope attributes (including the FK and polymorphic type) and its verified inverse are applied before the child's own heuristics run. `count:` must be a non-negative Integer and is only valid on collections; omitting it builds one child. An owner block receives the owner after all plain attributes are applied and cannot be combined with options. `has_many :through` and `has_and_belongs_to_many` are not supported via `association` — assign them with a normal attribute block. `bake!` persists the whole graph, including collection children.
+
+Literal overrides are applied to every child. If an overridden column also has a `uniqueness` validation, the children will collide: FactoryBakery does not make literal values unique. Use a declaration block or leave the value to heuristics when each child needs a distinct value.
+
 ## Not supported yet
 
-These are planned, not shipped: association auto-building, sequences, callbacks, and transient attributes. See [docs/associations-design.md](docs/associations-design.md) for the association design.
+These are planned, not shipped: sequences, callbacks, and transient attributes. See [docs/associations-design.md](docs/associations-design.md) for the association design.
 
 ## Development
 

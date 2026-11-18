@@ -6,6 +6,7 @@
 - Changed `bake!` to wrap graph building, nested `bake!` calls and the root `save!` in one savepoint-capable transaction. Any failure now rolls back every row the bake wrote, even when the caller rescues inside an outer transaction.
 - Added `FactoryBakery::IncompletePersistenceError` (a `FactoryBakery::Error`), raised when a generated associated record is still unsaved after the root `save!` (for example with `autosave: false`, or `validate: false` on an invalid child). The error names the record and its association. `bake` stays database-free.
 - Changed heuristics to leave `belongs_to` FK columns (including every component of a composite FK) and polymorphic `*_type` columns unset. Optional associations now bake with `nil` instead of a random dangling value; declarations and call-site overrides still supply values.
+- Added explicit collection and `has_one` declarations to the associations plugin. `association :comments, count: 3` builds N children (default 1) through the association, applying its create scope (FK, polymorphic type, scope attributes) and verified inverse before the child's heuristics and auto-build run. Owner blocks (`association(:reviewer) { |owner| ... }`) run after all plain attributes are applied; combining a block with options and invalid `count:` values raise `ArgumentError`. `has_many :through` / HABTM via `association` raise a clear "not supported" error, while attribute blocks keep working. `before_add` callbacks and the `bake!` persistence contract apply to collection children.
 
 ## [0.0.2] - 2026-11-18
 

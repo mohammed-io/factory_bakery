@@ -293,21 +293,28 @@ RSpec.describe 'association options' do
         .to raise_error(ArgumentError, /strategy:.*not supported yet/)
     end
 
-    it 'rejects count: as not supported yet' do
+    it 'rejects count: on a singular association now that collections support it' do
       _author, post = define_author_and_post('AssocCountGuard')
       FactoryBakery.define(post) { association :author, count: 2 }
 
       expect { FactoryBakery.bake(post) }
-        .to raise_error(ArgumentError, /count:.*not supported yet/)
+        .to raise_error(ArgumentError, /count:.*collection/)
     end
   end
 
   describe 'block form' do
-    it 'accepts a block without passing it an owner yet' do
-      author, post = define_author_and_post('AssocBlockForm')
-      FactoryBakery.define(post) { association(:author) { raise 'owner blocks are not implemented' } }
+    it 'passes the owner to the block and assigns its return value' do
+      author_model = define_model('AssocBlockFormAuthor', name: :string)
+      post_model = define_model('AssocBlockFormPost', author_id: :integer, title: :string) do
+        belongs_to :author, class_name: 'AssocBlockFormAuthor', optional: true
+      end
+      FactoryBakery.define(post_model) do
+        association(:author) { |owner| FactoryBakery.bake(author_model, name: owner.title) }
+      end
 
-      expect(FactoryBakery.bake(post).author).to be_a(author)
+      baked = FactoryBakery.bake(post_model, title: 'owner title')
+
+      expect(baked.author.name).to eq('owner title')
     end
   end
 end
