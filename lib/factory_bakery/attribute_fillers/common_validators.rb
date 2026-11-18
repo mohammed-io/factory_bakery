@@ -14,7 +14,7 @@ module FactoryBakery
         when 'ActiveModel::Validations::ExclusionValidator'
           @forbidden_values = Array(validator.options[:in])
           true
-        when 'ActiveModel::Validations::PresenceValidator'
+        when 'ActiveModel::Validations::PresenceValidator', 'ActiveRecord::Validations::PresenceValidator'
           @must_be_present = true
           true
         when 'ActiveModel::Validations::AbsenceValidator', 'ActiveRecord::Validations::AbsenceValidator'
@@ -40,6 +40,10 @@ module FactoryBakery
 
       def absence_required?
         @absence_required == true
+      end
+
+      def must_be_present?
+        @must_be_present == true
       end
 
       def allowed_values?

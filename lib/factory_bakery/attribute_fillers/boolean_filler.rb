@@ -57,7 +57,11 @@ module FactoryBakery
         # 3. Acceptance validator - return the accept value if set
         return @accept_value unless @accept_value.nil?
 
-        # 4. Generate boolean value
+        # 4. Rails treats false as blank, so a presence-validated boolean
+        #    must be true; sampling both values fails presence half the time.
+        return true if must_be_present?
+
+        # 5. Generate boolean value
         generate_boolean
       end
 

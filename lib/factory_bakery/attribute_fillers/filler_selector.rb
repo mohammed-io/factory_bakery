@@ -3,6 +3,11 @@
 module FactoryBakery
   module AttributeFillers
     class FillerSelector
+      PRESENCE_VALIDATORS = [
+        'ActiveModel::Validations::PresenceValidator',
+        'ActiveRecord::Validations::PresenceValidator'
+      ].freeze
+
       attr_reader :model_class, :attr_name
 
       def initialize(model_class, attr_name)
@@ -65,8 +70,11 @@ module FactoryBakery
       def column_routed_filler
         column = model_class.columns_hash[attr_name]
 
-        # Priority 3: Has default or virtual attribute -> Noop
-        return noop_filler if has_default?(column) || virtual?(column)
+        # Priority 3: Has default or virtual attribute -> Noop, unless a
+        # presence validator needs a value. Leaving a defaulted column alone
+        # preserves a blank default (e.g. "" or false) and fails presence on
+        # every bake, so presence must be decided before this routing.
+        return noop_filler if (has_default?(column) || virtual?(column)) && !presence_validator?
 
         # Priority 4: Enum attribute
         return enum_filler if enum_attribute?
@@ -79,6 +87,12 @@ module FactoryBakery
         validators.any? do |validator|
           class_name = validator.class.name
           class_name == name
+        end
+      end
+
+      def presence_validator?
+        validators_for(attr_name).any? do |validator|
+          PRESENCE_VALIDATORS.include?(validator.class.name)
         end
       end
 
