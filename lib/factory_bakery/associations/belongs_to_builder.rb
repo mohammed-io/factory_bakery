@@ -94,7 +94,8 @@ module FactoryBakery
         # opt-out hint. A finite chain ended by a declaration never repeats an
         # edge and is allowed.
         def build_parent(klass, reflection)
-          if ReuseResolver.strategy_for(nil) == :reuse
+          reuse = ReuseResolver.strategy_for(nil) == :reuse
+          if reuse
             existing = ReuseResolver.existing(reflection.klass, {}, reflection)
             return existing if existing
           end
@@ -105,7 +106,9 @@ module FactoryBakery
 
           Fiber[REFLECTION_PATH_KEY] = previous_path + [edge]
           with_suppressed(BackEdgeDetector.edges(reflection.klass, klass, reflection)) do
-            FactoryBakery.bake(reflection.klass)
+            fresh = FactoryBakery.bake(reflection.klass)
+            ReuseResolver.remember(reflection.klass, {}, reflection, fresh) if reuse
+            fresh
           end
         ensure
           Fiber[REFLECTION_PATH_KEY] = previous_path

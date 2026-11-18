@@ -16,9 +16,17 @@ module FactoryBakery
   # verify that the whole graph was persisted after the root `save!`. The
   # registry is created and cleared at the top-level boundary, so each bake is
   # isolated even when declarations nest arbitrarily.
+  #
+  # A third fiber-local map is the associations plugin's in-graph sharing
+  # cache. It maps a strict match key (exact class + association scope +
+  # scalar overrides) to the object built for it. Like the generated records it
+  # is created and cleared at the top-level boundary, so a nested bake can read
+  # its parent's completed objects but no state leaks across bakes, threads or
+  # fibers.
   class BuildContext
     STORAGE_KEY = :factory_bakery_build_context
     RECORDS_KEY = :factory_bakery_generated_records
+    GRAPH_CACHE_KEY = :factory_bakery_graph_cache
 
     class << self
       def current
@@ -32,6 +40,23 @@ module FactoryBakery
 
       def record_generated(object)
         generated_records << [current.path, object]
+      end
+
+      # Per-top-level-bake cache used by :reuse edges. The value is a pair of
+      # the build path (nil for an object adopted from the database) and the
+      # object itself, so a lookup can refuse an ancestor still being built.
+      def graph_cache
+        Fiber[GRAPH_CACHE_KEY] ||= {}
+      end
+
+      def graph_object(key)
+        graph_cache[key]
+      end
+
+      def record_graph_object(key, path, object)
+        # Replace rather than mutate: a child fiber inherits the parent's map
+        # and must never write back into it.
+        Fiber[GRAPH_CACHE_KEY] = graph_cache.merge(key => [path, object])
       end
 
       # Records generated at or below `path_prefix`. This scopes a nested
@@ -48,11 +73,13 @@ module FactoryBakery
         enforce_depth_limit(previous, klass)
 
         Fiber[RECORDS_KEY] = [] if top_level
+        Fiber[GRAPH_CACHE_KEY] = {} if top_level
         Fiber[STORAGE_KEY] = previous.append(klass)
         yield
       ensure
         Fiber[STORAGE_KEY] = previous
         Fiber[RECORDS_KEY] = [] if top_level
+        Fiber[GRAPH_CACHE_KEY] = {} if top_level
       end
 
       private

@@ -16,12 +16,16 @@ module FactoryBakery
         # miss falls through to the ordinary fresh bake.
         def bake(object, declaration, reflection)
           klass = target_klass(object, declaration, reflection)
-          if ReuseResolver.strategy_for(declaration) == :reuse
-            existing = ReuseResolver.existing(BakeryBuilder.resolve(klass).first, declaration.overrides, reflection)
+          reuse = ReuseResolver.strategy_for(declaration) == :reuse
+          if reuse
+            resolved = BakeryBuilder.resolve(klass).first
+            existing = ReuseResolver.existing(resolved, declaration.overrides, reflection)
             return existing if existing
           end
 
-          FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
+          fresh = FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
+          ReuseResolver.remember(resolved, declaration.overrides, reflection, fresh) if reuse
+          fresh
         end
 
         def bake_child(object, declaration, reflection)
