@@ -10,8 +10,7 @@ module FactoryBakery
       # exempt from the parameter-count cop because every keyword is part of
       # that contract.
       def association(name, *traits, factory: nil, strategy: nil, count: nil, **overrides, &block) # rubocop:disable Metrics/ParameterLists
-        raise ArgumentError, 'strategy: is not supported yet' unless strategy.nil?
-
+        Associations.validated_strategy!(strategy) unless strategy.nil?
         validate_count!(count)
         validate_block!(block, count, traits, factory, overrides)
 
@@ -22,7 +21,8 @@ module FactoryBakery
             factory: factory,
             child_count: count,
             overrides: overrides,
-            block: block
+            block: block,
+            strategy: strategy
           )
         )
       end

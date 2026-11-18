@@ -228,7 +228,7 @@ RSpec.describe 'FactoryBakery associations configuration' do
         .to raise_error(ArgumentError, /max_depth/)
       expect { FactoryBakery::Associations.with(default_count: 1.5) {} }
         .to raise_error(ArgumentError, /default_count/)
-      expect { FactoryBakery::Associations.with(strategy: :reuse) {} }
+      expect { FactoryBakery::Associations.with(strategy: :bogus) {} }
         .to raise_error(ArgumentError, /strategy/)
     end
 

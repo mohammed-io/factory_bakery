@@ -11,13 +11,17 @@ module FactoryBakery
     # inverse exactly as `association.build` would.
     module TargetBuilder
       class << self
-        # A belongs_to target has no owner-side create scope to mirror.
+        # A belongs_to target has no owner-side create scope to mirror. With
+        # :reuse an existing object (in this graph or in the database) wins; a
+        # miss falls through to the ordinary fresh bake.
         def bake(object, declaration, reflection)
-          FactoryBakery.bake(
-            target_klass(object, declaration, reflection),
-            *declaration.traits,
-            **declaration.overrides
-          )
+          klass = target_klass(object, declaration, reflection)
+          if ReuseResolver.strategy_for(declaration) == :reuse
+            existing = ReuseResolver.existing(BakeryBuilder.resolve(klass).first, declaration.overrides, reflection)
+            return existing if existing
+          end
+
+          FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
         end
 
         def bake_child(object, declaration, reflection)

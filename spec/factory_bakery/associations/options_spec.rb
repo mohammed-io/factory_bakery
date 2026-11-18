@@ -286,12 +286,12 @@ RSpec.describe 'association options' do
   end
 
   describe 'unsupported options' do
-    it 'rejects strategy: as not supported yet' do
-      _author, post = define_author_and_post('AssocStrategyGuard')
+    it 'accepts an explicit strategy: :reuse on a belongs_to' do
+      author, post = define_author_and_post('AssocStrategyReuse')
+      existing = author.create!(name: 'existing')
       FactoryBakery.define(post) { association :author, strategy: :reuse }
 
-      expect { FactoryBakery.bake(post) }
-        .to raise_error(ArgumentError, /strategy:.*not supported yet/)
+      expect(FactoryBakery.bake(post).author).to eq(existing)
     end
 
     it 'rejects count: on a singular association now that collections support it' do

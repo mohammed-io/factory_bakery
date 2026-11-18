@@ -94,6 +94,11 @@ module FactoryBakery
         # opt-out hint. A finite chain ended by a declaration never repeats an
         # edge and is allowed.
         def build_parent(klass, reflection)
+          if ReuseResolver.strategy_for(nil) == :reuse
+            existing = ReuseResolver.existing(reflection.klass, {}, reflection)
+            return existing if existing
+          end
+
           previous_path = reflection_path
           edge = "#{klass}##{reflection.name}"
           ensure_acyclic!(previous_path, edge)

@@ -89,11 +89,30 @@ module FactoryBakery
                   "#{object.class}##{reflection.name} (#{reflection.macro}) is not supported; " \
                   'assign via an attribute block'
           end
+          validate_strategy!(declaration, reflection)
           return if declaration.child_count.nil? || reflection.collection?
 
           raise ArgumentError,
                 "count: is only supported on collections, but #{object.class}##{reflection.name} " \
                 "is a #{reflection.macro} association"
+        end
+
+        # Reusing a child would rewrite its FK and steal it from another
+        # owner, so only an *explicit* :reuse on a non-belongs_to edge raises.
+        # An inherited scoped/global choice just skips ineligible edges.
+        def validate_strategy!(declaration, reflection)
+          return unless ReuseResolver.strategy_for(declaration) == :reuse
+
+          if declaration.strategy == :reuse && reflection.macro != :belongs_to
+            raise ArgumentError,
+                  "strategy: :reuse is only supported on belongs_to, but #{reflection.klass}##{reflection.name} " \
+                  "is a #{reflection.macro} association"
+          end
+          return unless reflection.macro == :belongs_to
+          return if declaration.traits.empty?
+
+          raise ArgumentError,
+                "traits cannot be combined with strategy: :reuse on #{reflection.klass}##{reflection.name}"
         end
 
         def unsupported_shape?(reflection)
