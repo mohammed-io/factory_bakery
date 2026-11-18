@@ -11,6 +11,7 @@ require_relative 'associations/reuse_resolver'
 require_relative 'associations/target_builder'
 require_relative 'associations/all_auto_builder'
 require_relative 'associations/plugin'
+require_relative 'associations/rail_config'
 
 # Requiring this file is the opt-in switch. Registration is idempotent per
 # plugin object, so requiring it twice is harmless.

@@ -10,15 +10,25 @@ RSpec.describe FactoryBakery::Railtie do
   around do |example|
     Dir.mktmpdir('factory_bakery-railtie-') do |directory|
       @app_root = directory
+      reset_associations_state
 
       begin
         example.run
       ensure
         FactoryBakery.definition_paths = []
         described_class.config.factory_bakery.definition_paths = nil
+        described_class.config.factory_bakery.associations = nil
+        reset_associations_state
         Rails.application = nil
       end
     end
+  end
+
+  # A boot that opts into associations registers the plugin process-wide. Reset
+  # it so examples (and other spec files) start from core-only behavior.
+  def reset_associations_state
+    FactoryBakery.reset_plugins!
+    FactoryBakery::Associations.reset_configuration! if defined?(FactoryBakery::Associations)
   end
 
   def write_definition(relative_path, source)
@@ -174,5 +184,134 @@ RSpec.describe FactoryBakery::Railtie do
 
   it 'does not raise when no conventional directory exists' do
     expect { boot_app }.not_to raise_error
+  end
+
+  describe 'config.factory_bakery.associations' do
+    def define_optional_parent_and_child(prefix)
+      parent = define_model("#{prefix}Account", name: :string)
+      child = define_model("#{prefix}User", name: :string, account_id: :integer) do
+        belongs_to :account, class_name: "#{prefix}Account", optional: true
+      end
+      [parent, child]
+    end
+
+    it 'loads and configures the plugin from a Hash before definitions load' do
+      parent, child = define_optional_parent_and_child('RailtieAssocHash')
+      write_definition(
+        'spec/factories/railtie_assoc_hash_user.rb',
+        "raise 'plugin not configured' unless FactoryBakery::Associations.mode == :all\n" \
+        "FactoryBakery.define(RailtieAssocHashUser) { association :account }\n"
+      )
+
+      boot_app do |config|
+        config.factory_bakery.associations = { mode: :all }
+      end
+
+      expect(FactoryBakery::Associations.mode).to eq(:all)
+      expect(FactoryBakery.bake(child).account).to be_a(parent)
+    end
+
+    it 'applies every supported Hash key through the plugin setters' do
+      boot_app do |config|
+        config.factory_bakery.associations = {
+          mode: :all, strategy: :reuse, max_depth: 4, default_count: 3
+        }
+      end
+
+      expect(FactoryBakery::Associations.mode).to eq(:all)
+      expect(FactoryBakery::Associations.strategy).to eq(:reuse)
+      expect(FactoryBakery::Associations.max_depth).to eq(4)
+      expect(FactoryBakery::Associations.default_count).to eq(3)
+    end
+
+    it 'loads the plugin with defaults when set to true' do
+      parent, child = define_optional_parent_and_child('RailtieAssocTrue')
+      FactoryBakery.define(child) { association :account }
+
+      boot_app do |config|
+        config.factory_bakery.associations = true
+      end
+
+      expect(FactoryBakery::Associations.mode).to eq(:required_only)
+      expect(FactoryBakery::Associations.strategy).to eq(:fresh)
+      expect(FactoryBakery.bake(child).account).to be_a(parent)
+    end
+
+    it 'loads the plugin in :none mode so nothing is built automatically' do
+      _parent, child = define_optional_parent_and_child('RailtieAssocNone')
+
+      boot_app do |config|
+        config.factory_bakery.associations = { mode: :none }
+      end
+
+      expect(FactoryBakery::Associations.mode).to eq(:none)
+      expect(FactoryBakery.bake(child).account).to be_nil
+    end
+
+    it 'accepts a bare mode symbol as a shorthand for { mode: value }' do
+      parent, child = define_optional_parent_and_child('RailtieAssocSymbol')
+
+      boot_app do |config|
+        config.factory_bakery.associations = :all
+      end
+
+      expect(FactoryBakery::Associations.mode).to eq(:all)
+      expect(FactoryBakery.bake(child).account).to be_a(parent)
+    end
+
+    it 'does not load the plugin when the config is unset' do
+      child = stub_target('RailtieAssocUnsetTarget')
+      FactoryBakery.define(child) { association :anything }
+
+      boot_app
+
+      expect { FactoryBakery.bake(child) }
+        .to raise_error(FactoryBakery::Error, /requires the associations plugin/)
+    end
+
+    it 'does not load the plugin when the config is explicitly false' do
+      child = stub_target('RailtieAssocFalseTarget')
+      FactoryBakery.define(child) { association :anything }
+
+      boot_app do |config|
+        config.factory_bakery.associations = false
+      end
+
+      expect { FactoryBakery.bake(child) }
+        .to raise_error(FactoryBakery::Error, /requires the associations plugin/)
+    end
+
+    it 'raises a clear ArgumentError at boot for an unknown config key' do
+      expect do
+        boot_app do |config|
+          config.factory_bakery.associations = { moode: :none }
+        end
+      end.to raise_error(ArgumentError, /moode/)
+    end
+
+    it 'raises a clear ArgumentError at boot for an invalid config value' do
+      expect do
+        boot_app do |config|
+          config.factory_bakery.associations = { mode: :bogus }
+        end
+      end.to raise_error(ArgumentError, /bogus/)
+    end
+
+    it 'coexists with a custom definition_paths override' do
+      parent, child = define_optional_parent_and_child('RailtieAssocCoexist')
+      write_definition(
+        'config/factories/railtie_assoc_coexist_user.rb',
+        "FactoryBakery.define(RailtieAssocCoexistUser) { association :account }\n"
+      )
+      custom_path = File.join(@app_root, 'config/factories')
+
+      boot_app do |config|
+        config.factory_bakery.definition_paths = [custom_path]
+        config.factory_bakery.associations = { mode: :all }
+      end
+
+      expect(FactoryBakery.definition_paths).to eq([custom_path])
+      expect(FactoryBakery.bake(child).account).to be_a(parent)
+    end
   end
 end
