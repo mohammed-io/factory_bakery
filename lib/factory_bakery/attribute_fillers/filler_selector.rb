@@ -17,6 +17,9 @@ module FactoryBakery
         # Priority 2: Acceptance attribute
         return acceptance_filler if acceptance_attribute?
 
+        # Rails owns the STI discriminator; never overwrite what `new` assigned.
+        return noop_filler if sti_discriminator?
+
         # Non-ActiveRecord targets have no schema to route by. Use whatever
         # validator information the target exposes instead.
         return validator_routed_filler unless active_record_target?
@@ -35,6 +38,18 @@ module FactoryBakery
           validators_for(attr_name).any? do |v|
             v.instance_of?(ActiveModel::Validations::AcceptanceValidator)
           end
+      end
+
+      # Rails writes the subclass's sti_name into the inheritance column in
+      # `new`; on the base class the value is left for the database. Faking it
+      # would make a persisted row unloadable with ActiveRecord::SubclassNotFound.
+      # Disabling STI sets inheritance_column to "", so a plain `type` column
+      # is still routed to its normal filler.
+      def sti_discriminator?
+        return false unless model_class.respond_to?(:inheritance_column)
+
+        column = model_class.inheritance_column
+        !column.to_s.empty? && attr_name == column.to_s
       end
 
       def active_record_target?
