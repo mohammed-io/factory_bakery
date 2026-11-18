@@ -27,13 +27,13 @@ module FactoryBakery
       BakeryBuilder.for(klass, &block)
     end
 
-    def bake(klass, **overrides)
+    def bake(klass, *traits, **overrides)
       definition = BakeryBuilder.definitions[klass]
-      BakeryBuilder.new(klass, definition).build(overrides: overrides)
+      BakeryBuilder.new(klass, definition).build(overrides: overrides, traits: traits)
     end
 
-    def bake!(klass, **overrides)
-      object = bake(klass, **overrides)
+    def bake!(klass, *traits, **overrides)
+      object = bake(klass, *traits, **overrides)
       object.save! if object.respond_to?(:save!)
       object
     end

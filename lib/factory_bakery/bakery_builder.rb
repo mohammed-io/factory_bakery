@@ -32,13 +32,13 @@ module FactoryBakery
       @traits[trait_name] = blk
     end
 
-    def build(overrides: {}, trait: nil)
+    def build(overrides: {}, traits: [])
       raise BuildingInProgress if @build_is_in_progress
 
       # Prevent recursive calls to build method.
       @build_is_in_progress = true
 
-      evaluate_declarations(trait)
+      evaluate_declarations(traits)
 
       object = instantiate
       apply_values(object, resolved_values(overrides), explicit_names(overrides))
@@ -55,12 +55,19 @@ module FactoryBakery
 
     private
 
-    def evaluate_declarations(trait)
-      return unless @builder_proc
-
+    def evaluate_declarations(traits)
       @methods_to_be_called_on_object = []
-      instance_eval(&@builder_proc)
-      instance_eval(&@traits.fetch(trait)) if trait && @traits.key?(trait)
+      instance_eval(&@builder_proc) if @builder_proc
+
+      # Traits are appended after the base declarations and applied in the
+      # order requested, so later assignments win for duplicate attributes.
+      traits.each do |name|
+        unless @traits.key?(name)
+          raise FactoryBakery::Error, "Trait #{name.inspect} is not declared for #{@model_klass}"
+        end
+
+        instance_eval(&@traits[name])
+      end
     end
 
     def instantiate
@@ -71,7 +78,7 @@ module FactoryBakery
       end
     end
 
-    # Precedence: heuristics < declarations < call-site overrides.
+    # Precedence: heuristics < declarations (base, then traits) < call-site overrides.
     def resolved_values(overrides)
       heuristic_values
         .merge(declared_values)
