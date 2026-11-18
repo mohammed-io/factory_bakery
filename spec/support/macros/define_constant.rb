@@ -1,20 +1,64 @@
-require "active_record"
+# frozen_string_literal: true
+
+require 'active_record'
 
 module DefineConstantMacros
   def define_class(path, base = Object, &block)
-    const = stub_const(path, Class.new(base))
+    const = if defined?(stub_const)
+              stub_const(path, Class.new(base))
+            else
+              # When running outside of the test suite.
+              Object.const_set(path, Class.new(base))
+            end
+
+    # Use class_eval after class creation for better compatibility
     const.class_eval(&block) if block
+
+    # Track for cleanup
+    created_constants << path
+    created_classes << const if base == ActiveRecord::Base
+
     const
   end
 
   def define_model(name, columns = {}, &block)
-    model = define_class(name, ActiveRecord::Base, &block)
-    create_table(model.table_name) do |table|
-      columns.each do |column_name, type|
-        table.column column_name, type
+    # Create table first (needed for enum support)
+    table_name = ActiveRecord::Base.table_name_prefix + name.pluralize
+
+    connection = ActiveRecord::Base.connection
+    connection.execute("DROP TABLE IF EXISTS #{table_name}")
+    connection.create_table(table_name) do |table|
+      columns.each do |column_name, type_or_options|
+        if type_or_options.is_a?(Hash)
+          # Support { type: :string, limit: 8 } syntax
+          column_type = type_or_options.delete(:type)
+          table.column(column_name, column_type, **type_or_options)
+        else
+          # Support simple :string syntax
+          table.column column_name, type_or_options
+        end
       end
     end
-    model
+
+    # Then define the model class
+    const = if defined?(stub_const)
+              stub_const(name, Class.new(ActiveRecord::Base))
+            else
+              Object.const_set(name, Class.new(ActiveRecord::Base))
+            end
+
+    # Set the table name explicitly
+    const.table_name = table_name
+
+    # Evaluate the block after the class is created and table exists
+    const.class_eval(&block) if block
+
+    # Store for cleanup
+    created_tables << table_name
+    created_constants << name
+    created_classes << const
+
+    const
   end
 
   def create_table(table_name, &block)
@@ -25,17 +69,38 @@ module DefineConstantMacros
       connection.create_table(table_name, &block)
       created_tables << table_name
       connection
-    rescue Exception => e # rubocop:disable Lint/RescueException
+    rescue Exception => e # rubocop:disable Lint::RescueException
       connection.execute("DROP TABLE IF EXISTS #{table_name}")
       raise e
     end
   end
 
+  def cleanup_model(name)
+    # Remove the constant (let RSpec's stub_const handle it if it was stubbed)
+    if Object.const_defined?(name)
+      Object.send(:remove_const, name) unless defined?(stub_const)
+    end
+
+    # Drop the table
+    table_name = name.pluralize
+    ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{table_name}")
+
+    # Remove from tracking
+    created_constants.delete(name)
+    created_tables.delete(table_name)
+    created_classes.reject! { |klass| klass.name.to_s == name.to_s }
+  end
+
   def clear_generated_tables
+    # Only drop tables - RSpec's stub_const will handle constant cleanup
     created_tables.each do |table_name|
-      clear_generated_table(table_name)
+      ActiveRecord::Base.connection.execute("DROP TABLE IF EXISTS #{table_name}")
     end
     created_tables.clear
+
+    # Clear tracking arrays (but don't manually remove constants - RSpec handles it)
+    created_constants.clear
+    created_classes.clear
   end
 
   def clear_generated_table(table_name)
@@ -49,6 +114,14 @@ module DefineConstantMacros
   def created_tables
     @created_tables ||= []
   end
+
+  def created_constants
+    @created_constants ||= []
+  end
+
+  def created_classes
+    @created_classes ||= []
+  end
 end
 
 RSpec.configure do |config|
@@ -56,8 +129,8 @@ RSpec.configure do |config|
 
   config.before(:all) do
     ActiveRecord::Base.establish_connection(
-      adapter: "sqlite3",
-      database: ":memory:"
+      adapter: 'sqlite3',
+      database: ':memory:'
     )
   end
 

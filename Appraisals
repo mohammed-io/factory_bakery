@@ -1,59 +1,23 @@
-appraise "rails5.0" do
-  ruby '2.7.2'
+# frozen_string_literal: true
 
-  gem "byebug"
-  gem "listen", "~> 3.0.5"
-  gem "puma", "~> 3.0"
-  gem "rails", "~> 5.0.7", ">= 5.0.7.2"
-  gem "spring", "!= 2.1.1"
-  gem "spring-watcher-listen", "~> 2.0.0"
-  gem 'sqlite3', '~> 1.3.0'
+appraise 'rails7.1' do
+
+  gem 'puma'
+  gem 'byebug'
+  gem 'rails', '~> 7.1', '>= 7.1'
+  gem 'sqlite3', '~> 1.4'
 end
 
-appraise "rails5.1" do
-  ruby '2.7.2'
+appraise 'rails7.2' do
 
-  gem "byebug"
-  gem "listen", ">= 3.0.5", "< 3.2"
-  gem "puma", "~> 3.7"
-  gem "rails", "~> 5.1.7"
-  gem "spring", "!= 2.1.1"
-  gem "spring-watcher-listen", "~> 2.0.0"
-  gem 'sqlite3', '~> 1.3.0'
+  gem 'puma'
+  gem 'rails', '~> 7.2'
+  gem 'sqlite3', '~> 1.4'
 end
 
-appraise "rails5.2" do
-  ruby '2.7.2'
+appraise 'rails8.0' do
 
-  gem "byebug"
-  gem "listen", ">= 3.0.5", "< 3.2"
-  gem "puma", "~> 3.11"
-  gem "rails", "~> 5.2.4", ">= 5.2.4.2"
-  gem "spring", "!= 2.1.1"
-  gem "spring-watcher-listen", "~> 2.0.0"
-  gem "sqlite3", "~> 1.4"
-end
-
-appraise "rails6.0" do
-  ruby '2.7.2'
-
-  gem "byebug"
-  gem "listen", "~> 3.2"
-  gem "puma", "~> 4.1"
-  gem "rails", "~> 6.0.2", ">= 6.0.2.2"
-  gem "spring", "!= 2.1.1"
-  gem "spring-watcher-listen", "~> 2.0.0"
-  gem "sqlite3", "~> 1.4"
-end
-
-appraise "rails6.1" do
-  ruby '2.7.2'
-
-  gem "byebug"
-  gem "listen", "~> 3.2"
-  gem "puma", "~> 5.0"
-  gem "rails", "~> 6.1.3.1", ">= 6.1.3.1"
-  gem "spring", "!= 2.1.1"
-  gem "spring-watcher-listen", "~> 2.0.0"
-  gem "sqlite3", "~> 1.4"
+  gem 'puma', '~> 7.0'
+  gem 'rails', '~> 8.0'
+  gem 'sqlite3', '~> 2.0'
 end

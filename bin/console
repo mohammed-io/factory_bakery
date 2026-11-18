@@ -6,104 +6,102 @@
 # Loads a test-like environment and starts an interactive REPL
 
 # Check if we're running under appraisal
-if ENV["BUNDLE_GEMFILE"] && ENV["BUNDLE_GEMFILE"].include?("gemfiles")
+if ENV['BUNDLE_GEMFILE']&.include?('gemfiles')
   puts "🚂 Running with appraisal: #{File.basename(ENV['BUNDLE_GEMFILE'])}"
-  require "bundler/setup"
+  require 'bundler/setup'
 else
-  puts "⚠️  Not running under appraisal. For full functionality:"
-  puts "   First update Appraisals for your Ruby version:"
-  puts "   bundle exec appraisal install"
-  puts "   Then use: bundle exec appraisal rails8.0 ./console"
-  puts ""
-  puts "💡 Or install Rails globally: gem install rails"
-  puts ""
+  puts '⚠️  Not running under appraisal. For full functionality:'
+  puts '   First update Appraisals for your Ruby version:'
+  puts '   bundle exec appraisal install'
+  puts '   Then use: bundle exec appraisal rails8.0 ./console'
+  puts ''
+  puts '💡 Or install Rails globally: gem install rails'
+  puts ''
 end
 
 # Define basic FactoryBakery module to avoid circular dependencies
 module FactoryBakery
   class Error < StandardError; end
-  VERSION = "0.0.1.0"
+  VERSION = '0.0.1.0'
 end
 
 # Load basic dependencies
-require "ffaker"
+require 'ffaker'
 require 'rspec'
 require 'rspec/mocks'
 
 # Load individual components that don't require Rails
-require_relative "../lib/factory_bakery/attribute_filler"
-require_relative "../lib/factory_bakery/generator_registry"
+
 
 # Try to load ActiveRecord and full FactoryBakery environment
 begin
-  require "active_record"
+  require 'active_record'
   ACTIVE_RECORD_AVAILABLE = true
 
   # Now try to load the full FactoryBakery gem
   begin
-    require_relative "../lib/factory_bakery"
-    puts "✅ Full FactoryBakery environment loaded"
+    require_relative '../lib/factory_bakery'
+    puts '✅ Full FactoryBakery environment loaded'
   rescue LoadError => e
     puts "⚠️  Could not load full FactoryBakery: #{e.message}"
-    puts "   Basic components loaded only"
+    puts '   Basic components loaded only'
   end
 rescue LoadError
-  puts "⚠️  ActiveRecord not available. Run with appraisal for full functionality."
+  puts '⚠️  ActiveRecord not available. Run with appraisal for full functionality.'
   ACTIVE_RECORD_AVAILABLE = false
 end
 
 # Setup in-memory SQLite database (same as tests)
 if ACTIVE_RECORD_AVAILABLE
   ActiveRecord::Base.establish_connection(
-    adapter: "sqlite3",
-    database: ":memory:"
+    adapter: 'sqlite3',
+    database: ':memory:'
   )
-  puts "✅ ActiveRecord loaded with in-memory SQLite DB"
+  puts '✅ ActiveRecord loaded with in-memory SQLite DB'
 else
-  puts "ℹ️  Running without ActiveRecord - basic functionality only"
+  puts 'ℹ️  Running without ActiveRecord - basic functionality only'
 end
 
 # Load test support helpers if available
 if ACTIVE_RECORD_AVAILABLE
   begin
-    require_relative "../spec/support/macros/define_constant"
+    require_relative '../spec/support/macros/define_constant'
     # Extend main object with test helper methods
     extend DefineConstantMacros
-    puts "✅ Test helper methods loaded"
+    puts '✅ Test helper methods loaded'
   rescue NameError => e
     puts "⚠️  Test helpers not available: #{e.message}"
-    puts "   define_model and create_table methods not available"
+    puts '   define_model and create_table methods not available'
   end
 end
 
 # Create a simple welcome message
-puts "🧁 FactoryBakery Console"
-puts "=" * 40
-puts "Environment loaded with:"
-puts "- FactoryBakery gem"
+puts '🧁 FactoryBakery Console'
+puts '=' * 40
+puts 'Environment loaded with:'
+puts '- FactoryBakery gem'
 if ACTIVE_RECORD_AVAILABLE
-  puts "- ActiveRecord with in-memory SQLite DB"
-  puts "- Test helper methods (define_model, etc.)"
-  puts ""
-  puts "Available methods:"
-  puts "- define_model(name, columns, &block)"
-  puts "- create_table(table_name, &block)"
-  puts "- clear_generated_tables"
+  puts '- ActiveRecord with in-memory SQLite DB'
+  puts '- Test helper methods (define_model, etc.)'
+  puts ''
+  puts 'Available methods:'
+  puts '- define_model(name, columns, &block)'
+  puts '- create_table(table_name, &block)'
+  puts '- clear_generated_tables'
 else
-  puts "- Limited functionality (no ActiveRecord)"
+  puts '- Limited functionality (no ActiveRecord)'
 end
-puts ""
-puts "FactoryBakery classes:"
-puts "- FactoryBakery::FactoryBakery"
-puts "- FactoryBakery::AttributeFiller"
-puts "- FactoryBakery::BakeryBuilder"
-puts ""
+puts ''
+puts 'FactoryBakery classes:'
+puts '- FactoryBakery::AttributeFiller'
+puts '- FactoryBakery::BakeryBuilder'
+puts ''
 puts "Type 'exit' or press Ctrl-D to quit"
-puts "=" * 40
+puts '=' * 40
 puts
 
 # Start IRB session
-require "irb"
+require 'irb'
 
 # Setup IRB context with our environment
 IRB.setup(nil)
@@ -116,7 +114,7 @@ irb = IRB::Irb.new(workspace)
 IRB.conf[:MAIN_CONTEXT] = irb.context
 
 # Catch exit signals
-Signal.trap("INT") { irb.signal_handle }
+Signal.trap('INT') { irb.signal_handle }
 catch(:IRB_EXIT) do
   irb.eval_input
 end

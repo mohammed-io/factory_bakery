@@ -12,3 +12,5 @@
 
 .idea
 .vscode
+.serena/
+.DS_Store
