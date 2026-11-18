@@ -151,7 +151,7 @@ module FactoryBakery
     end
 
     def heuristic_values
-      skip = declared_names + normalize_keys(@initialize_with_attributes).keys
+      skip = declared_names + normalize_keys(@initialize_with_attributes).keys + belongs_to_column_names
 
       candidate_attribute_names.each_with_object({}) do |attribute_name, values|
         next if column_backed? && attribute_name == @model_klass.primary_key.to_s
@@ -171,6 +171,21 @@ module FactoryBakery
 
     def column_backed?
       @model_klass.respond_to?(:columns_hash)
+    end
+
+    # Columns behind a belongs_to cannot be guessed: a random FK dangles
+    # against a real DB constraint, and a random polymorphic type is not a
+    # constant. Leave them nil so declarations and overrides are the only
+    # source of a value. POROs expose no reflections, so they are unaffected.
+    # `foreign_key` is an array for composite FKs and a string otherwise.
+    def belongs_to_column_names
+      return [] unless column_backed? && @model_klass.respond_to?(:reflect_on_all_associations)
+
+      @model_klass.reflect_on_all_associations(:belongs_to).flat_map do |reflection|
+        names = Array(reflection.foreign_key).map(&:to_s)
+        names << reflection.foreign_type.to_s if reflection.polymorphic?
+        names
+      end
     end
 
     # ActiveRecord targets enumerate their columns. POROs have no schema, so

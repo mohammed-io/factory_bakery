@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+- Changed heuristics to leave `belongs_to` FK columns (including every component of a composite FK) and polymorphic `*_type` columns unset. Optional associations now bake with `nil` instead of a random dangling value; declarations and call-site overrides still supply values.
+
 ## [0.0.2] - 2026-11-18
 
 Complete rewrite of the gem. This release has no compatibility with v0.0.1 or earlier.
