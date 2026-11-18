@@ -139,10 +139,19 @@ module FactoryBakery
     end
 
     # Precedence: heuristics < declarations (base, then traits) < call-site overrides.
+    #
+    # An association name and the columns backing it (the FK, plus the type
+    # column for a polymorphic association) form one alias group. The highest
+    # layer mentioning any member wins the whole group; lower layers are dropped
+    # before any block runs. Groups are derived from reflections at bake time so
+    # definition files can still load before their models.
     def resolved_values(overrides)
       normalized_overrides = normalize_keys(overrides)
-      heuristic_values
-        .merge(declared_values(normalized_overrides))
+      groups = alias_groups
+      winning_declarations = declared_values(normalized_overrides, groups)
+
+      heuristic_values(suppressed_names(normalized_overrides, groups))
+        .merge(winning_declarations)
         .merge(normalized_overrides)
     end
 
@@ -150,9 +159,28 @@ module FactoryBakery
       declared_names + normalize_keys(overrides).keys
     end
 
-    def heuristic_values
-      skip = declared_names + normalize_keys(@initialize_with_attributes).keys
+    # Lazily derived alias groups. Each member maps to the full set; attributes
+    # outside any group (and every attribute of a PORO, which has no
+    # reflections) are their own singleton group and resolve exactly as before.
+    def alias_groups
+      return {} unless @model_klass.respond_to?(:reflect_on_all_associations)
 
+      @model_klass.reflect_on_all_associations(:belongs_to).each_with_object({}) do |reflection, groups|
+        members = [reflection.name.to_s, *Array(reflection.foreign_key).map(&:to_s)]
+        members << reflection.foreign_type.to_s if reflection.polymorphic?
+        members.uniq!
+        members.each { |member| groups[member] = members }
+      end
+    end
+
+    # A group taken by a declaration, an override or initialize_with suppresses
+    # every heuristic member of that group, not just the member that was named.
+    def suppressed_names(overrides, groups)
+      names = declared_names + overrides.keys + normalize_keys(@initialize_with_attributes).keys
+      names.flat_map { |name| groups.fetch(name, [name]) }.uniq
+    end
+
+    def heuristic_values(skip)
       candidate_attribute_names.each_with_object({}) do |attribute_name, values|
         next if column_backed? && attribute_name == @model_klass.primary_key.to_s
         next if skip.include?(attribute_name)
@@ -198,20 +226,28 @@ module FactoryBakery
 
     # Only winning declarations are evaluated: a losing block's value would be
     # discarded, and the block may have side effects (e.g. an INSERT via bake!).
-    # The last block declared for an attribute wins (base, then traits in
-    # order); a call-site override suppresses every declaration for that name.
-    # Plain declarations without a block carry no value, so they never shadow
-    # an earlier block. Keeping a local (not a private method) avoids reserving
-    # another name in the method_missing-based declaration DSL.
-    def declared_values(overrides)
-      winners = @methods_to_be_called_on_object.each_with_object({}) do |(name, block), result|
-        result[name.to_s] = block if block
-      end
+    # Declaration order is base, then traits in application order, so the last
+    # declaration in a group wins. A call-site override of any group member
+    # suppresses every declaration in that group. Plain declarations without a
+    # block carry no value, so they never shadow an earlier block.
+    def declared_values(overrides, groups)
+      overridden_groups = overrides.keys.map { |name| groups.fetch(name, [name]) }.uniq
 
-      winners.each_with_object({}) do |(name, block), values|
-        next if overrides.key?(name)
-
+      declaration_winners(overridden_groups, groups).each_with_object({}) do |(_group, (name, block)), values|
         values[name] = block.call
+      end
+    end
+
+    # Declaration order is base, then traits in application order, so the last
+    # declaration in a group is its winner.
+    def declaration_winners(overridden_groups, groups)
+      @methods_to_be_called_on_object.each_with_object({}) do |(name, block), result|
+        next unless block
+
+        group = groups.fetch(name.to_s, [name.to_s])
+        next if overridden_groups.include?(group)
+
+        result[group] = [name.to_s, block]
       end
     end
 
