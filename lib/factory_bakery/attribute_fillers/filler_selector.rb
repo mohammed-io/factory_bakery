@@ -203,8 +203,10 @@ module FactoryBakery
           date_filler
         when :datetime, :timestamp, :time
           datetime_filler
-        when :json, :jsonb, :text, :binary
-          string_filler # Treat as string for simplicity
+        when :json, :jsonb
+          json_filler
+        when :text, :binary
+          string_filler
         else
           noop_filler
         end
@@ -240,6 +242,10 @@ module FactoryBakery
 
       def enum_filler
         @enum_filler ||= EnumFiller.new(model_class, attr_name)
+      end
+
+      def json_filler
+        @json_filler ||= JsonFiller.new(model_class, attr_name)
       end
 
       def acceptance_filler
