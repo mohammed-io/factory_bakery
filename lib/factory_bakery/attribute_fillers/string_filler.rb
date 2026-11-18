@@ -31,12 +31,12 @@ module FactoryBakery
         end
       end
 
-      def call(_context = nil)
+      def call(context = nil)
         # 1. Absence validator takes precedence
         return nil if absence_required?
 
         # 2. Inclusion validator - pick from allowed set
-        return pick_from_allowed if allowed_values?
+        return pick_from_allowed(context) if allowed_values?
 
         # 3. Generate value respecting constraints
         value = generate_value
@@ -45,7 +45,7 @@ module FactoryBakery
         value = adjust_length(value)
 
         # 5. Ensure not in exclusion set
-        avoid_forbidden(value)
+        avoid_forbidden(value, context)
       end
 
       def apply_validator(validator)
@@ -71,8 +71,8 @@ module FactoryBakery
         @max_length ||= opts[:in]&.last
       end
 
-      def pick_from_allowed
-        value = pick_from(@allowed_values)
+      def pick_from_allowed(context)
+        value = pick_from(@allowed_values, context)
         value.to_s
       end
 
@@ -177,11 +177,11 @@ module FactoryBakery
         padding
       end
 
-      def avoid_forbidden(value)
+      def avoid_forbidden(value, context = nil)
         return value unless @forbidden_values
 
         attempts = 0
-        while forbidden_values?(value) && attempts < 10
+        while forbidden_values?(value, context) && attempts < 10
           value = generate_value
           value = adjust_length(value)
           attempts += 1

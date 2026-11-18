@@ -47,12 +47,12 @@ module FactoryBakery
         end
       end
 
-      def call(_context = nil)
+      def call(context = nil)
         # 1. Absence validator takes precedence
         return nil if absence_required?
 
         # 2. Inclusion validator - pick from allowed set
-        return pick_from_allowed if allowed_values?
+        return pick_from_allowed(context) if allowed_values?
 
         # 3. Acceptance validator - return the accept value if set
         return @accept_value unless @accept_value.nil?
@@ -67,10 +67,11 @@ module FactoryBakery
 
       private
 
-      def pick_from_allowed
-        value = pick_from(@allowed_values)
+      def pick_from_allowed(context)
+        allowed = resolve_set(@allowed_values, context, 'inclusion')
+        value = pick_from(allowed, context)
         # If all allowed values are strings, return the string as-is
-        return value if @allowed_values.all? { |v| v.is_a?(String) }
+        return value if allowed.all? { |v| v.is_a?(String) }
 
         # Convert to boolean if needed
         case value

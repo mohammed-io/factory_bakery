@@ -50,7 +50,7 @@ module FactoryBakery
         return nil if absence_required?
 
         # 2. Inclusion validator - pick from allowed set
-        return pick_from_allowed if allowed_values?
+        return pick_from_allowed(context) if allowed_values?
 
         # 3. Generate datetime respecting constraints
         generate_datetime(context)
@@ -69,8 +69,8 @@ module FactoryBakery
         @other_than_attribute = opts[:other_than]
       end
 
-      def pick_from_allowed
-        value = pick_from(@allowed_values)
+      def pick_from_allowed(context)
+        value = pick_from(@allowed_values, context)
         value.is_a?(DateTime) || value.is_a?(Time) ? value : value.to_datetime
       end
 

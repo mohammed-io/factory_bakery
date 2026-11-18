@@ -9,10 +9,13 @@ module FactoryBakery
       def apply_common_validator(validator)
         case validator.class.name
         when 'ActiveModel::Validations::InclusionValidator'
-          @allowed_values = Array(validator.options[:in])
+          # Keep the raw Rails option form. A Proc (or Symbol) is a lazy set:
+          # wrapping it with Array() here would sample the Proc itself and
+          # stringify it instead of evaluating it at value-generation time.
+          @allowed_values = validator.options[:in]
           true
         when 'ActiveModel::Validations::ExclusionValidator'
-          @forbidden_values = Array(validator.options[:in])
+          @forbidden_values = validator.options[:in]
           true
         when 'ActiveModel::Validations::PresenceValidator', 'ActiveRecord::Validations::PresenceValidator'
           @must_be_present = true
@@ -25,14 +28,14 @@ module FactoryBakery
         end
       end
 
-      def pick_from(values)
+      def pick_from(values, context = nil)
         case values
         when Array
           values.sample
         when Range
           values.to_a.sample
-        when Proc
-          pick_from(values.call)
+        when Proc, Symbol
+          pick_from(resolve_set(values, context, 'inclusion'), context)
         else
           values
         end
@@ -50,8 +53,38 @@ module FactoryBakery
         !@allowed_values.nil?
       end
 
-      def forbidden_values?(value)
-        @forbidden_values&.include?(value)
+      def forbidden_values?(value, context = nil)
+        return false if @forbidden_values.nil?
+
+        forbidden = resolve_set(@forbidden_values, context, 'exclusion')
+        forbidden.respond_to?(:include?) && forbidden.include?(value)
+      end
+
+      # Rails accepts a Proc (or a Symbol referencing another attribute) as an
+      # inclusion/exclusion set. Resolve it only when a value is generated,
+      # fresh for every bake, and pass the object being built to record-aware
+      # procs. Literal arrays and ranges stay untouched on the fast path.
+      def resolve_set(option, context, kind)
+        case option
+        when Proc
+          Array(call_set_proc(option, context, kind))
+        when Symbol
+          Array(context&.value_for(option))
+        else
+          option
+        end
+      end
+
+      # A proc touching not-yet-loaded application constants used to raise a
+      # raw NameError from inside filler setup. Report it against the model and
+      # attribute that triggered it instead, with the original error as cause.
+      def call_set_proc(option, context, kind)
+        call_option_proc(option, context)
+      rescue StandardError => e
+        raise FactoryBakery::Error,
+              "#{@model_class}##{@attr_name}: #{kind} :in proc raised " \
+              "#{e.class}: #{e.message}; define referenced constants before " \
+              'baking or use a literal array/range'
       end
 
       # Rails comparison/numericality options accept literals, Procs and

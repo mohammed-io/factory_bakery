@@ -55,7 +55,7 @@ module FactoryBakery
         return nil if absence_required?
 
         # 2. Inclusion validator - pick from allowed set
-        return pick_from_allowed if allowed_values?
+        return pick_from_allowed(context) if allowed_values?
 
         # 3. Generate value respecting constraints
         value = generate_value(context)
@@ -88,8 +88,8 @@ module FactoryBakery
         @in_range = opts[:in] if opts[:in]
       end
 
-      def pick_from_allowed
-        pick_from(@allowed_values).to_i
+      def pick_from_allowed(context)
+        pick_from(@allowed_values, context).to_i
       end
 
       def generate_value(context)
@@ -191,7 +191,7 @@ module FactoryBakery
         return value unless @forbidden_values
 
         attempts = 0
-        while forbidden_values?(value) && attempts < 20
+        while forbidden_values?(value, context) && attempts < 20
           value = generate_value(context)
           attempts += 1
         end

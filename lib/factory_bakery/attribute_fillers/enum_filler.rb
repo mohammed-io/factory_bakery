@@ -36,12 +36,12 @@ module FactoryBakery
         apply_common_validator(validator)
       end
 
-      def call(_context = nil)
+      def call(context = nil)
         # 1. Absence validator takes precedence
         return nil if absence_required?
 
         # 2. Inclusion validator (explicit) - pick from allowed set
-        return pick_from_allowed if allowed_values? && @allowed_values != @enum_values
+        return pick_from_allowed(context) if allowed_values? && @allowed_values != @enum_values
 
         # 3. Pick from enum values
         pick_from_enum
@@ -73,8 +73,8 @@ module FactoryBakery
         end
       end
 
-      def pick_from_allowed
-        pick_from(@allowed_values)
+      def pick_from_allowed(context)
+        pick_from(@allowed_values, context)
       end
 
       def pick_from_enum
