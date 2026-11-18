@@ -13,8 +13,8 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a recent past timestamp (within 30 days)' do
         filler = described_class.new(Post, :created_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
         expect((now - value).to_i).to be_between(0, 30 * 24 * 3600).inclusive
@@ -28,8 +28,8 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a very recent past timestamp (within 7 days)' do
         filler = described_class.new(Post, :updated_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
         expect((now - value).to_i).to be_between(0, 7 * 24 * 3600).inclusive
@@ -43,8 +43,8 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a past timestamp (within last year)' do
         filler = described_class.new(Article, :published_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
         expect((now - value).to_i).to be_between(0, 365 * 24 * 3600).inclusive
@@ -58,8 +58,8 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a past timestamp (within last year)' do
         filler = described_class.new(Comment, :posted_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
         expect((now - value).to_i).to be_between(0, 365 * 24 * 3600).inclusive
@@ -73,8 +73,8 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a future timestamp (within next 30 days)' do
         filler = described_class.new(Event, :starts_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
         expect((value - now).to_i).to be_between(0, 30 * 24 * 3600).inclusive
@@ -88,8 +88,8 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a future timestamp (within next 30 days)' do
         filler = described_class.new(Conference, :begins_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
         expect((value - now).to_i).to be_between(0, 30 * 24 * 3600).inclusive
@@ -103,11 +103,11 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a future timestamp (31-90 days from now)' do
         filler = described_class.new(Event, :ends_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
-        expect((value - now).to_i).to be_between(31 * 24 * 3600, 90 * 24 * 3600).inclusive
+        expect(value - now).to be_between(31 * 24 * 3600, 90 * 24 * 3600 + 1).inclusive
       end
     end
 
@@ -118,11 +118,11 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a future timestamp (31-90 days from now)' do
         filler = described_class.new(Project, :finishes_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
-        expect((value - now).to_i).to be_between(31 * 24 * 3600, 90 * 24 * 3600).inclusive
+        expect(value - now).to be_between(31 * 24 * 3600, 90 * 24 * 3600 + 1).inclusive
       end
     end
 
@@ -133,11 +133,11 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates a future timestamp (31-90 days from now)' do
         filler = described_class.new(Token, :expires_at)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
-        expect((value - now).to_i).to be_between(31 * 24 * 3600, 90 * 24 * 3600).inclusive
+        expect(value - now).to be_between(31 * 24 * 3600, 90 * 24 * 3600 + 1).inclusive
       end
     end
 
@@ -148,8 +148,8 @@ RSpec.describe FactoryBakery::AttributeFillers::DateTimeFiller do
 
       it 'generates current time' do
         filler = described_class.new(Log, :timestamp)
-        value = filler.call
         now = Time.now
+        value = filler.call
 
         expect(value).to be_a(Time)
         expect((now - value).to_i).to be < 5 # Within 5 seconds
