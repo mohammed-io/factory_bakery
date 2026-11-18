@@ -2,8 +2,8 @@
 
 module FactoryBakery
   module Associations
-    # The plugin object registered with core on require. It only evaluates
-    # explicit `association` declarations; no mode auto-builds anything yet.
+    # The plugin object registered with core on require. It evaluates explicit
+    # `association` declarations; no mode auto-builds anything yet.
     module Plugin
       class << self
         def dsl_module
@@ -19,12 +19,46 @@ module FactoryBakery
             raise FactoryBakery::Error, "no associations on #{object.class}; it is not ActiveRecord"
           end
 
-          declarations.uniq.each { |name| build(object, name) }
+          winners(declarations).each_value { |declaration| build(object, declaration) }
         end
 
         private
 
-        def build(object, name)
+        # Base declaration first, then traits in application order. As with
+        # attributes, the last declaration for a name replaces earlier ones.
+        def winners(declarations)
+          declarations.each_with_object({}) do |declaration, result|
+            result[declaration.name] = declaration
+          end
+        end
+
+        def build(object, declaration)
+          reflection = reflection_for(object, declaration.name)
+          return if suppressed?(object, reflection)
+
+          target = bake_target(object, declaration, reflection)
+          object.public_send("#{reflection.name}=", target)
+        end
+
+        # A child is always built through the public bake path, so its own
+        # registered factory, traits and heuristics apply. `bake` (not `bake!`)
+        # keeps the graph unsaved and DB-free; bake!'s autosave transaction
+        # persists the whole graph together.
+        def bake_target(object, declaration, reflection)
+          if reflection.polymorphic?
+            require_polymorphic_factory!(object, declaration, reflection)
+          elsif declaration.factory
+            ensure_compatible!(object, declaration, reflection)
+          end
+
+          FactoryBakery.bake(
+            declaration.factory || reflection.klass,
+            *declaration.traits,
+            **declaration.overrides
+          )
+        end
+
+        def reflection_for(object, name)
           # Checked at bake time, not definition time, so factories can load
           # before the models they name.
           reflection = object.class.reflect_on_association(name)
@@ -33,14 +67,25 @@ module FactoryBakery
             raise FactoryBakery::Error, "association :#{name} is a #{reflection.macro}; only belongs_to is supported"
           end
 
-          return if suppressed?(object, reflection)
+          reflection
+        end
 
-          # bake (not bake!) keeps the graph unsaved and DB-free, and the target
-          # class's own factory and heuristics apply because we bake the class.
-          # Assigning through the reflection sets the FK; core already excludes
-          # belongs_to FK columns from its heuristic layer, so nothing can
-          # clobber the value afterwards.
-          object.public_send("#{reflection.name}=", FactoryBakery.bake(reflection.klass))
+        def require_polymorphic_factory!(object, declaration, reflection)
+          return if declaration.factory
+
+          raise FactoryBakery::Error,
+                "#{object.class} has a polymorphic association :#{reflection.name}; " \
+                'pass factory: to name its target class'
+        end
+
+        def ensure_compatible!(object, declaration, reflection)
+          resolved, = BakeryBuilder.resolve(declaration.factory)
+          expected = reflection.klass
+          return if resolved <= expected
+
+          raise FactoryBakery::Error,
+                "factory: #{declaration.factory.inspect} is incompatible with #{object.class}##{declaration.name}: " \
+                "expected #{expected} or a subclass, got #{resolved}"
         end
 
         # Core hands us the instantiated object rather than the overrides hash.
