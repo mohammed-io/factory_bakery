@@ -5,6 +5,7 @@ require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/railitie'
 require_relative 'factory_bakery/bakery_builder'
 require_relative 'factory_bakery/definition_loader'
+require_relative 'factory_bakery/methods'
 
 # Attribute fillers
 require_relative 'factory_bakery/attribute_fillers/common_validators'
