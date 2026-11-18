@@ -5,6 +5,11 @@ module FactoryBakery
     class StringFiller
       include CommonValidators
 
+      # Bounded regeneration for format/exclusion constraints, matching the
+      # uniqueness enforcer's budget. Exhaustion raises a contextual error
+      # instead of returning a value that fails validation.
+      MAX_ATTEMPTS = 10
+
       def initialize(model_class, attr_name)
         @model_class = model_class
         @attr_name = attr_name.to_s
@@ -19,7 +24,8 @@ module FactoryBakery
         @min_length = nil
         @max_length = nil
         @exact_length = nil
-        @format_regex = nil
+        @with_regexes = []
+        @without_regexes = []
         @allowed_values = nil
         @forbidden_values = nil
         @must_be_present = false
@@ -38,14 +44,8 @@ module FactoryBakery
         # 2. Inclusion validator - pick from allowed set
         return pick_from_allowed(context) if allowed_values?
 
-        # 3. Generate value respecting constraints
-        value = generate_value
-
-        # 4. Adjust to length constraints
-        value = adjust_length(value)
-
-        # 5. Ensure not in exclusion set
-        avoid_forbidden(value, context)
+        # 3. Generate and verify a value that satisfies every constraint
+        generate_compliant_value(context)
       end
 
       def apply_validator(validator)
@@ -55,7 +55,12 @@ module FactoryBakery
         when 'ActiveModel::Validations::LengthValidator', 'ActiveRecord::Validations::LengthValidator'
           apply_length_validator(validator.options)
         when 'ActiveModel::Validations::FormatValidator'
-          @format_regex = validator.options[:with]
+          # Rails forbids both keys in a single declaration, but an attribute
+          # can carry several FormatValidators. Keep every regex so verification
+          # covers the full set instead of the last one declared.
+          @with_regexes << validator.options[:with] if validator.options[:with]
+          @without_regexes << validator.options[:without] if validator.options[:without]
+          true
         else
           false
         end
@@ -76,22 +81,78 @@ module FactoryBakery
         value.to_s
       end
 
+      # Generate up to MAX_ATTEMPTS candidates and return the first one that
+      # satisfies every constraint. A candidate is never returned unverified:
+      # exhaustion raises instead of leaking a value Rails would reject.
+      def generate_compliant_value(context)
+        value = nil
+        attempts = 0
+        loop do
+          value = build_candidate
+          return value if compliant?(value, context)
+
+          attempts += 1
+          raise format_exhaustion_error(value) if attempts >= MAX_ATTEMPTS
+        end
+      end
+
+      def build_candidate
+        value = generate_value
+        # Truncating/padding a regex-generated value is what turns a compliant
+        # value into a non-match. For regex-constrained strings, length is a
+        # verification predicate instead of a post-processing step.
+        return value if @with_regexes.any?
+
+        adjust_length(value)
+      end
+
+      def compliant?(value, context)
+        return false if value.nil?
+        return false unless matches_with_regexes?(value)
+        return false if matches_without_regexes?(value)
+        return false if forbidden_values?(value, context)
+
+        length_compliant?(value)
+      end
+
+      def matches_with_regexes?(value)
+        @with_regexes.all? { |regex| regex.match?(value) }
+      end
+
+      def matches_without_regexes?(value)
+        @without_regexes.any? { |regex| regex.match?(value) }
+      end
+
+      def length_compliant?(value)
+        length_constraints.all? { |kind, bound| length_satisfies?(value.length, kind, bound) }
+      end
+
+      def length_satisfies?(length, kind, bound)
+        case kind
+        when :is then length == bound
+        when :minimum then length >= bound
+        else length <= bound
+        end
+      end
+
+      def length_constraints
+        { is: @exact_length, minimum: @min_length, maximum: @max_length, db_limit: @db_limit }.compact
+      end
+
       def generate_value
         # Priority 1: Format regex constraint
-        return generate_from_regex if @format_regex
+        return generate_from_regex if @with_regexes.any?
 
         # Priority 2: Attribute name patterns
         generate_by_pattern
       end
 
       def generate_from_regex
-        # Try to use FFaker's from_regexp if available
-        if FFaker::String.respond_to?(:from_regexp)
-          FFaker::String.from_regexp(@format_regex)
-        else
-          # Fallback: generate a random string
-          generate_by_pattern
-        end
+        # FFaker cannot express every regex. Its fallback may violate the
+        # pattern, so the result is verified by generate_compliant_value.
+        return generate_by_pattern unless FFaker::String.respond_to?(:from_regexp)
+
+        FFaker::String.from_regexp(@with_regexes.first)
       rescue StandardError
         generate_by_pattern
       end
@@ -177,16 +238,23 @@ module FactoryBakery
         padding
       end
 
-      def avoid_forbidden(value, context = nil)
-        return value unless @forbidden_values
+      def format_exhaustion_error(value)
+        name = "#{@model_class}##{@attr_name}"
 
-        attempts = 0
-        while forbidden_values?(value, context) && attempts < 10
-          value = generate_value
-          value = adjust_length(value)
-          attempts += 1
-        end
-        value
+        FactoryBakery::Error.new(
+          "could not generate a format-compliant value for #{name} " \
+          "(#{format_constraints_description}): #{value.inspect} failed after " \
+          "#{MAX_ATTEMPTS} attempts. Pass an explicit value with an override " \
+          'or relax the constraints.'
+        )
+      end
+
+      def format_constraints_description
+        parts = []
+        parts << "with: #{@with_regexes.map(&:inspect).join(', ')}" if @with_regexes.any?
+        parts << "without: #{@without_regexes.map(&:inspect).join(', ')}" if @without_regexes.any?
+        parts << "length constraints: #{length_constraints.inspect}" unless length_constraints.empty?
+        parts.join('; ')
       end
     end
   end
