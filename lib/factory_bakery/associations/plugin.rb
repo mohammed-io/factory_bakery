@@ -3,24 +3,33 @@
 module FactoryBakery
   module Associations
     # The plugin object registered with core on require. It evaluates explicit
-    # `association` declarations after the owner exists and, in :required_only
-    # mode, auto-builds required belongs_to through core's heuristic values hook.
+    # `association` declarations after the owner exists and delegates :all's
+    # automatic collection building to AllAutoBuilder.
     module Plugin
       class << self
         def dsl_module
           DSL
         end
 
-        # Auto-build values live in the heuristics layer, so declarations,
-        # traits, overrides and initialize_with keys suppress them via `taken`.
+        # belongs_to auto-build values live in the heuristics layer, so
+        # declarations, traits, overrides and initialize_with keys suppress
+        # them via `taken` (core expands it to whole alias groups).
         def heuristic_values(klass, context, taken)
-          RequiredBuilder.values(klass, context, taken)
+          BelongsToBuilder.values(klass, context, taken)
         end
 
-        # Association declarations run after core has applied plain attributes,
-        # so an override or trait that already decided this alias group wins and
-        # an owner block sees a fully populated owner.
-        def after_instantiate(object, declarations, _context)
+        # Declarations run after core has applied plain attributes, so an
+        # override or trait that already decided this alias group wins and an
+        # owner block sees a fully populated owner. :all collections are built
+        # afterwards through the same TargetBuilder machinery.
+        def after_instantiate(object, declarations, context)
+          build_declared_associations(object, declarations)
+          AllAutoBuilder.build(object, declarations, context)
+        end
+
+        private
+
+        def build_declared_associations(object, declarations)
           return if declarations.empty?
 
           unless object.class.respond_to?(:reflect_on_association)
@@ -29,8 +38,6 @@ module FactoryBakery
 
           winners(declarations).each_value { |declaration| build(object, declaration) }
         end
-
-        private
 
         # Base declaration first, then traits in application order. As with
         # attributes, the last declaration for a name replaces earlier ones.

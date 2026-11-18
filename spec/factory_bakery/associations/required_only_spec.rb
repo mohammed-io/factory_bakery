@@ -329,13 +329,13 @@ RSpec.describe 'FactoryBakery associations :required_only mode' do
       expect(account_model.count).to eq(0)
     end
 
-    it 'does nothing in :all mode until that ticket lands' do
+    it 'still builds required belongs_to when :all mode is selected' do
       _company_model, account_model, user_model = define_company_account_user('ReqAll')
 
       FactoryBakery::Associations.mode = :all
       user = FactoryBakery.bake(user_model)
 
-      expect(user.account).to be_nil
+      expect(user.account).to be_a(account_model)
       expect(account_model.count).to eq(0)
     end
 

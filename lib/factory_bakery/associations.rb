@@ -5,8 +5,10 @@ require 'factory_bakery'
 require_relative 'associations/configuration'
 require_relative 'associations/declaration'
 require_relative 'associations/dsl'
-require_relative 'associations/required_builder'
+require_relative 'associations/back_edge_detector'
+require_relative 'associations/belongs_to_builder'
 require_relative 'associations/target_builder'
+require_relative 'associations/all_auto_builder'
 require_relative 'associations/plugin'
 
 # Requiring this file is the opt-in switch. Registration is idempotent per
