@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require 'timeout'
+
 module FactoryBakery
   module AttributeFillers
     class StringFiller
@@ -9,6 +11,13 @@ module FactoryBakery
       # uniqueness enforcer's budget. Exhaustion raises a contextual error
       # instead of returning a value that fails validation.
       MAX_ATTEMPTS = 10
+
+      # Hard bounds around synthesis itself. FFaker's from_regexp can spin
+      # forever on POSIX classes, so every call gets a wall-clock guard; the
+      # deadline caps total synthesis work for one attribute (one filler
+      # invocation), and the attempt cap bounds raw generator calls.
+      SYNTHESIS_TIME_LIMIT = 2.0
+      SYNTHESIS_ATTEMPT_CAP = 25
 
       # A pure generator: the constraints arrive already normalized in a
       # ConstraintSet, resolved from the target once at construction.
@@ -50,19 +59,30 @@ module FactoryBakery
       # satisfies every constraint. A candidate is never returned unverified:
       # exhaustion raises instead of leaking a value the target would reject.
       def generate_compliant_value(context)
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SYNTHESIS_TIME_LIMIT
         value = nil
         attempts = 0
+        synthesis_attempts = 0
         loop do
-          value = build_candidate
+          exhausted = attempts >= MAX_ATTEMPTS ||
+                      synthesis_attempts >= SYNTHESIS_ATTEMPT_CAP ||
+                      past_deadline?(deadline)
+          raise format_exhaustion_error(value) if exhausted
+
+          value = build_candidate(deadline)
+          synthesis_attempts += 1
           return value if compliant?(value, context)
 
           attempts += 1
-          raise format_exhaustion_error(value) if attempts >= MAX_ATTEMPTS
         end
       end
 
-      def build_candidate
-        value = generate_value
+      def past_deadline?(deadline)
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
+      end
+
+      def build_candidate(deadline)
+        value = generate_value(deadline)
         # Truncating/padding a regex-generated value is what turns a compliant
         # value into a non-match. For regex-constrained strings, length is a
         # verification predicate instead of a post-processing step.
@@ -104,21 +124,50 @@ module FactoryBakery
         { is: @exact_length, minimum: @min_length, maximum: @max_length, db_limit: @db_limit }.compact
       end
 
-      def generate_value
+      def generate_value(deadline)
         # Priority 1: Format regex constraint
-        return generate_from_regex if @with_regexes.any?
+        return generate_from_regex(deadline) if @with_regexes.any?
 
         # Priority 2: Attribute name patterns
         generate_by_pattern
       end
 
-      def generate_from_regex
-        # FFaker cannot express every regex. Its fallback may violate the
-        # pattern, so the result is verified by generate_compliant_value.
-        return generate_by_pattern unless FFaker::String.respond_to?(:from_regexp)
+      def generate_from_regex(deadline)
+        regex = @with_regexes.first
+        return generate_by_pattern unless regex
 
-        FFaker::String.from_regexp(@with_regexes.first)
+        synthesizer = RegexSynthesizer.new(regex)
+
+        # Simple regexes stay on the FFaker path, preserving V5 regeneration
+        # semantics and leaving probe-6-style behavior unchanged.
+        return synthesize_with_ffaker(regex, deadline) if synthesizer.ffaker_expressible?
+
+        # For groups, alternation, inline flags and POSIX classes FFaker emits
+        # literal junk or spins forever. Synthesize them ourselves instead.
+        return synthesizer.generate if synthesizer.supported?
+
+        # Truly unsupported constructs produce no candidate at all: the V5
+        # verifier turns this into the contextual exhaustion error, fast.
+        nil
+      end
+
+      def synthesize_with_ffaker(regex, deadline)
+        return generate_by_pattern unless defined?(FFaker::String) &&
+                                           FFaker::String.respond_to?(:from_regexp)
+
+        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        raise Timeout::Error if remaining <= 0
+
+        value = Timeout.timeout(remaining) { FFaker::String.from_regexp(regex) }
+        value.is_a?(String) ? value : generate_by_pattern
+      rescue Timeout::Error
+        # A spinning synthesis is never retried through FFaker: the attribute
+        # deadline is already exhausted, so fall through to the exhaustion
+        # error on the next loop check instead of burning more wall clock.
+        nil
       rescue StandardError
+        # A plain FFaker failure falls back to a name-pattern candidate; the
+        # verifier rejects it when it violates the regex and retries.
         generate_by_pattern
       end
 

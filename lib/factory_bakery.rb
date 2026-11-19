@@ -15,6 +15,7 @@ require_relative 'factory_bakery/methods'
 
 # Attribute fillers
 require_relative 'factory_bakery/attribute_fillers/value_resolution'
+require_relative 'factory_bakery/attribute_fillers/regex_synthesizer'
 require_relative 'factory_bakery/attribute_fillers/numeric_constraint_hygiene'
 require_relative 'factory_bakery/attribute_fillers/bake_time_values'
 require_relative 'factory_bakery/attribute_fillers/noop_filler'
