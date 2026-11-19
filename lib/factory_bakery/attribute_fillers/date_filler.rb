@@ -66,7 +66,7 @@ module FactoryBakery
         return greater_than_or_equal_to if greater_than_or_equal_to
 
         greater_than = resolved_date_bound(@greater_than_attribute, context)
-        return greater_than + 1.day if greater_than
+        return TemporalArithmetic.date_plus_days(greater_than, 1) if greater_than
 
         nil
       end
@@ -76,7 +76,7 @@ module FactoryBakery
         return less_than_or_equal_to if less_than_or_equal_to
 
         less_than = resolved_date_bound(@less_than_attribute, context)
-        return less_than - 1.day if less_than
+        return TemporalArithmetic.date_plus_days(less_than, -1) if less_than
 
         nil
       end
@@ -98,12 +98,13 @@ module FactoryBakery
           nil
         when Date
           value
-        when Time, DateTime, ActiveSupport::TimeWithZone
+        when Time
+          # Also catches zoned times: they report themselves as Time.
           value.to_date
         when String
           Date.parse(value)
         when Integer
-          Date.today + value.days
+          TemporalArithmetic.date_plus_days(Date.today, value)
         when NilClass
           nil
         else
@@ -116,8 +117,8 @@ module FactoryBakery
       def generate_in_bounds(lower, upper)
         lower_was_nil = lower.nil?
         upper_was_nil = upper.nil?
-        lower ||= Date.today - 1.year
-        upper ||= Date.today + 1.year
+        lower ||= TemporalArithmetic.date_plus_years(Date.today, -1)
+        upper ||= TemporalArithmetic.date_plus_years(Date.today, 1)
 
         if lower > upper
           # Extend a default side when only one bound was supplied; swapping
@@ -132,29 +133,41 @@ module FactoryBakery
         end
 
         days_diff = (upper - lower).to_i
-        lower + rand(0..days_diff).days
+        TemporalArithmetic.date_plus_days(lower, rand(0..days_diff))
       end
 
       def generate_by_pattern
         case @attr_name
         when /birth|dob|born/
           # Birthday: 18 to 90 years ago
-          Date.today - rand(18..90).years
+          years_ago(rand(18..90))
         when /start/
           # Start date: within the past year
-          Date.today - rand(0..365).days
+          days_ago(rand(0..365))
         when /end|expire|due/
           # End date: within the next year
-          Date.today + rand(0..365).days
+          days_ahead(rand(0..365))
         when /created|at/
           # Created at: recent past
-          Date.today - rand(0..30).days
+          days_ago(rand(0..30))
         when /updated|at/
           # Updated at: recent past
-          Date.today - rand(0..7).days
+          days_ago(rand(0..7))
         else
           Date.today
         end
+      end
+
+      def days_ago(count)
+        TemporalArithmetic.date_plus_days(Date.today, -count)
+      end
+
+      def days_ahead(count)
+        TemporalArithmetic.date_plus_days(Date.today, count)
+      end
+
+      def years_ago(count)
+        TemporalArithmetic.date_plus_years(Date.today, -count)
       end
     end
   end

@@ -4,11 +4,11 @@ require 'spec_helper'
 require 'open3'
 
 # The enforcement of the framework-agnostic core: no file in the core set may
-# reference the ActiveRecord, ActiveModel or Rails constants, so agnosticism
-# cannot silently regress. Excluded from the core set are the default mapper
-# plugin (lib/factory_bakery/active_record_mapper/**), the opt-in
-# associations plugin internals (lib/factory_bakery/associations/**) and the
-# Rails integration (which lives inside the mapper plugin directory).
+# reference the ActiveRecord, ActiveModel, Rails or ActiveSupport constants,
+# so agnosticism cannot silently regress. Excluded from the core set are the
+# default mapper plugin (lib/factory_bakery/active_record_mapper/**), the
+# opt-in associations plugin internals (lib/factory_bakery/associations/**)
+# and the Rails integration (which lives inside the mapper plugin directory).
 RSpec.describe 'framework-agnostic core architecture guard' do
   CORE_EXCLUSIONS = [
     %r{\Alib/factory_bakery/active_record_mapper(?:\.rb|/|\z)}, # default mapper plugin + Rails integration
@@ -17,8 +17,9 @@ RSpec.describe 'framework-agnostic core architecture guard' do
 
   # Constant references, including name-string matching (validator classes
   # are matched by name in the mapper, never in the core) and any textual
-  # mention in comments.
-  FORBIDDEN_CONSTANT_REFERENCES = /\b(?:ActiveRecord|ActiveModel|Rails)\b/
+  # mention in comments. ActiveSupport is included: the core's date and
+  # datetime arithmetic is stdlib-only.
+  FORBIDDEN_CONSTANT_REFERENCES = /\b(?:ActiveRecord|ActiveModel|Rails|ActiveSupport)\b/
 
   # Requiring a framework gem is a dependency, not just a mention.
   FORBIDDEN_FRAMEWORK_REQUIRES =
@@ -66,6 +67,13 @@ RSpec.describe 'framework-agnostic core architecture guard' do
       .to match(FORBIDDEN_CONSTANT_REFERENCES)
   end
 
+  it 'is armed: the excluded Rails integration really does reference ActiveSupport' do
+    # A canary proving the extended pattern catches ActiveSupport references
+    # too, not just the ORM constants.
+    expect(File.read('lib/factory_bakery/active_record_mapper/railtie.rb'))
+      .to match(FORBIDDEN_CONSTANT_REFERENCES)
+  end
+
   it 'keeps every framework constant reference out of the core set' do
     violations = violations_in(core_files, FORBIDDEN_CONSTANT_REFERENCES)
 
@@ -109,6 +117,58 @@ RSpec.describe 'framework-agnostic core architecture guard' do
 
     expect(status).to be_success,
                   "framework-free load failed:\n#{stderr}\n#{stdout}"
+    expect(stdout).to eq('OK')
+  end
+
+  it 'runs the temporal generation arithmetic with no framework boot at all' do
+    ffaker_lib = File.join(Gem::Specification.find_by_name('ffaker').gem_dir, 'lib')
+    code = <<~RUBY
+      # The core's temporal arithmetic is stdlib-only: load the unit directly,
+      # with nothing but the stdlib requires it needs, and verify no framework
+      # came with it.
+      require 'date'
+      require 'time'
+      require 'factory_bakery/attribute_fillers/temporal_arithmetic'
+
+      frameworks = [defined?(Rails), defined?(ActiveRecord), defined?(ActiveSupport)]
+      abort 'the core temporal unit must stay framework-free' if frameworks.any?
+
+      arithmetic = FactoryBakery::AttributeFillers::TemporalArithmetic
+
+      # Date arithmetic: calendar years and plain days, stdlib only.
+      today = Date.today
+      birthday = arithmetic.date_plus_years(today, -rand(18..90))
+      age_days = (today - birthday).to_i
+      abort 'year arithmetic is off' unless age_days / 365 >= 18 && age_days / 365 <= 90
+
+      start_date = arithmetic.date_plus_days(today, -rand(0..365))
+      abort 'day arithmetic is off' unless (today - start_date).to_i.between?(0, 365)
+
+      # Time arithmetic: a calendar day shift keeps the wall clock.
+      now = Time.now
+      stamp = arithmetic.time_plus_days(now, -30)
+      abort 'day shift is off' unless stamp.to_date == (now.to_date - 30)
+
+      future = arithmetic.time_plus_years(now, 1)
+      abort 'year shift is off' unless future.year == now.year + 1
+
+      later = arithmetic.plus_seconds(now, 3600)
+      abort 'second arithmetic is off' unless later > now
+
+      print 'OK'
+    RUBY
+
+    stdout, stderr, status = nil
+    Bundler.with_unbundled_env do
+      stdout, stderr, status = Open3.capture3(
+        RbConfig.ruby,
+        '-I', ffaker_lib, '-I', File.expand_path('lib'),
+        '-e', code
+      )
+    end
+
+    expect(status).to be_success,
+                  "framework-free temporal arithmetic failed:\n#{stderr}\n#{stdout}"
     expect(stdout).to eq('OK')
   end
 end

@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require 'ffaker'
+require 'date'
+require 'time'
 require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/plugin_registry'
 require_relative 'factory_bakery/constraint_set'
@@ -20,6 +22,7 @@ require_relative 'factory_bakery/attribute_fillers/string_filler'
 require_relative 'factory_bakery/attribute_fillers/integer_filler'
 require_relative 'factory_bakery/attribute_fillers/float_filler'
 require_relative 'factory_bakery/attribute_fillers/boolean_filler'
+require_relative 'factory_bakery/attribute_fillers/temporal_arithmetic'
 require_relative 'factory_bakery/attribute_fillers/date_filler'
 require_relative 'factory_bakery/attribute_fillers/datetime_filler'
 require_relative 'factory_bakery/attribute_fillers/enum_filler'

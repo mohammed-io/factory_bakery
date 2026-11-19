@@ -66,7 +66,7 @@ module FactoryBakery
         return greater_than_or_equal_to if greater_than_or_equal_to
 
         greater_than = resolved_datetime_bound(@greater_than_attribute, context)
-        return greater_than + 1.second if greater_than
+        return TemporalArithmetic.plus_seconds(greater_than, 1) if greater_than
 
         nil
       end
@@ -76,7 +76,7 @@ module FactoryBakery
         return less_than_or_equal_to if less_than_or_equal_to
 
         less_than = resolved_datetime_bound(@less_than_attribute, context)
-        return less_than - 1.second if less_than
+        return TemporalArithmetic.plus_seconds(less_than, -1) if less_than
 
         nil
       end
@@ -96,14 +96,15 @@ module FactoryBakery
         when Symbol, Proc
           # Unresolved reference (no bake-time context): no bound.
           nil
-        when Time, DateTime, ActiveSupport::TimeWithZone
+        when Time, DateTime
+          # Also catches zoned times: they report themselves as Time.
           value
         when Date
           value.to_time
         when String
           Time.parse(value)
         when Integer
-          Time.now + value.seconds
+          TemporalArithmetic.plus_seconds(Time.now, value)
         when NilClass
           nil
         else
@@ -116,8 +117,8 @@ module FactoryBakery
       def generate_in_bounds(lower, upper)
         lower_was_nil = lower.nil?
         upper_was_nil = upper.nil?
-        lower ||= Time.now - 1.year
-        upper ||= Time.now + 1.year
+        lower ||= TemporalArithmetic.time_plus_years(Time.now, -1)
+        upper ||= TemporalArithmetic.time_plus_years(Time.now, 1)
 
         if lower > upper
           # Extend a default side when only one bound was supplied; swapping
@@ -132,24 +133,32 @@ module FactoryBakery
         end
 
         seconds_diff = (upper - lower).to_i
-        lower + rand(0..seconds_diff).seconds
+        TemporalArithmetic.plus_seconds(lower, rand(0..seconds_diff))
       end
 
       def generate_by_pattern
         case @attr_name
         when /created_at/
-          Time.now - rand(0..30).days
+          days_ago(rand(0..30))
         when /updated_at/
-          Time.now - rand(0..7).days
+          days_ago(rand(0..7))
         when /published_at|posted_at/
-          Time.now - rand(0..365).days
+          days_ago(rand(0..365))
         when /starts_at|begins_at/
-          Time.now + rand(0..30).days
+          days_ahead(rand(0..30))
         when /ends_at|finishes_at|expires_at/
-          Time.now + rand(31..90).days
+          days_ahead(rand(31..90))
         else
           Time.now
         end
+      end
+
+      def days_ago(count)
+        TemporalArithmetic.time_plus_days(Time.now, -count)
+      end
+
+      def days_ahead(count)
+        TemporalArithmetic.time_plus_days(Time.now, count)
       end
     end
   end
