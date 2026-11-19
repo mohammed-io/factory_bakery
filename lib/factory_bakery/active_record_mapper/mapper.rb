@@ -52,11 +52,18 @@ module FactoryBakery
       # names walks validators, reflections and guard columns, which every
       # bake would otherwise repeat.
       def attribute_universe(klass)
-        return compute_attribute_universe(klass) if klass.frozen?
-
-        klass.instance_variable_get(:@factory_bakery_universe) ||
-          klass.instance_variable_set(:@factory_bakery_universe, compute_attribute_universe(klass).freeze)
+        class_memo(klass, :@factory_bakery_universe) { compute_attribute_universe(klass).freeze }
       end
+
+      # Class-level introspection facts are stable for a loaded class, so they
+      # are computed once and kept on the class (a reload drops them with it).
+      # Frozen classes are recomputed every time.
+      def class_memo(klass, ivar)
+        return yield if klass.frozen?
+
+        klass.instance_variable_get(ivar) || klass.instance_variable_set(ivar, yield)
+      end
+      private :class_memo
 
       def compute_attribute_universe(klass)
         columns = klass.respond_to?(:columns_hash) ? klass.columns_hash.keys.map(&:to_s) : []
@@ -126,9 +133,11 @@ module FactoryBakery
       # because the value side fills a NOT NULL counter without a default
       # with 0 instead of leaving it untouched.
       def guard_columns(klass)
-        FactoryBakery::MapperRegistry::GuardColumns.new(
-          names: guard_names(klass), counter_names: counter_names(klass)
-        )
+        class_memo(klass, :@factory_bakery_guard_columns) do
+          FactoryBakery::MapperRegistry::GuardColumns.new(
+            names: guard_names(klass).freeze, counter_names: counter_names(klass).freeze
+          )
+        end
       end
 
       # An association name and the columns backing it (the FK, plus the type
@@ -137,13 +146,15 @@ module FactoryBakery
       # `alias_attribute` names group with their column the same way, so the
       # alias and its column are decided once (issue #61).
       def alias_groups(klass)
-        groups = association_alias_groups(klass)
-        attribute_alias_groups(klass).each do |members|
-          next if members.any? { |member| groups.key?(member) }
+        class_memo(klass, :@factory_bakery_alias_groups) do
+          groups = association_alias_groups(klass)
+          attribute_alias_groups(klass).each do |members|
+            next if members.any? { |member| groups.key?(member) }
 
-          members.each { |member| groups[member] = members }
+            members.each { |member| groups[member] = members }
+          end
+          groups.transform_values(&:freeze).freeze
         end
-        groups
       end
 
       def belongs_to_association_names(klass)

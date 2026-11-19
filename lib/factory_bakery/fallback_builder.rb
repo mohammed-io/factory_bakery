@@ -22,7 +22,9 @@ module FactoryBakery
 
     def build(model_klass, definition, overrides, traits)
       adapter = MapperRegistry.persistence_adapter(model_klass)
-      return build_without_savepoint(model_klass, definition, overrides, traits) unless savepoint_available?(adapter)
+      unless savepoint_available?(adapter, model_klass)
+        return build_without_savepoint(model_klass, definition, overrides, traits)
+      end
 
       mark = BuildContext.generated_records.length
       kept = nil
@@ -65,8 +67,24 @@ module FactoryBakery
     # A savepoint is only useful when a fallback can happen: with the opt-in
     # fully on, `fallback_needed?` is always false and there is nothing to
     # roll back. Non-transactional targets keep their plain build-and-save path.
-    def savepoint_available?(adapter)
-      adapter.transactional? && !FillOptional.full?(@mode)
+    def savepoint_available?(adapter, model_klass)
+      adapter.transactional? && !FillOptional.full?(@mode) && fallback_possible?(model_klass)
+    end
+
+    # The fallback can only trigger when verification can be needed: the
+    # mapper cannot read all of the class's validation logic, or some column
+    # pairs a default with validators. Read without a bound record, so
+    # conditional validators count as present (a superset, never a miss).
+    # A class that cannot even be introspected here is left to construction,
+    # which reports its own error, so assume the fallback is possible.
+    def fallback_possible?(model_klass)
+      MapperRegistry.custom_validation?(model_klass) ||
+        MapperRegistry.attribute_universe(model_klass).any? do |name|
+          constraints = MapperRegistry.constraints_for(model_klass, name)
+          constraints.has_default && constraints.has_validators
+        end
+    rescue StandardError
+      true
     end
 
     def build_without_savepoint(model_klass, definition, overrides, traits)

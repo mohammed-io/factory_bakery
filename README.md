@@ -306,6 +306,8 @@ end
 
 Both `bake` and `bake!` are available bare after the include, with exactly the same arguments as `FactoryBakery.bake` / `FactoryBakery.bake!`. You can always use the fully qualified module methods instead.
 
+**Speed tip:** run your suite with YJIT (`RUBY_YJIT_ENABLE=1` or `ruby --yjit`, Ruby 3.3+). A bake is mostly method dispatch and small lookups, which YJIT compiles away; measured on Ruby 3.4 it makes `bake` about 2.2x faster. See `docs/reports/profiling-20261119.md` for the numbers.
+
 ## How heuristics work
 
 For each attribute not supplied by a declaration, a trait, or an override, FactoryBakery picks a filler. ActiveRecord models contribute their column types; any ActiveModel-compatible object contributes its validators. The filler then reads the validator options to produce a valid value.
