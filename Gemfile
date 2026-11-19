@@ -16,6 +16,11 @@ gem 'rubocop'
 # specs). See the Development section of the README.
 gem 'rails'
 
+# Development-only: the opt-in Sequel mapper plugin (require
+# 'factory_bakery/sequel') specs bake Sequel::Model classes on their own
+# in-memory SQLite connection. Never a runtime dependency of the gemspec.
+gem 'sequel'
+
 # All three adapters are installed so DATABASE_URL can select any of them
 # from any gemfile; in-memory SQLite remains the default with no env var.
 gem 'pg', '~> 1.5'
