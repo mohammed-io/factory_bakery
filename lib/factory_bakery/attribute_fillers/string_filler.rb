@@ -3,38 +3,29 @@
 module FactoryBakery
   module AttributeFillers
     class StringFiller
-      include CommonValidators
+      include ValueResolution
 
       # Bounded regeneration for format/exclusion constraints, matching the
       # uniqueness enforcer's budget. Exhaustion raises a contextual error
       # instead of returning a value that fails validation.
       MAX_ATTEMPTS = 10
 
+      # A pure generator: the constraints arrive already normalized in a
+      # ConstraintSet, resolved from the target once at construction.
       def initialize(model_class, attr_name)
         @model_class = model_class
         @attr_name = attr_name.to_s
+        @constraints = ConstraintSet.for(model_class, @attr_name)
 
-        # Schema constraints from columns_hash
-        @column = column_for(model_class, attr_name)
-        @db_limit = @column&.limit
-        @nullable = @column&.null
-        @has_default = @column&.default
+        # Schema constraints
+        @db_limit = @constraints.db_limit
 
-        # Validation constraints (accumulated from validators)
-        @min_length = nil
-        @max_length = nil
-        @exact_length = nil
-        @with_regexes = []
-        @without_regexes = []
-        @allowed_values = nil
-        @forbidden_values = nil
-        @must_be_present = false
-        @absence_required = false
-
-        # Process all validators for this attribute
-        validators_for(model_class, attr_name).each do |validator|
-          apply_validator(validator)
-        end
+        # Validation constraints (normalized from the target's validators)
+        @min_length = @constraints.min_length
+        @max_length = @constraints.max_length
+        @exact_length = @constraints.exact_length
+        @with_regexes = @constraints.with_regexes
+        @without_regexes = @constraints.without_regexes
       end
 
       def call(context = nil)
@@ -48,36 +39,10 @@ module FactoryBakery
         generate_compliant_value(context)
       end
 
-      def apply_validator(validator)
-        return true if apply_common_validator(validator)
-
-        case validator.class.name
-        when 'ActiveModel::Validations::LengthValidator', 'ActiveRecord::Validations::LengthValidator'
-          apply_length_validator(validator.options)
-        when 'ActiveModel::Validations::FormatValidator'
-          # Rails forbids both keys in a single declaration, but an attribute
-          # can carry several FormatValidators. Keep every regex so verification
-          # covers the full set instead of the last one declared.
-          @with_regexes << validator.options[:with] if validator.options[:with]
-          @without_regexes << validator.options[:without] if validator.options[:without]
-          true
-        else
-          false
-        end
-      end
-
       private
 
-      def apply_length_validator(opts)
-        @min_length = opts[:minimum]
-        @max_length = opts[:maximum]
-        @exact_length = opts[:is]
-        @min_length ||= opts[:in]&.first
-        @max_length ||= opts[:in]&.last
-      end
-
       def pick_from_allowed(context)
-        value = pick_from(@allowed_values, context)
+        value = pick_from(@constraints.allowed_values, context)
         value.to_s
       end
 

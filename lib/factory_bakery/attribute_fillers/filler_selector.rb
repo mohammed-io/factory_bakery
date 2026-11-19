@@ -2,39 +2,20 @@
 
 module FactoryBakery
   module AttributeFillers
+    # Routing policy: picks which generator handles one (target class,
+    # attribute) pair. The decision consumes only the normalized facts in a
+    # ConstraintSet -- shape (column-backed or validator-covered), schema type,
+    # defaults, enums, STI ownership, value-shaping rules and validator hints
+    # -- so the policy itself knows nothing about any framework.
     class FillerSelector
-      # V2: presence had to outrank the noop routing or a blank DB default
-      # failed on every bake. W1 (issue #41) generalizes that escape hatch to
-      # every validator that constrains the *shape* of the generated value.
-      # A defaulted column carrying any of these must reach the real type-based
-      # filler; only a defaulted column with none of them keeps its DB default.
-      # Absence is deliberately excluded: it wants nil, which noop already
-      # provides, and the fillers still honor it when they do run.
-      PRESENCE_VALIDATORS = [
-        'ActiveModel::Validations::PresenceValidator',
-        'ActiveRecord::Validations::PresenceValidator'
-      ].freeze
-
-      VALUE_SHAPING_VALIDATORS = (PRESENCE_VALIDATORS + [
-        'ActiveModel::Validations::FormatValidator',
-        'ActiveModel::Validations::LengthValidator',
-        'ActiveRecord::Validations::LengthValidator',
-        'ActiveRecord::Validations::UniquenessValidator',
-        'ActiveModel::Validations::InclusionValidator',
-        'ActiveModel::Validations::ExclusionValidator',
-        'ActiveModel::Validations::NumericalityValidator',
-        'ActiveRecord::Validations::NumericalityValidator',
-        'ActiveModel::Validations::ComparisonValidator'
-      ]).freeze
-
       attr_reader :model_class, :attr_name
 
-      # Fillers capture schema and validator constraints at construction and
-      # are otherwise stateless: every `call` samples a fresh value. A bake
-      # resolves the same model/attribute pair many times (once to generate,
-      # again for confirmations, and once per uniqueness regeneration), so the
-      # resolved filler is kept on the model class, not in the per-bake
-      # builder. Reloading a model drops its cache with it.
+      # Fillers capture their constraints at construction and are otherwise
+      # stateless: every `call` samples a fresh value. A bake resolves the
+      # same model/attribute pair many times (once to generate, again for
+      # confirmations, and once per uniqueness regeneration), so the resolved
+      # filler is kept on the model class, not in the per-bake builder.
+      # Reloading a model drops its cache with it.
       def self.cached_for(model_class, attr_name)
         return new(model_class, attr_name).call if model_class.frozen?
 
@@ -56,6 +37,7 @@ module FactoryBakery
       def initialize(model_class, attr_name)
         @model_class = model_class
         @attr_name = attr_name.to_s
+        @constraints = ConstraintSet.for(model_class, @attr_name)
       end
 
       def call
@@ -65,12 +47,13 @@ module FactoryBakery
         # Priority 2: Acceptance attribute
         return acceptance_filler if acceptance_attribute?
 
-        # Rails owns the STI discriminator; never overwrite what `new` assigned.
-        return noop_filler if sti_discriminator?
+        # Priority 3: the STI discriminator is owned by the framework; never
+        # overwrite what `new` assigned.
+        return noop_filler if @constraints.sti_discriminator
 
-        # Non-ActiveRecord targets have no schema to route by. Use whatever
-        # validator information the target exposes instead.
-        return validator_routed_filler unless active_record_target?
+        # Priority 4: targets without a schema are routed by the rules their
+        # validators expose instead of by column type.
+        return validator_routed_filler unless @constraints.column_backed_target
 
         column_routed_filler
       end
@@ -82,102 +65,47 @@ module FactoryBakery
       end
 
       def acceptance_attribute?
-        attr_name.end_with?('_accepted') ||
-          validators_for(attr_name).any? do |v|
-            v.instance_of?(ActiveModel::Validations::AcceptanceValidator)
-          end
-      end
-
-      # Rails writes the subclass's sti_name into the inheritance column in
-      # `new`; on the base class the value is left for the database. Faking it
-      # would make a persisted row unloadable with ActiveRecord::SubclassNotFound.
-      # Disabling STI sets inheritance_column to "", so a plain `type` column
-      # is still routed to its normal filler.
-      def sti_discriminator?
-        return false unless model_class.respond_to?(:inheritance_column)
-
-        column = model_class.inheritance_column
-        !column.to_s.empty? && attr_name == column.to_s
-      end
-
-      def active_record_target?
-        model_class.respond_to?(:columns_hash)
-      end
-
-      def validators_for(name)
-        return [] unless model_class.respond_to?(:validators_on)
-
-        model_class.validators_on(name)
+        attr_name.end_with?('_accepted') || @constraints.acceptance_validated
       end
 
       def column_routed_filler
-        column = model_class.columns_hash[attr_name]
+        # Priority 5: a defaulted or virtual attribute keeps its default
+        # unless a value-shaping validator needs a generated value. Leaving a
+        # defaulted column alone preserves a blank default (e.g. "" or false)
+        # that fails presence/format/length/etc. on every bake, so this
+        # escape hatch is decided before type routing.
+        return noop_filler if (@constraints.has_default || virtual?) && !@constraints.value_shaping
 
-        # Priority 3: Has default or virtual attribute -> Noop, unless a
-        # value-shaping validator needs a generated value. Leaving a defaulted
-        # column alone preserves a blank default (e.g. "" or false) that fails
-        # presence/format/length/etc. on every bake, so the escape hatch must be
-        # decided before this routing. With no such validator the DB default
-        # still wins, unchanged from before W1.
-        return noop_filler if (has_default?(column) || virtual?(column)) && !value_shaping_validator?
+        # Priority 6: enum attribute
+        return enum_filler if @constraints.enum_attribute
 
-        # Priority 4: Enum attribute
-        return enum_filler if enum_attribute?
-
-        # Priority 5: Type-based routing
-        type_based_filler(column)
+        # Priority 7: type-based routing
+        type_based_filler
       end
 
-      def validator_named?(validators, name)
-        validators.any? do |validator|
-          class_name = validator.class.name
-          class_name == name
-        end
-      end
-
-      def value_shaping_validator?
-        validators_for(attr_name).any? do |validator|
-          VALUE_SHAPING_VALIDATORS.include?(validator.class.name)
-        end
-      end
-
-      # Route a schema-less target by the validators it declares. The attribute
-      # universe is already limited to validator-covered names by the builder,
-      # so no-information attributes never reach this path.
+      # Route a schema-less target by the rules its validators declare. The
+      # attribute universe is already limited to validator-covered names by
+      # the builder, so no-information attributes never reach this path.
       def validator_routed_filler
-        validators = validators_for(attr_name)
-        return noop_filler if validators.empty?
+        return noop_filler unless @constraints.has_validators
 
-        if (inclusion = find_validator(validators, 'ActiveModel::Validations::InclusionValidator'))
-          return inclusion_based_filler(inclusion)
-        end
+        return inclusion_based_filler if @constraints.inclusion_validated
 
-        return string_filler if validator_named?(validators, 'ActiveModel::Validations::LengthValidator')
-        return string_filler if validator_named?(validators, 'ActiveModel::Validations::FormatValidator')
+        return string_filler if @constraints.length_validated
+        return string_filler if @constraints.format_validated
 
-        if (numericality = find_numericality_validator(validators))
-          return numericality_filler(numericality)
-        end
+        return numericality_filler if @constraints.numericality_validated
 
         # Presence, exclusion and other validators carry no value of their
         # own; a name-derived string is still a valid generated default.
         string_filler
       end
 
-      def find_validator(validators, name)
-        validators.find do |validator|
-          class_name = validator.class.name
-          class_name == name
-        end
-      end
-
-      def find_numericality_validator(validators)
-        find_validator(validators, 'ActiveModel::Validations::NumericalityValidator') ||
-          find_validator(validators, 'ActiveRecord::Validations::NumericalityValidator')
-      end
-
-      def inclusion_based_filler(validator)
-        values = Array(validator.options[:in])
+      def inclusion_based_filler
+        # The first inclusion validator's raw set decides the generator: the
+        # mapper captured it separately because the generators themselves see
+        # the last-set form.
+        values = Array(@constraints.first_inclusion_values)
         return noop_filler if values.empty?
         return integer_filler if values.all? { |value| value.is_a?(Integer) }
         return float_filler if values.all? { |value| value.is_a?(Numeric) }
@@ -185,57 +113,20 @@ module FactoryBakery
         string_filler
       end
 
-      def numericality_filler(validator)
-        options = validator.options
-        return integer_filler if options[:only_integer]
+      def numericality_filler
+        return integer_filler if @constraints.numericality_only_integer
 
-        comparison_values = [
-          options[:greater_than], options[:greater_than_or_equal_to], options[:equal_to],
-          options[:less_than], options[:less_than_or_equal_to], options[:other_than],
-          options[:in]
-        ].compact
-
-        comparison_values.any? { |value| float_value?(value) } ? float_filler : integer_filler
+        @constraints.numericality_has_float_bound ? float_filler : integer_filler
       end
 
-      def float_value?(value)
-        return true if value.is_a?(Float)
-        return false unless value.is_a?(Range)
-
-        [value.first, value.last].any? { |bound| bound.is_a?(Float) }
+      # An attribute without a column is virtual: it keeps whatever the
+      # target or the caller provided.
+      def virtual?
+        !@constraints.column_backed
       end
 
-      def has_default?(column)
-        return false unless column
-
-        !column.default.nil?
-      end
-
-      def virtual?(column)
-        column.nil?
-      end
-
-      def enum_attribute?
-        # Check if it's an enum by looking at defined_enums
-        if model_class.respond_to?(:defined_enums)
-          model_class.defined_enums.key?(attr_name)
-        elsif model_class.respond_to?(:pluralized_enum_values)
-          # Rails 4 style
-          pluralized_name = attr_name.pluralize
-          model_class.pluralized_enum_values.key?(pluralized_name)
-        else
-          # Check for inclusion validator with string array
-          validators_for(attr_name).any? do |v|
-            v.instance_of?(ActiveModel::Validations::InclusionValidator) &&
-              Array(v.options[:in]).all? { |val| val.is_a?(String) }
-          end
-        end
-      end
-
-      def type_based_filler(column)
-        return noop_filler unless column
-
-        case column.type
+      def type_based_filler
+        case @constraints.type
         when :string
           string_filler
         when :integer, :bigint, :smallint

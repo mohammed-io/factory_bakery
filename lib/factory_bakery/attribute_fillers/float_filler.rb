@@ -3,52 +3,30 @@
 module FactoryBakery
   module AttributeFillers
     class FloatFiller
-      include CommonValidators
+      include ValueResolution
       include NumericConstraintHygiene
 
+      # A pure generator: the constraints arrive already normalized in a
+      # ConstraintSet, resolved from the target once at construction.
       def initialize(model_class, attr_name)
         @model_class = model_class
         @attr_name = attr_name.to_s
+        @constraints = ConstraintSet.for(model_class, @attr_name)
 
         # Schema constraints
-        @column = column_for(model_class, attr_name)
-        @nullable = @column&.null
-        @has_default = @column&.default
-        @precision = @column&.precision
-        @scale = @column&.scale
+        @precision = @constraints.precision
+        @scale = @constraints.scale
 
-        # Numericality constraints
-        @greater_than = nil
-        @greater_than_or_equal_to = nil
-        @equal_to = nil
-        @less_than = nil
-        @less_than_or_equal_to = nil
-        @other_than = nil
-        @in_range = nil
-
-        # Common validator attributes
-        @allowed_values = nil
-        @forbidden_values = nil
-        @must_be_present = false
-        @absence_required = false
-
-        # Process all validators
-        validators_for(model_class, attr_name).each do |validator|
-          apply_validator(validator)
-        end
-      end
-
-      def apply_validator(validator)
-        return true if apply_common_validator(validator)
-
-        case validator.class.name
-        when 'ActiveModel::Validations::NumericalityValidator', 'ActiveRecord::Validations::NumericalityValidator'
-          apply_numericality_validator(validator.options)
-        when 'ActiveModel::Validations::ComparisonValidator'
-          apply_comparison_validator(validator.options)
-        else
-          false
-        end
+        # Numericality/comparison constraints (raw option forms, resolved at
+        # bake time against the object being built)
+        bounds = @constraints.numeric_bounds
+        @greater_than = bounds.greater_than
+        @greater_than_or_equal_to = bounds.greater_than_or_equal_to
+        @equal_to = bounds.equal_to
+        @less_than = bounds.less_than
+        @less_than_or_equal_to = bounds.less_than_or_equal_to
+        @other_than = bounds.other_than
+        @in_range = bounds.in_range
       end
 
       def call(context = nil)
@@ -65,28 +43,8 @@ module FactoryBakery
 
       private
 
-      def apply_numericality_validator(opts)
-        @greater_than = opts[:greater_than]
-        @greater_than_or_equal_to = opts[:greater_than_or_equal_to]
-        @equal_to = opts[:equal_to]
-        @less_than = opts[:less_than]
-        @less_than_or_equal_to = opts[:less_than_or_equal_to]
-        @other_than = opts[:other_than]
-        @in_range = opts[:in]
-      end
-
-      def apply_comparison_validator(opts)
-        @greater_than = opts[:greater_than]
-        @greater_than_or_equal_to = opts[:greater_than_or_equal_to]
-        @equal_to = opts[:equal_to]
-        @less_than = opts[:less_than]
-        @less_than_or_equal_to = opts[:less_than_or_equal_to]
-        @other_than = opts[:other_than]
-        @in_range = opts[:in] if opts[:in]
-      end
-
       def pick_from_allowed(context)
-        value = pick_from(@allowed_values, context)
+        value = pick_from(@constraints.allowed_values, context)
         value.is_a?(Numeric) ? value : value.to_f
       end
 
@@ -185,6 +143,12 @@ module FactoryBakery
       def resolve_other_than(context)
         resolved = resolve_option_value(@other_than, context)
         resolved.nil? ? nil : resolved.to_f
+      end
+
+      # The numeric view of `other_than` (numericality and comparison
+      # validators both write it).
+      def other_than_option
+        @other_than
       end
     end
   end

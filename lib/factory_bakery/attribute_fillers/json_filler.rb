@@ -12,27 +12,19 @@ module FactoryBakery
     # to strings, so this keeps the bake!/reload round trip lossless on every
     # adapter that exposes the type.
     class JsonFiller
-      include CommonValidators
+      include ValueResolution
 
       # Bounded regeneration for exclusion constraints, matching the budget of
       # the other fillers. Exhaustion raises instead of leaking a forbidden
       # value.
       MAX_ATTEMPTS = 10
 
+      # A pure generator: the constraints arrive already normalized in a
+      # ConstraintSet, resolved from the target once at construction.
       def initialize(model_class, attr_name)
         @model_class = model_class
         @attr_name = attr_name.to_s
-
-        @allowed_values = nil
-        @forbidden_values = nil
-        @must_be_present = false
-        @absence_required = false
-
-        validators_for(model_class, attr_name).each { |validator| apply_validator(validator) }
-      end
-
-      def apply_validator(validator)
-        apply_common_validator(validator)
+        @constraints = ConstraintSet.for(model_class, @attr_name)
       end
 
       def call(context = nil)
@@ -40,7 +32,7 @@ module FactoryBakery
 
         attempts = 0
         loop do
-          value = allowed_values? ? pick_from(@allowed_values, context) : build_candidate
+          value = allowed_values? ? pick_from(@constraints.allowed_values, context) : build_candidate
           return value unless forbidden_values?(value, context)
 
           attempts += 1
@@ -68,7 +60,7 @@ module FactoryBakery
       def exclusion_exhaustion_error
         FactoryBakery::Error.new(
           "could not generate a value for #{@model_class}##{@attr_name} that satisfies " \
-          "exclusion after #{MAX_ATTEMPTS} attempts: #{@forbidden_values.inspect}. " \
+          "exclusion after #{MAX_ATTEMPTS} attempts: #{@constraints.forbidden_values.inspect}. " \
           'Pass an explicit value with an override or relax the constraint.'
         )
       end

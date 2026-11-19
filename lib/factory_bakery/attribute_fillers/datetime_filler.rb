@@ -3,47 +3,25 @@
 module FactoryBakery
   module AttributeFillers
     class DateTimeFiller
-      include CommonValidators
+      include ValueResolution
       include NumericConstraintHygiene
 
+      # A pure generator: the constraints arrive already normalized in a
+      # ConstraintSet, resolved from the target once at construction.
       def initialize(model_class, attr_name)
         @model_class = model_class
         @attr_name = attr_name.to_s
+        @constraints = ConstraintSet.for(model_class, @attr_name)
 
-        # Schema constraints
-        @column = column_for(model_class, attr_name)
-        @nullable = @column&.null
-        @has_default = @column&.default
-
-        # Comparison constraints
-        @greater_than_attribute = nil
-        @greater_than_or_equal_to_attribute = nil
-        @less_than_attribute = nil
-        @less_than_or_equal_to_attribute = nil
-        @equal_to_attribute = nil
-        @other_than_attribute = nil
-
-        # Common validator attributes
-        @allowed_values = nil
-        @forbidden_values = nil
-        @must_be_present = false
-        @absence_required = false
-
-        # Process all validators
-        validators_for(model_class, attr_name).each do |validator|
-          apply_validator(validator)
-        end
-      end
-
-      def apply_validator(validator)
-        return true if apply_common_validator(validator)
-
-        case validator.class.name
-        when 'ActiveModel::Validations::ComparisonValidator'
-          apply_comparison_validator(validator.options)
-        else
-          false
-        end
+        # Comparison constraints (raw option forms, resolved at bake time
+        # against the object being built)
+        bounds = @constraints.comparison_bounds
+        @greater_than_attribute = bounds.greater_than
+        @greater_than_or_equal_to_attribute = bounds.greater_than_or_equal_to
+        @less_than_attribute = bounds.less_than
+        @less_than_or_equal_to_attribute = bounds.less_than_or_equal_to
+        @equal_to_attribute = bounds.equal_to
+        @other_than_attribute = bounds.other_than
       end
 
       def call(context = nil)
@@ -59,19 +37,8 @@ module FactoryBakery
 
       private
 
-      def apply_comparison_validator(opts)
-        # Keep the raw Rails option forms; symbols and procs are resolved at
-        # bake time against the object being built, not at filler creation.
-        @greater_than_attribute = opts[:greater_than]
-        @greater_than_or_equal_to_attribute = opts[:greater_than_or_equal_to]
-        @less_than_attribute = opts[:less_than]
-        @less_than_or_equal_to_attribute = opts[:less_than_or_equal_to]
-        @equal_to_attribute = opts[:equal_to]
-        @other_than_attribute = opts[:other_than]
-      end
-
       def pick_from_allowed(context)
-        value = pick_from(@allowed_values, context)
+        value = pick_from(@constraints.allowed_values, context)
         value.is_a?(DateTime) || value.is_a?(Time) ? value : value.to_datetime
       end
 
@@ -116,6 +83,12 @@ module FactoryBakery
 
       def resolve_other_than(context)
         resolved_datetime_bound(@other_than_attribute, context)
+      end
+
+      # The temporal view of `other_than`: only comparison validators write it
+      # for datetime attributes.
+      def other_than_option
+        @other_than_attribute
       end
 
       def resolve_datetime_value(value)

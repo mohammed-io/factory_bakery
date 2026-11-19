@@ -2,32 +2,16 @@
 
 module FactoryBakery
   module AttributeFillers
-    module CommonValidators
-      attr_reader :allowed_values, :forbidden_values,
-                  :absence_required, :must_be_present
-
-      def apply_common_validator(validator)
-        case validator.class.name
-        when 'ActiveModel::Validations::InclusionValidator'
-          # Keep the raw Rails option form. A Proc (or Symbol) is a lazy set:
-          # wrapping it with Array() here would sample the Proc itself and
-          # stringify it instead of evaluating it at value-generation time.
-          @allowed_values = validator.options[:in]
-          true
-        when 'ActiveModel::Validations::ExclusionValidator'
-          @forbidden_values = validator.options[:in]
-          true
-        when 'ActiveModel::Validations::PresenceValidator', 'ActiveRecord::Validations::PresenceValidator'
-          @must_be_present = true
-          true
-        when 'ActiveModel::Validations::AbsenceValidator', 'ActiveRecord::Validations::AbsenceValidator'
-          @absence_required = true
-          true
-        else
-          false
-        end
-      end
-
+    # Bake-time resolution of the raw option forms carried in a ConstraintSet.
+    #
+    # Mappers keep inclusion/exclusion sets and comparison bounds exactly as
+    # the source framework expressed them: literals, Procs and Symbols (which
+    # reference other attributes). This module resolves those forms against
+    # the object being built when a value is generated, fresh for every bake.
+    # An unresolved reference becomes nil, so no NameError or NoMethodError
+    # ever escapes a bake.
+    module ValueResolution
+      # Samples one value from an allowed/forbidden set in its raw form.
       def pick_from(values, context = nil)
         case values
         when Array
@@ -42,28 +26,30 @@ module FactoryBakery
       end
 
       def absence_required?
-        @absence_required == true
+        @constraints.absence_required
       end
 
       def must_be_present?
-        @must_be_present == true
+        @constraints.must_be_present
       end
 
       def allowed_values?
-        !@allowed_values.nil?
+        !@constraints.allowed_values.nil?
       end
 
       def forbidden_values?(value, context = nil)
-        return false if @forbidden_values.nil?
+        forbidden_values = @constraints.forbidden_values
+        return false if forbidden_values.nil?
 
-        forbidden = resolve_set(@forbidden_values, context, 'exclusion')
+        forbidden = resolve_set(forbidden_values, context, 'exclusion')
         forbidden.respond_to?(:include?) && forbidden.include?(value)
       end
 
-      # Rails accepts a Proc (or a Symbol referencing another attribute) as an
-      # inclusion/exclusion set. Resolve it only when a value is generated,
-      # fresh for every bake, and pass the object being built to record-aware
-      # procs. Literal arrays and ranges stay untouched on the fast path.
+      # The framework accepts a Proc (or a Symbol referencing another
+      # attribute) as an inclusion/exclusion set. Resolve it only when a value
+      # is generated, fresh for every bake, and pass the object being built to
+      # record-aware procs. Literal arrays and ranges stay untouched on the
+      # fast path.
       def resolve_set(option, context, kind)
         case option
         when Proc
@@ -87,10 +73,10 @@ module FactoryBakery
               'baking or use a literal array/range'
       end
 
-      # Rails comparison/numericality options accept literals, Procs and
-      # Symbols (cross-attribute references). Resolve them at bake time,
-      # against the object being built when one is available. An unresolved
-      # reference becomes nil, so no NoMethodError escapes a bake.
+      # Comparison/numericality options accept literals, Procs and Symbols
+      # (cross-attribute references). Resolve them at bake time, against the
+      # object being built when one is available. An unresolved reference
+      # becomes nil, so no NoMethodError escapes a bake.
       def resolve_option_value(option, context)
         case option
         when Symbol
@@ -119,21 +105,6 @@ module FactoryBakery
         return nil if first.nil? || last.nil?
 
         range.exclude_end? ? (first...last) : (first..last)
-      end
-
-      # POROs have no schema and may have no ActiveModel validators either.
-      # Schema and validator lookups are optional so fillers can run on any
-      # target that exposes the relevant information.
-      def column_for(model_class, attr_name)
-        return nil unless model_class.respond_to?(:columns_hash)
-
-        model_class.columns_hash[attr_name.to_s]
-      end
-
-      def validators_for(model_class, attr_name)
-        return [] unless model_class.respond_to?(:validators_on)
-
-        model_class.validators_on(attr_name)
       end
     end
   end

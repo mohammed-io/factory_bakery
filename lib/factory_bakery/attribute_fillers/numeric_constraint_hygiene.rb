@@ -10,6 +10,10 @@ module FactoryBakery
     #
     # The budget matches the uniqueness enforcer and the string filler's format
     # verification so every bounded-retry path in a bake fails the same way.
+    #
+    # Including fillers supply `other_than_option` (the raw constraint form,
+    # either the numeric or the temporal view of the ConstraintSet bounds) and
+    # `resolve_other_than` (its type-coerced bake-time resolution).
     module NumericConstraintHygiene
       MAX_ATTEMPTS = 10
 
@@ -36,19 +40,6 @@ module FactoryBakery
         true
       end
 
-      # Resolved at bake time so Proc/Symbol options keep working (V3 machinery)
-      # and nil (an unresolved reference) means "no constraint".
-      def resolve_other_than(context)
-        resolve_option_value(other_than_option, context)
-      end
-
-      def other_than_option
-        return @other_than if defined?(@other_than) && !@other_than.nil?
-        return @other_than_attribute if defined?(@other_than_attribute) && !@other_than_attribute.nil?
-
-        nil
-      end
-
       def violates_other_than?(value, context)
         forbidden = resolve_other_than(context)
         !forbidden.nil? && value == forbidden
@@ -72,7 +63,7 @@ module FactoryBakery
       def numeric_constraint_description
         parts = []
         parts << "other_than: #{other_than_option.inspect}" if other_than_option
-        parts << "exclusion: #{@forbidden_values.inspect}" if @forbidden_values
+        parts << "exclusion: #{@constraints.forbidden_values.inspect}" if @constraints.forbidden_values
         parts << 'even: true' if defined?(@even_only) && @even_only
         parts << 'odd: true' if defined?(@odd_only) && @odd_only
         parts.join(', ')
