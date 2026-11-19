@@ -79,7 +79,7 @@ module FactoryBakery
           target_class = entry.target.call
           reuse = ReuseResolver.strategy_for(nil) == :reuse
           if reuse
-            existing = ReuseResolver.existing(target_class, {}, entry)
+            existing = resolve_reuse(klass, target_class, entry)
             return existing if existing
           end
 
@@ -89,12 +89,27 @@ module FactoryBakery
 
           Fiber[REFLECTION_PATH_KEY] = previous_path + [edge]
           with_suppressed(BackEdgeDetector.edges(target_class, klass, entry)) do
-            fresh = FactoryBakery.bake(target_class)
-            ReuseResolver.remember(target_class, {}, entry, fresh) if reuse
-            fresh
+            bake_fresh(target_class, entry, reuse)
           end
         ensure
           Fiber[REFLECTION_PATH_KEY] = previous_path
+        end
+
+        def bake_fresh(target_class, entry, reuse)
+          fresh = FactoryBakery.bake(target_class)
+          FkParentPersistence.persist!(fresh, entry)
+          ReuseResolver.remember(target_class, {}, entry, fresh) if reuse
+          fresh
+        end
+
+        # An in-graph or database hit is reused as-is, except that an FK-presence
+        # edge still gives it a real id before the owner validates.
+        def resolve_reuse(klass, target_class, entry)
+          existing = ReuseResolver.existing(target_class, {}, entry)
+          return FkParentPersistence.persist!(existing, entry) if existing
+
+          FkParentPersistence.raise_on_reuse_miss!(klass, entry)
+          nil
         end
 
         def ensure_acyclic!(path, edge)

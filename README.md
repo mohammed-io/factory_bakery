@@ -276,7 +276,7 @@ Only the winning declaration is evaluated. An association name, its FK columns a
 
 `account { nil }` (or `comments { [] }`) in a trait or at the call site opts an edge out without a separate DSL.
 
-**Persistence contract.** `bake!` wraps graph building, nested `bake!` calls and the root `save!` in one transaction opened with `requires_new`: a savepoint when your code already has a transaction. Any failure rolls back every row the bake wrote, even if you rescue the error in an outer transaction. After the root saves, every generated record is verified. A record that would silently stay unsaved — for example with `autosave: false` or `validate: false` on an invalid child — makes `bake!` raise `FactoryBakery::IncompletePersistenceError` and roll back. The error names the record and its association; persist that record explicitly in a declaration or override, or fix the association's autosave/validate options. Non-ActiveRecord targets skip persistence as before, and `bake` stays database-free.
+**Persistence contract.** `bake!` wraps graph building, nested `bake!` calls and the root `save!` in one transaction opened with `requires_new`: a savepoint when your code already has a transaction. Any failure rolls back every row the bake wrote, even if you rescue the error in an outer transaction. After the root saves, every generated record is verified. A record that would silently stay unsaved — for example with `autosave: false` or `validate: false` on an invalid child — makes `bake!` raise `FactoryBakery::IncompletePersistenceError` and roll back. The error names the record and its association; persist that record explicitly in a declaration or override, or fix the association's autosave/validate options. Non-ActiveRecord targets skip persistence as before, and `bake` stays database-free — apart from [raw-FK presence edges](#raw-fk-presence-edges), the documented exception below.
 
 **Depth backstop.** Runaway nested bakes raise `FactoryBakery::NestingTooDeepError` with the class path instead of `SystemStackError`. `FactoryBakery.max_bake_depth` defaults to 10; raise it for legitimately deep graphs.
 
@@ -303,10 +303,10 @@ The hash accepts `mode`, `strategy`, `max_depth` and `default_count`; a bare mod
 | Mode | Auto-builds (unless declared or overridden) | Never auto-builds |
 | --- | --- | --- |
 | `:none` | Nothing; only explicit `association` declarations | Everything else |
-| `:required_only` (default) | Required `belongs_to`, recursively (presence validator on the association name or a NOT NULL FK) | Optional `belongs_to`, `has_one`, `has_many`, through / HABTM; optional polymorphic |
+| `:required_only` (default) | Required `belongs_to`, recursively (presence validator on the association name **or the raw FK column**, or a NOT NULL FK) | Optional `belongs_to`, `has_one`, `has_many`, through / HABTM; optional polymorphic |
 | `:all` | Every non-polymorphic `belongs_to` (optional too), `has_one` (one child), `has_many` (`default_count`) | Through / HABTM, optional polymorphic |
 
-"Required" follows your model and schema: a presence validator on the association name — including `on: :create` and conditional validators — or a NOT NULL FK column counts. Plain ActiveRecord outside Rails defaults `belongs_to` to optional, so specs using it must say `optional: false` when they mean required. A required polymorphic `belongs_to` with no declaration raises an actionable error asking for `factory:`.
+"Required" follows your model and schema: a presence validator on the association name — including `on: :create` and conditional validators — or a NOT NULL FK column counts. A presence validator on the raw FK column also counts, and is tracked separately because it changes the persistence contract (see below). Plain ActiveRecord outside Rails defaults `belongs_to` to optional, so specs using it must say `optional: false` when they mean required. A required polymorphic `belongs_to` with no declaration raises an actionable error asking for `factory:`.
 
 Two rules keep `:all` bounded. It **never walks back the edge it came from**: a child of `post.comments` is bound to that post rather than growing a second one. And greater `max_depth` (default 2) **truncates `:all` to required-only** rather than raising, so objects stay valid. The root bake is depth 1, so with the default its direct associations are built; deeper hops keep only required parents. `default_count` (default 1) is the number of children per `has_many` in `:all` and when `count:` is omitted; `has_one` always builds one.
 
@@ -315,6 +315,19 @@ FactoryBakery::Associations.with(mode: :all, default_count: 3) do
   FactoryBakery.bake!(Post) # direct associations plus three comments per post
 end
 ```
+
+#### Raw-FK presence edges
+
+`validates :user_id, presence: true` validates the **column**, not the association. An unsaved auto-built parent has a nil id, so its FK stays nil and the record is invalid. When an edge's required signal is the raw FK column (a presence validator, not merely a NOT NULL schema constraint), the plugin gives the parent a real id before the owner is validated:
+
+| Contract | Behavior |
+| --- | --- |
+| `bake!` | Creates the parent **inside the root savepoint** and sets the FK from its id. The insert rolls back atomically with the rest of the graph if anything fails. NOT NULL + real FK constraints are satisfiable end-to-end. |
+| `bake` (`:fresh`, the default) | Creates the parent and **inserts a row outside the unsaved contract**. This is the documented exception to "`bake` never writes": the raw column cannot be satisfied any other way. The root record itself stays unsaved. |
+| `bake` with `:reuse` | An existing database row is reused without writing. On a miss the plugin raises `FactoryBakery::Error` naming the edge and suggesting `bake!`, a declaration, or an explicit FK/assignment — the reuse strategy promises not to insert on a miss. |
+| `bake!` with `:reuse` | An existing row is reused; on a miss a fresh parent is created inside the savepoint. |
+
+Association-presence edges (`validates :user, presence: true`, `optional: false`) are unaffected: their parent stays unsaved under `bake` with zero INSERTs. Polymorphic edges keep their existing behavior (a raw FK signal never auto-builds them). Cycle detection, `max_bake_depth`, back-edge suppression, declarations and overrides all apply to the persisted-parent path as they do anywhere else; an explicit `user:` or `user_id:` at the call site suppresses it entirely.
 
 ### The `association` DSL
 
@@ -350,7 +363,7 @@ end
 | --- | --- |
 | In the same bake | A completed matching object is shared before the database is queried — e.g. `order.user` and `order.shop.user` are the same record. Ancestors still being built are never shared. |
 | In the database | Exact STI class + association scope + scalar column overrides from the declaration, oldest row by primary key (deterministic). |
-| On a miss | Falls through to an ordinary fresh build: unsaved under `bake`, inserted under `bake!` via autosave. |
+| On a miss | Falls through to an ordinary fresh build: unsaved under `bake`, inserted under `bake!` via autosave. [Raw-FK presence edges](#raw-fk-presence-edges) are the exception: they raise under `bake` and are created inside the savepoint under `bake!`. |
 
 ```ruby
 FactoryBakery.define(Post) do

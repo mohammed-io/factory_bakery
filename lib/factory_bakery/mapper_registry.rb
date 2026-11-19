@@ -84,6 +84,8 @@ module FactoryBakery
       :counter_cache_columns,
       # Presence-validated or NOT NULL foreign key (belongs_to only)
       :required,
+      # FK column itself carries a presence validator (non-polymorphic belongs_to only)
+      :fk_presence,
       # Proc narrowing the edge, else nil
       :scope,
       # Join-backed edge (has_many/has_one :through)?

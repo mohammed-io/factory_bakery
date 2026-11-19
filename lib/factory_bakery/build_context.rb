@@ -27,6 +27,12 @@ module FactoryBakery
     STORAGE_KEY = :factory_bakery_build_context
     RECORDS_KEY = :factory_bakery_generated_records
     GRAPH_CACHE_KEY = :factory_bakery_graph_cache
+    # FK-column-validated edges need a persisted parent. Under `bake!` that
+    # parent is inserted inside the root savepoint; under plain `bake` it is an
+    # explicit, documented exception to the unsaved graph. This fiber-local
+    # flag tells the associations plugin which contract is active without
+    # coupling it to factory_bakery's public methods.
+    PERSIST_PARENTS_KEY = :factory_bakery_persist_fk_parents
 
     class << self
       def current
@@ -57,6 +63,21 @@ module FactoryBakery
         # Replace rather than mutate: a child fiber inherits the parent's map
         # and must never write back into it.
         Fiber[GRAPH_CACHE_KEY] = graph_cache.merge(key => [path, object])
+      end
+
+      # True while a `bake!` is building its graph (including nested bakes made
+      # from declaration blocks). FK-presence parents created here are inserted
+      # inside that bake's savepoint and roll back with it.
+      def persisting?
+        Fiber[PERSIST_PARENTS_KEY] || false
+      end
+
+      def with_persistence
+        previous = Fiber[PERSIST_PARENTS_KEY]
+        Fiber[PERSIST_PARENTS_KEY] = true
+        yield
+      ensure
+        Fiber[PERSIST_PARENTS_KEY] = previous
       end
 
       # Records generated at or below `path_prefix`. This scopes a nested

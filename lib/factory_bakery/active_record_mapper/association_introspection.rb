@@ -45,6 +45,7 @@ module FactoryBakery
           polymorphic: reflection.polymorphic?,
           counter_cache_columns: counter_columns(reflection, detector),
           required: required?(klass, reflection),
+          fk_presence: fk_presence?(klass, reflection),
           scope: association_scope(reflection),
           through: through_association?(reflection),
           **lazy_resolvers(reflection)
@@ -73,13 +74,35 @@ module FactoryBakery
       # Heuristic-first detection: Rails materializes "required" as a
       # PresenceValidator on the association name regardless of which setting
       # produced it (including on: :create and if:/unless:), and a NOT NULL FK
-      # is required at the database level. `reflection.options[:optional]` is
-      # deliberately never read -- plain ActiveRecord defaults it to optional.
-      # Only a belongs_to edge can be required.
+      # is required at the database level. A presence validator on the raw FK
+      # column is required too, but is reported separately by `fk_presence?` so
+      # callers can persist the parent (the only way to give the column a real
+      # value). `reflection.options[:optional]` is deliberately never read --
+      # plain ActiveRecord defaults it to optional. Only a belongs_to edge can
+      # be required.
       def required?(klass, reflection)
         return false unless reflection.macro == :belongs_to
 
-        presence_validator?(klass, reflection) || not_null_foreign_key?(klass, reflection)
+        fk_presence?(klass, reflection) ||
+          presence_validator?(klass, reflection) ||
+          not_null_foreign_key?(klass, reflection)
+      end
+
+      # True when the required signal is the FK COLUMN rather than the
+      # association. Unsaved parents have a nil id, so such a column can only
+      # pass presence validation once the parent has been persisted.
+      # Polymorphic edges keep their existing behavior (no auto-build from a
+      # raw FK signal), so they are deliberately excluded here.
+      def fk_presence?(klass, reflection)
+        return false unless reflection.macro == :belongs_to
+        return false if reflection.polymorphic?
+        return false unless klass.respond_to?(:validators_on)
+
+        Array(reflection.foreign_key).any? do |key|
+          klass.validators_on(key).any? do |validator|
+            validator.is_a?(ActiveModel::Validations::PresenceValidator)
+          end
+        end
       end
 
       def presence_validator?(klass, reflection)

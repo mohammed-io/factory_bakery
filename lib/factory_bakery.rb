@@ -92,25 +92,29 @@ module FactoryBakery
     # persistence check are performed through the mapper's persistence adapter;
     # a target no mapper claims keeps plain build-and-save semantics.
     def bake!(target, *traits, **overrides)
-      model_klass, definition = BakeryBuilder.resolve(target)
-      adapter = MapperRegistry.persistence_adapter(model_klass)
+      # FK-column-validated edges insert their parent while the graph is being
+      # built, so the flag must cover graph building too, not just the save.
+      BuildContext.with_persistence do
+        model_klass, definition = BakeryBuilder.resolve(target)
+        adapter = MapperRegistry.persistence_adapter(model_klass)
 
-      unless adapter.transactional?
-        object = bake(target, *traits, **overrides)
-        adapter.save!(object)
-        return object
-      end
-
-      object = nil
-      adapter.transaction(model_klass) do
-        object = BuildContext.push(model_klass) do
-          record = build_object(model_klass, definition, overrides, traits)
-          adapter.save!(record)
-          verify_persistence!(record, adapter)
-          record
+        unless adapter.transactional?
+          object = bake(target, *traits, **overrides)
+          adapter.save!(object)
+          return object
         end
+
+        object = nil
+        adapter.transaction(model_klass) do
+          object = BuildContext.push(model_klass) do
+            record = build_object(model_klass, definition, overrides, traits)
+            adapter.save!(record)
+            verify_persistence!(record, adapter)
+            record
+          end
+        end
+        object
       end
-      object
     end
 
     private

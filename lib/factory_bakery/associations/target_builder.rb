@@ -25,10 +25,13 @@ module FactoryBakery
           if reuse
             resolved = BakeryBuilder.resolve(klass).first
             existing = ReuseResolver.existing(resolved, declaration.overrides, entry)
-            return existing if existing
+            return FkParentPersistence.persist!(existing, entry) if existing
+
+            FkParentPersistence.raise_on_reuse_miss!(object.class, entry)
           end
 
           fresh = FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
+          FkParentPersistence.persist!(fresh, entry)
           ReuseResolver.remember(resolved, declaration.overrides, entry, fresh) if reuse
           fresh
         end

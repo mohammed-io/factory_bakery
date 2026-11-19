@@ -107,6 +107,45 @@ RSpec.describe 'real database constraints across adapters' do
     end
   end
 
+  # W3: NOT NULL is required at the database level, but a presence validator on
+  # the raw FK column is a *model-level* requirement checked before autosave
+  # can fill it. Only a persisted parent gives the column a real value.
+  describe 'a raw-FK presence validator backed by NOT NULL and a real FK' do
+    let!(:parent_model) do
+      create_table(:fk_presence_owners) { |t| t.string :name }
+      define_class('FkPresenceOwner', ActiveRecord::Base)
+    end
+
+    let!(:child_model) do
+      create_table(:fk_presence_children) do |t|
+        t.references :fk_presence_owner, null: false, foreign_key: true
+        t.string :name
+      end
+      define_class('FkPresenceChild', ActiveRecord::Base) do
+        belongs_to :fk_presence_owner, class_name: 'FkPresenceOwner', optional: true
+        validates :fk_presence_owner_id, presence: true
+      end
+    end
+
+    it 'satisfies both constraints under bake! with the parent inserted first' do
+      child = FactoryBakery.bake!(child_model)
+
+      expect(child).to be_valid
+      expect(child.reload.fk_presence_owner_id).to eq(child.fk_presence_owner.id)
+      expect([parent_model.count, child_model.count]).to eq([1, 1])
+    end
+
+    it 'inserts the parent under bake so the FK is real' do
+      child = FactoryBakery.bake(child_model)
+
+      expect(child).to be_valid
+      expect(child.fk_presence_owner).to be_persisted
+      expect(child.fk_presence_owner_id).to eq(child.fk_presence_owner.id)
+      expect(parent_model.count).to eq(1)
+      expect(child_model.count).to eq(0)
+    end
+  end
+
   describe 'a counter cache on a NOT NULL column with a real FK' do
     let!(:parent_model) do
       create_table(:guard_posts) do |t|
