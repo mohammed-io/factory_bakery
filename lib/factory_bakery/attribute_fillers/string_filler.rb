@@ -6,6 +6,7 @@ module FactoryBakery
   module AttributeFillers
     class StringFiller
       include ValueResolution
+      include PlausibleStrings
 
       # Bounded regeneration for format/exclusion constraints, matching the
       # uniqueness enforcer's budget. Exhaustion raises a contextual error
@@ -169,31 +170,6 @@ module FactoryBakery
         # A plain FFaker failure falls back to a name-pattern candidate; the
         # verifier rejects it when it violates the regex and retries.
         generate_by_pattern
-      end
-
-      def generate_by_pattern
-        case @attr_name
-        when /email/
-          FFaker::Internet.email
-        when /phone/
-          FFaker::PhoneNumber.phone_number
-        when /name/
-          FFaker::Name.name
-        when /address|street|city/
-          FFaker::Address.street_address
-        when /url|website|link/
-          FFaker::Internet.http_url
-        when /username/
-          FFaker::Internet.user_name
-        when /title/
-          FFaker::Lorem.word.capitalize
-        when /body|description|content/
-          FFaker::Lorem.sentence
-        when /priority/
-          rand(1..5).to_s
-        else
-          FFaker::Lorem.word
-        end
       end
 
       def adjust_length(value)

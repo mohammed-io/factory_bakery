@@ -47,11 +47,13 @@ module FactoryBakery
         reflections = stored_reflections(@attr_name)
 
         rules = fold_reflections(reflections)
+        array_column = array_column?(column)
 
         ConstraintSet.new(
           model_class: @model_class,
           attr_name: @attr_name,
-          type: translated_type(column),
+          type: array_column ? :array : translated_type(column),
+          array_element_type: array_column ? translated_array_element_type(column) : nil,
           db_limit: column&.fetch(:max_length, nil),
           nullable: column&.fetch(:allow_null, nil),
           has_default: !column.nil? && !column[:default].nil?,
@@ -182,6 +184,27 @@ module FactoryBakery
         return :json if type.nil? && column[:db_type].to_s.include?('json')
 
         TYPE_MAP.fetch(type, nil)
+      end
+
+      # Sequel's PostgreSQL adapter reports array columns with schema type
+      # :array, and some versions only expose a "[]"-suffixed db_type. Best
+      # effort: recognize both and derive the element hint from db_type. An
+      # adapter that reports something else keeps its native type, so array
+      # routing is never attempted there.
+      def array_column?(column)
+        return false if column.nil?
+
+        column[:type] == :array || column[:db_type].to_s.end_with?('[]')
+      end
+
+      def translated_array_element_type(column)
+        base_type = column[:db_type].to_s.sub(/\[\]\z/, '').downcase
+        case base_type
+        when /int/ then :integer
+        when /float|double|decimal|numeric|real/ then :float
+        when /bool/ then :boolean
+        else :string
+        end
       end
 
       # Stored validations, or nothing when the class does not use the

@@ -141,6 +141,8 @@ module FactoryBakery
           datetime_filler
         when :json, :jsonb
           json_filler
+        when :array
+          array_filler
         when :text, :binary
           string_filler
         else
@@ -182,6 +184,10 @@ module FactoryBakery
 
       def json_filler
         @json_filler ||= JsonFiller.new(model_class, attr_name)
+      end
+
+      def array_filler
+        @array_filler ||= ArrayFiller.new(model_class, attr_name)
       end
 
       def acceptance_filler

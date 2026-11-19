@@ -48,11 +48,13 @@ module FactoryBakery
 
         rules = fold_validators(validators)
         enum_attribute, enum_values = read_enum
+        array_column = array_column?(column)
 
         ConstraintSet.new(
           model_class: @model_class,
           attr_name: @attr_name,
-          type: column&.type,
+          type: array_column ? :array : column&.type,
+          array_element_type: array_column ? array_element_type_for(column) : nil,
           db_limit: column&.limit,
           nullable: column&.null,
           has_default: !column&.default.nil?,
@@ -226,6 +228,23 @@ module FactoryBakery
         return false unless value.is_a?(Range)
 
         [value.first, value.last].any? { |bound| bound.is_a?(Float) }
+      end
+
+      # PostgreSQL array columns expose array-ness on the column object; the
+      # mapper is the only layer allowed to read it. The core sees a normalized
+      # :array type and a plain-symbol element hint derived from the column's
+      # underlying element type (sql_type/subtype).
+      def array_column?(column)
+        !column.nil? && column.respond_to?(:array?) && column.array?
+      end
+
+      def array_element_type_for(column)
+        case column.type
+        when :integer, :bigint, :smallint then :integer
+        when :float, :decimal then :float
+        when :boolean then :boolean
+        else :string
+        end
       end
 
       # [routing flag, values]: the flag mirrors enum membership detection,

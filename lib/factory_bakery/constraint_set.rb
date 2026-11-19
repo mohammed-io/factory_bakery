@@ -37,7 +37,11 @@ module FactoryBakery
 
     attr_reader :model_class, :attr_name,
                 # Schema facts (nil when the attribute has no column).
-                :type, :db_limit, :nullable, :has_default, :precision, :scale,
+                # :array is a normalized type for adapter-native array columns;
+                # array_element_type is a plain-symbol hint (:string, :integer,
+                # :float, :boolean) derived by the mapper plugin from the
+                # column's underlying element type.
+                :type, :array_element_type, :db_limit, :nullable, :has_default, :precision, :scale,
                 # Target/attribute shape flags.
                 :column_backed, :column_backed_target, :sti_discriminator,
                 # Length rules.
@@ -63,7 +67,7 @@ module FactoryBakery
 
     def initialize(
       model_class:, attr_name:,
-      type: nil, db_limit: nil, nullable: nil, has_default: false,
+      type: nil, array_element_type: nil, db_limit: nil, nullable: nil, has_default: false,
       precision: nil, scale: nil,
       column_backed: false, column_backed_target: false, sti_discriminator: false,
       min_length: nil, max_length: nil, exact_length: nil,
@@ -82,6 +86,7 @@ module FactoryBakery
       @model_class = model_class
       @attr_name = attr_name
       @type = type
+      @array_element_type = array_element_type
       @db_limit = db_limit
       @nullable = nullable
       @has_default = has_default
