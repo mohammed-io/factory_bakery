@@ -88,6 +88,22 @@ module FactoryBakery
         end
       end
 
+      # Length validator options (`:minimum`, `:maximum`, `:is`) take the same
+      # literal/Proc/Symbol forms as comparison bounds. Resolve them at bake
+      # time through the same path. A proc touching a constant that is not
+      # loaded yet would otherwise escape as a raw NameError; report it
+      # against the model and attribute, with the original error as cause.
+      def resolve_length_option(option, context, kind)
+        resolve_option_value(option, context)
+      rescue FactoryBakery::Error
+        raise
+      rescue StandardError => e
+        raise FactoryBakery::Error,
+              "#{@model_class}##{@attr_name}: length :#{kind} #{option.inspect} " \
+              "raised #{e.class}: #{e.message}; define referenced constants " \
+              'before baking or use a literal integer'
+      end
+
       def call_option_proc(option, context)
         return option.call if option.arity.zero?
 

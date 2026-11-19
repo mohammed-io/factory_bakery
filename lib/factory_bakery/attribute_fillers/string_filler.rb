@@ -13,6 +13,11 @@ module FactoryBakery
       # instead of returning a value that fails validation.
       MAX_ATTEMPTS = 10
 
+      # Bake-time resolved length bounds. The raw options stay on the filler so
+      # a Proc or Symbol is re-evaluated for every `call`, not frozen at setup.
+      ResolvedLengths = Struct.new(:minimum, :maximum, :exact, keyword_init: true)
+      private_constant :ResolvedLengths
+
       # Hard bounds around synthesis itself. FFaker's from_regexp can spin
       # forever on POSIX classes, so every call gets a wall-clock guard; the
       # deadline caps total synthesis work for one attribute (one filler
@@ -30,7 +35,8 @@ module FactoryBakery
         # Schema constraints
         @db_limit = @constraints.db_limit
 
-        # Validation constraints (normalized from the target's validators)
+        # Validation constraints (normalized from the target's validators).
+        # Procs and Symbols stay raw here and are resolved at bake time.
         @min_length = @constraints.min_length
         @max_length = @constraints.max_length
         @exact_length = @constraints.exact_length
@@ -61,6 +67,7 @@ module FactoryBakery
       # exhaustion raises instead of leaking a value the target would reject.
       def generate_compliant_value(context)
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SYNTHESIS_TIME_LIMIT
+        lengths = resolve_lengths(context)
         value = nil
         attempts = 0
         synthesis_attempts = 0
@@ -70,35 +77,77 @@ module FactoryBakery
                       past_deadline?(deadline)
           raise format_exhaustion_error(value) if exhausted
 
-          value = build_candidate(deadline)
+          value = build_candidate(deadline, lengths)
           synthesis_attempts += 1
-          return value if compliant?(value, context)
+          return value if compliant?(value, context, lengths)
 
           attempts += 1
         end
+      end
+
+      # Resolve every dynamic length option once per bake. A Symbol bound asks
+      # the context for the referenced attribute, which generates it on first
+      # use (even when it comes later in column order) and caches the result,
+      # so both attributes end up filled and the bound stays stable across
+      # regeneration attempts. An unresolvable or non-finite bound is dropped,
+      # matching comparison-option relaxation; anything unusable raises.
+      def resolve_lengths(context)
+        ResolvedLengths.new(
+          minimum: resolve_length(@min_length, :minimum, context),
+          maximum: resolve_length(@max_length, :maximum, context),
+          exact: resolve_length(@exact_length, :is, context)
+        )
+      end
+
+      def resolve_length(raw, kind, context)
+        coerce_length(resolve_length_option(raw, context, kind), raw, kind)
+      end
+
+      def coerce_length(value, raw, kind)
+        return nil if value.nil?
+        return nil if value == Float::INFINITY || value == -Float::INFINITY
+
+        integer = integer_length(value)
+        return integer if integer && integer >= 0
+
+        raise length_resolution_error(raw, value, kind)
+      end
+
+      def integer_length(value)
+        Integer(value)
+      rescue ArgumentError, TypeError, FloatDomainError
+        nil
+      end
+
+      def length_resolution_error(raw, value, kind)
+        FactoryBakery::Error.new(
+          "#{@model_class}##{@attr_name}: length :#{kind} #{raw.inspect} resolved to " \
+          "#{value.inspect}, which is not a usable length; pass an explicit value " \
+          'with an override or use a non-negative Integer'
+        )
       end
 
       def past_deadline?(deadline)
         Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
       end
 
-      def build_candidate(deadline)
+      def build_candidate(deadline, lengths)
         value = generate_value(deadline)
         # Truncating/padding a regex-generated value is what turns a compliant
         # value into a non-match. For regex-constrained strings, length is a
         # verification predicate instead of a post-processing step.
         return value if @with_regexes.any?
 
-        adjust_length(value)
+        adjust_length(value, lengths)
       end
 
-      def compliant?(value, context)
+      def compliant?(value, context, lengths)
         return false if value.nil?
         return false unless matches_with_regexes?(value)
         return false if matches_without_regexes?(value)
         return false if forbidden_values?(value, context)
 
-        length_compliant?(value)
+        length_compliant?(value, lengths)
       end
 
       def matches_with_regexes?(value)
@@ -109,8 +158,8 @@ module FactoryBakery
         @without_regexes.any? { |regex| regex.match?(value) }
       end
 
-      def length_compliant?(value)
-        length_constraints.all? { |kind, bound| length_satisfies?(value.length, kind, bound) }
+      def length_compliant?(value, lengths)
+        length_constraints(lengths).all? { |kind, bound| length_satisfies?(value.length, kind, bound) }
       end
 
       def length_satisfies?(length, kind, bound)
@@ -121,7 +170,14 @@ module FactoryBakery
         end
       end
 
-      def length_constraints
+      def length_constraints(lengths)
+        { is: lengths.exact, minimum: lengths.minimum, maximum: lengths.maximum, db_limit: @db_limit }.compact
+      end
+
+      # The raw option forms are the debugging surface: an exhaustion message
+      # should name `:max_chars` or the Proc the caller wrote, not its resolved
+      # value from this particular bake.
+      def length_options
         { is: @exact_length, minimum: @min_length, maximum: @max_length, db_limit: @db_limit }.compact
       end
 
@@ -172,28 +228,19 @@ module FactoryBakery
         generate_by_pattern
       end
 
-      def adjust_length(value)
+      def adjust_length(value, lengths)
         return value if value.nil?
 
-        # Exact length takes priority
-        if @exact_length
-          return set_to_length(value, @exact_length)
-        end
+        exact = lengths.exact
+        maximum = lengths.maximum
+        minimum = lengths.minimum
 
-        # Apply max constraint
-        if @max_length && value.length > @max_length
-          value = truncate_to_length(value, @max_length)
-        end
+        # Exact length takes priority; a nil bound is an absent constraint.
+        return set_to_length(value, exact) if exact
 
-        # Apply min constraint
-        if @min_length && value.length < @min_length
-          value = pad_to_length(value, @min_length)
-        end
-
-        # Apply database limit
-        if @db_limit && value.length > @db_limit
-          value = truncate_to_length(value, @db_limit)
-        end
+        value = truncate_to_length(value, maximum) if maximum && value.length > maximum
+        value = pad_to_length(value, minimum) if minimum && value.length < minimum
+        value = truncate_to_length(value, @db_limit) if @db_limit && value.length > @db_limit
 
         value
       end
@@ -243,7 +290,7 @@ module FactoryBakery
         parts = []
         parts << "with: #{@with_regexes.map(&:inspect).join(', ')}" if @with_regexes.any?
         parts << "without: #{@without_regexes.map(&:inspect).join(', ')}" if @without_regexes.any?
-        parts << "length constraints: #{length_constraints.inspect}" unless length_constraints.empty?
+        parts << "length constraints: #{length_options.inspect}" unless length_options.empty?
         parts.join('; ')
       end
     end
