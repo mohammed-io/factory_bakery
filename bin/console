@@ -19,10 +19,10 @@ else
   puts ''
 end
 
-# Define basic FactoryBakery module to avoid circular dependencies
+# Define the error class up front so framework setup below can raise it before
+# the gem itself is loaded. VERSION comes from the gem (lib/factory_bakery/version.rb).
 module FactoryBakery
   class Error < StandardError; end
-  VERSION = '0.0.1.0'
 end
 
 # Load basic dependencies
@@ -93,7 +93,7 @@ else
 end
 puts ''
 puts 'FactoryBakery classes:'
-puts '- FactoryBakery::AttributeFiller'
+puts '- FactoryBakery::AttributeFillers::FillerSelector'
 puts '- FactoryBakery::BakeryBuilder'
 puts ''
 puts "Type 'exit' or press Ctrl-D to quit"
