@@ -63,10 +63,12 @@ module FactoryBakery
     # `target`, `inverse_name` and `inverse_kind` are callables rather than
     # values: a target class and a verified inverse are resolved exactly when
     # the edge is actually used, so an unloadable sibling association or an
-    # underivable inverse raises the framework's own error at that moment --
-    # never while merely listing a class's associations. Calling `target` on
-    # a polymorphic edge likewise raises the framework's own error, exactly
-    # as reading the class off the source reflection does.
+    # underivable inverse fails at that moment -- never while merely listing
+    # a class's associations. Walkers that only probe an edge call `target`
+    # directly and treat a failure as a conservative miss; call sites that
+    # actually follow the edge call `resolve_target` so the failure surfaces
+    # as a clear bake-time error naming the edge instead of a raw framework
+    # error.
     Association = Struct.new(
       # String association name
       :name,
@@ -96,7 +98,41 @@ module FactoryBakery
       :inverse_name,
       # Proc -> Symbol or nil, resolved lazily
       :inverse_kind
-    )
+    ) do
+      # Follow an edge. A target that cannot be resolved is an error at the
+      # point of use, but it is reported with the association's name rather
+      # than as the framework's raw exception. `target` itself is left intact
+      # for conservative probes such as back-edge detection.
+      def resolve_target
+        target.call
+      rescue FactoryBakery::Error
+        raise
+      rescue StandardError => e
+        raise FactoryBakery::Error,
+              "#{name} (target #{target_class_name.inspect}) could not be resolved: " \
+              "#{e.class}: #{e.message}"
+      end
+    end
+
+    # The association list a mapper answers. It is an Array for the ordinary
+    # contract, but also carries why any edge was skipped: a partially-loaded
+    # class can list only its resolvable associations, and an explicit
+    # reference to a dropped one needs a reason rather than a bare "missing".
+    class Introspection < Array
+      attr_reader :failures
+
+      def initialize(entries = [], failures = {})
+        super(entries)
+        @failures = failures.dup.freeze
+        freeze
+      end
+
+      # Failure for a named edge, or the class-wide failure when the whole
+      # reflection set could not be built. nil when the edge is simply absent.
+      def failure_for(name)
+        @failures[name.to_s] || @failures[nil]
+      end
+    end
 
     # Duck-typed fallback for targets no mapper claims: builds never gain
     # transactional semantics, save! only runs when the target itself

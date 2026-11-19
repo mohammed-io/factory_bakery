@@ -88,7 +88,7 @@ module FactoryBakery
             ensure_compatible!(object, declaration, entry)
           end
 
-          declaration.factory || entry.target.call
+          declaration.factory || entry.resolve_target
         end
 
         def require_polymorphic_factory!(object, declaration, entry)
@@ -101,7 +101,7 @@ module FactoryBakery
 
         def ensure_compatible!(object, declaration, entry)
           resolved, = BakeryBuilder.resolve(declaration.factory)
-          expected = entry.target.call
+          expected = entry.resolve_target
           return if resolved <= expected
 
           raise FactoryBakery::Error,

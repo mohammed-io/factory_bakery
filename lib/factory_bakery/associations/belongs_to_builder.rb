@@ -76,7 +76,7 @@ module FactoryBakery
         # opt-out hint. A finite chain ended by a declaration never repeats an
         # edge and is allowed.
         def build_parent(klass, entry)
-          target_class = entry.target.call
+          target_class = entry.resolve_target
           reuse = ReuseResolver.strategy_for(nil) == :reuse
           if reuse
             existing = resolve_reuse(klass, target_class, entry)

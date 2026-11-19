@@ -10,6 +10,9 @@ module FactoryBakery
     # Fragile derivations (an unloadable target class, an underivable
     # inverse) stay lazy inside the returned callables: they run exactly when
     # the edge is used, never while merely listing a class's associations.
+    # A reflection that fails even to be described is dropped from the list
+    # and recorded on the result, so one half-loaded association cannot
+    # poison every other edge on the class.
     #
     # The result is memoized on the class (a bake asks several times);
     # reloading a class drops the cache with it. A frozen class is read
@@ -31,8 +34,31 @@ module FactoryBakery
 
       def build(klass)
         detector = CounterCacheDetector.new(klass)
+        failures = {}
 
-        ReflectionCache.all(klass).map { |reflection| entry(klass, reflection, detector) }.freeze
+        entries = ReflectionCache.all(klass).filter_map do |reflection|
+          entry(klass, reflection, detector)
+        rescue StandardError => e
+          failures[reflection_name(reflection)] = failure_message(e)
+          nil
+        end
+
+        FactoryBakery::MapperRegistry::Introspection.new(entries, failures)
+      rescue StandardError => e
+        # A class whose whole reflection set cannot be read is still
+        # introspectable; it simply has no usable associations. Keep the
+        # [] contract distinct from the nil "no mapper can see this class".
+        FactoryBakery::MapperRegistry::Introspection.new([], { nil => failure_message(e) })
+      end
+
+      def reflection_name(reflection)
+        reflection.name.to_s
+      rescue StandardError
+        '<unknown>'
+      end
+
+      def failure_message(error)
+        "#{error.class}: #{error.message}"
       end
 
       def entry(klass, reflection, detector)

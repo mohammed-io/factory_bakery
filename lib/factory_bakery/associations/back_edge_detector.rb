@@ -17,6 +17,10 @@ module FactoryBakery
           introspection
             .select { |candidate| back_edge?(candidate, source_klass, entry) }
             .map { |candidate| [target_class.name, candidate.name] }
+        rescue StandardError
+          # A partially-loaded target contributes no suppressed edges; it
+          # must never abort the bake that merely followed an edge into it.
+          []
         end
 
         private
@@ -27,6 +31,11 @@ module FactoryBakery
           return false unless foreign_keys_match?(candidate, entry)
 
           same_class?(candidate, source_klass)
+        rescue StandardError
+          # An unresolvable candidate is conservatively not a back edge. The
+          # remaining candidates still get their say, and the reflection-path
+          # cycle guard still protects a genuine cycle.
+          false
         end
 
         def inverse?(candidate, entry)
@@ -40,9 +49,11 @@ module FactoryBakery
 
         # The target resolves lazily, exactly as reading it off the
         # reflection does: an unloadable candidate is simply not a back edge.
+        # `target` (not `resolve_target`) is deliberate -- probing an edge
+        # must stay conservative instead of raising at the point of use.
         def same_class?(candidate, source_klass)
           candidate.target.call == source_klass
-        rescue NameError
+        rescue StandardError
           false
         end
       end

@@ -84,9 +84,13 @@ module FactoryBakery
         # before the models they name.
         def entry_for(object, name, introspection)
           entry = introspection.find { |candidate| candidate.name == name.to_s }
-          raise FactoryBakery::Error, "#{object.class} has no association :#{name}" unless entry
+          return entry if entry
 
-          entry
+          message = "#{object.class} has no association :#{name}"
+          if introspection.respond_to?(:failure_for) && (failure = introspection.failure_for(name))
+            message += " (could not be introspected: #{failure})"
+          end
+          raise FactoryBakery::Error, message
         end
 
         def validate!(object, declaration, entry)
@@ -143,6 +147,11 @@ module FactoryBakery
           return false unless entry.kind == :belongs_to
 
           entry.foreign_keys.any? { |key| !object.public_send(key).nil? }
+        rescue StandardError
+          # A partially-loaded edge cannot be proven to be already assigned;
+          # fall through to the build so the use of the edge raises its own
+          # contextual error instead of dying inside this probe.
+          false
         end
       end
     end
