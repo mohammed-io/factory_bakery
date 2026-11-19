@@ -211,10 +211,25 @@ module FactoryBakery
         DEFAULT_MAPPERS.each { |name| require_relative name }
       end
 
+      # A bake asks for the same class's mapper dozens of times. The answer is
+      # memoized on the class, tagged with the registry generation so a later
+      # `register` invalidates it. Frozen classes are resolved every time.
       def mapper_for(klass)
         subject = klass.is_a?(Class) ? klass : klass.class
+        return find_mapper(subject) if subject.frozen?
+
+        generation, mapper = subject.instance_variable_get(:@factory_bakery_mapper)
+        return mapper if generation == mappers.object_id
+
+        mapper = find_mapper(subject)
+        subject.instance_variable_set(:@factory_bakery_mapper, [mappers.object_id, mapper])
+        mapper
+      end
+
+      def find_mapper(subject)
         mappers.find { |mapper| mapper.supports?(subject) }
       end
+      private :find_mapper
 
       def constraints_for(klass, attr_name)
         mapper_for(klass)&.constraints_for(klass, attr_name.to_s) || ConstraintSet.empty(klass, attr_name.to_s)

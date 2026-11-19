@@ -48,12 +48,23 @@ module FactoryBakery
       # `terms_of_service` is as necessary to a valid record as any column
       # (issue #57). Validator-bearing targets without a schema have no
       # columns, so their validator-declared names are the whole universe.
+      # Memoized on the class like the constraints: computing the virtual
+      # names walks validators, reflections and guard columns, which every
+      # bake would otherwise repeat.
       def attribute_universe(klass)
+        return compute_attribute_universe(klass) if klass.frozen?
+
+        klass.instance_variable_get(:@factory_bakery_universe) ||
+          klass.instance_variable_set(:@factory_bakery_universe, compute_attribute_universe(klass).freeze)
+      end
+
+      def compute_attribute_universe(klass)
         columns = klass.respond_to?(:columns_hash) ? klass.columns_hash.keys.map(&:to_s) : []
         return columns unless klass.respond_to?(:validators)
 
         (columns + virtual_attribute_names(klass)).uniq
       end
+      private :compute_attribute_universe
 
       # Normalized per-attribute constraints, memoized on the target class:
       # a bake resolves the same pair many times (routing, generation,
