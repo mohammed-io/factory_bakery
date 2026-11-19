@@ -25,3 +25,8 @@ if defined?(::ActiveRecord::Base)
 
   FactoryBakery::MapperRegistry.register(FactoryBakery::ActiveRecordMapper::Mapper.new)
 end
+
+# The framework's own integration glue. It must exist before a Rails
+# application boots so the after_initialize hooks can run; a Rails boot always
+# loads Rails before the gem, so defining it here is order-safe.
+require_relative 'active_record_mapper/railtie' if defined?(::Rails)

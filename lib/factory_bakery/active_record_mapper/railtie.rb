@@ -1,9 +1,10 @@
 # frozen_string_literal: true
 
-require 'rails'
-
 module FactoryBakery
-  # Rails integration. Intentionally thin: it only decides which directory the
+  # Rails integration: Rails-world glue, deliberately kept outside the
+  # framework-agnostic core and loaded only when the Rails framework is
+  # already defined (a Rails application boots the gem after Rails itself is
+  # loaded). Intentionally thin: it only decides which directory the
   # framework-agnostic loader should look at, then hands off to the core API.
   # All path globbing and file loading lives in DefinitionLoader.
   class Railtie < Rails::Railtie

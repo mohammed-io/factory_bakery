@@ -2,7 +2,6 @@
 
 require 'ffaker'
 require_relative 'factory_bakery/version'
-require_relative 'factory_bakery/railitie'
 require_relative 'factory_bakery/plugin_registry'
 require_relative 'factory_bakery/constraint_set'
 require_relative 'factory_bakery/mapper_registry'
