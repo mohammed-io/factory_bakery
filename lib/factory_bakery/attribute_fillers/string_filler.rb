@@ -48,7 +48,7 @@ module FactoryBakery
 
       # Generate up to MAX_ATTEMPTS candidates and return the first one that
       # satisfies every constraint. A candidate is never returned unverified:
-      # exhaustion raises instead of leaking a value Rails would reject.
+      # exhaustion raises instead of leaking a value the target would reject.
       def generate_compliant_value(context)
         value = nil
         attempts = 0

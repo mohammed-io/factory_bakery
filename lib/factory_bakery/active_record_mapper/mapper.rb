@@ -27,9 +27,13 @@ module FactoryBakery
       # Normalized per-attribute constraints, memoized on the target class:
       # a bake resolves the same pair many times (routing, generation,
       # counter handling, uniqueness regeneration). Reloading a class drops
-      # its cache with it.
+      # its cache with it. Frozen targets are read without caching, matching
+      # the fillers' own frozen-class handling.
       def constraints_for(klass, attr_name)
-        cache_for(klass)[attr_name.to_s] ||= ConstraintReader.call(klass, attr_name.to_s)
+        cache = cache_for(klass)
+        return ConstraintReader.call(klass, attr_name.to_s) unless cache
+
+        cache[attr_name.to_s] ||= ConstraintReader.call(klass, attr_name.to_s)
       end
 
       # Attributes heuristics must never fill: foreign keys, polymorphic
@@ -191,6 +195,8 @@ module FactoryBakery
       end
 
       def cache_for(klass)
+        return nil if klass.frozen?
+
         klass.instance_variable_get(:@factory_bakery_constraints) ||
           klass.instance_variable_set(:@factory_bakery_constraints, {})
       end

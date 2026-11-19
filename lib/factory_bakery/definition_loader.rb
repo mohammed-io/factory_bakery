@@ -1,8 +1,9 @@
 # frozen_string_literal: true
 
 module FactoryBakery
-  # Loads definition files from the configured directories. No Rails or test
-  # framework dependency: the Railtie only needs to set definition_paths.
+  # Loads definition files from the configured directories. No framework or
+  # test-framework dependency: a host application (or its integration glue)
+  # only needs to set definition_paths.
   class DefinitionLoader
     def self.call(paths)
       Array(paths).each do |path|
