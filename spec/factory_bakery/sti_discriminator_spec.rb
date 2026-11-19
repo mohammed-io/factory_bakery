@@ -15,7 +15,7 @@ RSpec.describe 'STI discriminator column' do
     end
 
     it 'preserves the subclass name Rails assigns in new, while filling other columns' do
-      record = FactoryBakery.bake(Car)
+      record = FactoryBakery.bake(Car, fill_optional: true)
 
       expect(record.type).to eq(Car.sti_name)
       expect(record.name).to be_a(String)
@@ -69,7 +69,7 @@ RSpec.describe 'STI discriminator column' do
     end
 
     it 'preserves the subclass name in the custom column' do
-      record = FactoryBakery.bake(Robot)
+      record = FactoryBakery.bake(Robot, fill_optional: true)
 
       expect(record.kind).to eq(Robot.sti_name)
       expect(record.label).to be_a(String)
@@ -94,7 +94,7 @@ RSpec.describe 'STI discriminator column' do
     end
 
     it 'still fills the column heuristically' do
-      record = FactoryBakery.bake(label_model)
+      record = FactoryBakery.bake(label_model, fill_optional: true)
 
       expect(record.type).to be_a(String)
       expect(record.type).not_to be_empty

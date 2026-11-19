@@ -4,11 +4,26 @@ module FactoryBakery
   class BakeryBuilder
     class BuildingInProgress < StandardError; end
 
+    # Sentinel stored in the declaration stream for `skip :attribute`. It wins
+    # and loses by the same rules as a value block, but contributes no value.
+    OMITTED = Object.new.freeze
+
     attr_reader :heuristic_attribute_names
 
-    def initialize(model_klass, builder_proc = nil)
+    # Signals for the verified fallback: an optional column was left to
+    # heuristics, and leaving it unset could plausibly matter.
+    def optional_candidates?
+      !Array(@optional_candidates).empty?
+    end
+
+    def verification_needed?
+      !!@verification_needed
+    end
+
+    def initialize(model_klass, builder_proc = nil, fill_optional: nil)
       @model_klass = model_klass
       @builder_proc = builder_proc
+      @fill_optional = fill_optional
 
       @methods_to_be_called_on_object = []
       @traits = {}
@@ -72,6 +87,27 @@ module FactoryBakery
       @traits[trait_name] = blk
     end
 
+    # An omission is a declaration like any other: it is recorded in the same
+    # stream as value blocks, so a later trait replaces it and a call-site
+    # override beats it by the ordinary precedence rules. Because its name is
+    # a declared name, the whole alias group (association + FK + type) is
+    # suppressed from heuristics and plugin auto-build, and no setter runs.
+    def skip(*names)
+      if names.empty? || block_given?
+        raise FactoryBakery::Error,
+              'skip is the attribute-omission DSL method; ' \
+              'use add_attribute(:skip) { ... } to declare a real attribute named skip'
+      end
+
+      names.each { |name| @methods_to_be_called_on_object << [name, OMITTED] }
+    end
+
+    # Explicit form for an attribute whose name collides with a DSL method
+    # (notably `skip`). It records exactly the same declaration as `name { }`.
+    def add_attribute(name, &block)
+      @methods_to_be_called_on_object << [name, block]
+    end
+
     def build(overrides: {}, traits: [])
       raise BuildingInProgress if @build_is_in_progress
 
@@ -132,7 +168,18 @@ module FactoryBakery
       end
     end
 
+    # Construction goes through the mapper so a framework whose models raise in
+    # `new` (a raising default scope or an `after_initialize` callback) can
+    # retry with fallbacks (issue #56). `apply` re-applies initialize_with
+    # values when a fallback had to build the object without the constructor;
+    # targets no mapper claims construct exactly as before.
     def instantiate
+      FactoryBakery::MapperRegistry.construct(@model_klass, apply: method(:apply_initialize_with)) do
+        construct_instance
+      end
+    end
+
+    def construct_instance
       return @model_klass.new unless @initialize_with_attributes
 
       parameters = @model_klass.instance_method(:initialize).parameters
@@ -155,7 +202,13 @@ module FactoryBakery
     # POROs whose constructor takes no arguments receive their initialize_with
     # values through setters, just like declared attributes.
     def build_with_setters
-      object = @model_klass.new
+      apply_initialize_with(@model_klass.new)
+    end
+
+    # Assigns initialize_with values to an object built without them: an
+    # argument-less constructor, or a record a construction fallback had to
+    # build without running the constructor at all.
+    def apply_initialize_with(object)
       normalize_keys(@initialize_with_attributes).each do |name, value|
         setter = "#{name}="
         object.public_send(setter, value) if object.respond_to?(setter)
@@ -171,10 +224,23 @@ module FactoryBakery
     # before any block runs. Groups are derived from reflections at bake time so
     # definition files can still load before their models.
     def resolved_values(overrides, object)
+      # Bind the in-progress record for the whole resolution pass: declarations,
+      # overrides and initialize_with are already on it, so mapper rules that
+      # depend on live state see their final values when heuristics run.
+      BuildContext.with_record(object) { compute_resolved_values(overrides, object) }
+    end
+
+    def compute_resolved_values(overrides, object)
       normalized_overrides = normalize_keys(overrides)
       groups = alias_groups
       winning_declarations = declared_values(normalized_overrides, groups)
-      plugin_values = plugin_heuristic_values(taken_names(normalized_overrides, groups), groups)
+      taken = taken_names(normalized_overrides, groups)
+      # Share the decided names with after_instantiate hooks so object-level
+      # plugin auto-builders (e.g. required has_one) honour declarations,
+      # overrides and `skip` just like the heuristic layer does.
+      BuildContext.current.taken_names = taken
+      BuildContext.current.explicit_names = raw_taken_names(normalized_overrides)
+      plugin_values = plugin_heuristic_values(taken, groups)
 
       # A plugin-supplied group member suppresses every other member of that
       # group in the heuristic layer, so a nil FK cannot clobber the object.
@@ -213,10 +279,13 @@ module FactoryBakery
     # just one spelling of an association. Plugin DSL declarations (for example
     # `association :account`) are declarations too, so they suppress heuristic
     # values such as :required_only auto-building just like plain attributes.
+    def raw_taken_names(overrides)
+      declared_names + plugin_declared_names + overrides.keys +
+        normalize_keys(@initialize_with_attributes).keys
+    end
+
     def taken_names(overrides, groups)
-      names = declared_names + plugin_declared_names + overrides.keys +
-              normalize_keys(@initialize_with_attributes).keys
-      names.flat_map { |name| groups.fetch(name.to_s, [name.to_s]) }.uniq
+      raw_taken_names(overrides).flat_map { |name| groups.fetch(name.to_s, [name.to_s]) }.uniq
     end
 
     def plugin_declared_names
@@ -294,12 +363,50 @@ module FactoryBakery
     end
 
     def heuristic_values(skip, resolver)
-      candidate_attribute_names.each do |attribute_name|
-        next if skip.include?(attribute_name)
-
-        resolver.value_for(attribute_name)
-      end
+      fillable, @optional_candidates = partition_candidates(skip)
+      fillable.each { |attribute_name| resolver.value_for(attribute_name) }
       resolver.values
+    end
+
+    # By default only attributes a valid record needs are generated. The
+    # opt-in keeps the old "fill every column" behaviour, and a list opts in
+    # just those names. Non-column-backed attributes (validator-declared
+    # virtual names) follow the same rule: filled when an applicable validator
+    # rejects nil, or when they carry acceptance or confirmation.
+    #
+    # Partitioning happens while the record is bound, so a condition-aware
+    # rule is read for this bake rather than from the class-level cache. The
+    # optional half doubles as the signal for the verified fallback: when it
+    # is empty, a rebuild with everything filled cannot change the result.
+    def partition_candidates(skip)
+      fillable = candidate_attribute_names.reject { |name| skip.include?(name) }
+      return [fillable, []] if FillOptional.full?(@fill_optional)
+
+      required, optional = fillable.partition { |name| fill_required?(name) }
+      @verification_needed = needs_verification?(optional)
+      [required, optional]
+    end
+
+    def fill_required?(name)
+      FillOptional.includes?(@fill_optional, name) || RequiredAttribute.call(constraints_for(name))
+    end
+
+    # Only verify when leaving an optional column unset can plausibly matter:
+    # a default that may fail a validator, or app validation the heuristics
+    # cannot see. Otherwise the discovered constraints already guarantee the
+    # lean record is valid, and running `valid?` would be needless work with
+    # observable side effects (lazy validator procs).
+    def needs_verification?(optional)
+      optional.any? { |name| constrained_default?(constraints_for(name)) } ||
+        FactoryBakery::MapperRegistry.custom_validation?(@model_klass)
+    end
+
+    def constrained_default?(constraints)
+      constraints.has_default && constraints.has_validators
+    end
+
+    def constraints_for(name)
+      FactoryBakery::MapperRegistry.constraints_for(@model_klass, name)
     end
 
     def guard_columns
@@ -342,6 +449,8 @@ module FactoryBakery
       overridden_groups = overrides.keys.map { |name| groups.fetch(name, [name]) }.uniq
 
       declaration_winners(overridden_groups, groups).each_with_object({}) do |(_group, (name, block)), values|
+        next if block.equal?(OMITTED)
+
         values[name] = block.call
       end
     end
@@ -369,6 +478,10 @@ module FactoryBakery
     end
 
     def assign_values(object, values)
+      # Conditions read live attributes; a result cached before these setters
+      # ran (for example a plugin guard checked ahead of call-site overrides)
+      # no longer describes the record. Drop it rather than reusing it.
+      BuildContext.invalidate_condition_results!
       values.each do |name, value|
         setter = "#{name}="
         object.public_send(setter, value) if object.respond_to?(setter)

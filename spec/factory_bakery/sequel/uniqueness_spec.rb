@@ -76,11 +76,11 @@ RSpec.describe 'Sequel mapper uniqueness enforcement', :sequel_mapper do
 
   describe 'a unique index without a model-level validation' do
     let!(:model) do
-      define_sequel_model('SeqIndexedUnique', slug: { type: :string, null: false, unique: true })
+      define_sequel_model('SeqIndexedUnique', code: { type: :string, null: false, unique: true })
     end
 
     it 'flags the column through the dataset schema' do
-      expect(FactoryBakery::MapperRegistry).to be_uniqueness_validated(model, 'slug')
+      expect(FactoryBakery::MapperRegistry).to be_uniqueness_validated(model, 'code')
     end
 
     it 'regenerates on collision exactly like a declared validation' do
@@ -89,8 +89,8 @@ RSpec.describe 'Sequel mapper uniqueness enforcement', :sequel_mapper do
       first = FactoryBakery.bake!(model)
       second = FactoryBakery.bake!(model)
 
-      expect(first.slug).to eq('alpha')
-      expect(second.slug).to eq('beta')
+      expect(first.code).to eq('alpha')
+      expect(second.code).to eq('beta')
       expect(model.count).to eq(2)
     end
   end

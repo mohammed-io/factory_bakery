@@ -100,9 +100,12 @@ RSpec.describe 'FactoryBakery association collections and has_one (A12)' do
       post_model, comment_model = define_post_and_comment('CollUnique')
       comment_model.validates :body, uniqueness: true
       FactoryBakery.define(post_model) { association :comments, count: 3 }
-      allow(FFaker::Lorem).to receive(:sentence).and_return('alpha', 'beta', 'gamma')
+      # Issue #59 moved body values to a paragraph heuristic; stub that
+      # boundary so the three children collide and force regeneration.
+      allow_any_instance_of(FactoryBakery::AttributeFillers::StringFiller)
+        .to receive(:generate_paragraph).and_return('alpha', 'beta', 'gamma')
 
-      post = FactoryBakery.bake(post_model, title: 'given')
+      post = FactoryBakery.bake(post_model, title: 'given', fill_optional: true)
 
       expect(post.comments.map(&:body)).to eq(%w[alpha beta gamma])
       expect(post.comments.map(&:body).uniq.size).to eq(3)

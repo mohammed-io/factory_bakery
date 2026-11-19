@@ -134,7 +134,7 @@ RSpec.describe 'array column filler (issue #44)' do
       end
       model = define_class('LegacyArrayColumn', ActiveRecord::Base)
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       # SQLite/MySQL have no array type, so the shared helper translates the
       # column to JSON; the JsonFiller (not ArrayFiller) handles it.

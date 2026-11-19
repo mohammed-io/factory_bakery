@@ -50,6 +50,7 @@ RSpec.describe 'FactoryBakery associations configuration' do
       expect(FactoryBakery::Associations.mode).to eq(:required_only)
       expect(FactoryBakery::Associations.max_depth).to eq(2)
       expect(FactoryBakery::Associations.default_count).to eq(1)
+      expect(FactoryBakery::Associations.eager_load).to be(true)
     end
 
     it 'reports scoped values inside the block and global values outside it' do
@@ -219,6 +220,8 @@ RSpec.describe 'FactoryBakery associations configuration' do
         .to raise_error(ArgumentError, /max_depth/)
       expect { FactoryBakery::Associations.default_count = '2' }
         .to raise_error(ArgumentError, /default_count/)
+      expect { FactoryBakery::Associations.eager_load = 'yes' }
+        .to raise_error(ArgumentError, /eager_load/)
     end
 
     it 'rejects unknown scope keys and values with ArgumentError' do
@@ -230,6 +233,8 @@ RSpec.describe 'FactoryBakery associations configuration' do
         .to raise_error(ArgumentError, /default_count/)
       expect { FactoryBakery::Associations.with(strategy: :bogus) {} }
         .to raise_error(ArgumentError, /strategy/)
+      expect { FactoryBakery::Associations.with(eager_load: 1) {} }
+        .to raise_error(ArgumentError, /eager_load/)
     end
 
     it 'applies none of a scope whose validation fails' do

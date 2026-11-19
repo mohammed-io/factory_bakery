@@ -15,7 +15,7 @@ RSpec.describe 'Sequel mapper public API', :sequel_mapper do
   end
 
   it 'bakes a class with no definition at all' do
-    gadget = FactoryBakery.bake(model)
+    gadget = FactoryBakery.bake(model, fill_optional: true)
 
     expect(gadget.name).to be_a(String)
     expect(gadget.body).to be_a(String)
@@ -31,7 +31,7 @@ RSpec.describe 'Sequel mapper public API', :sequel_mapper do
       end
     end
 
-    gadget = FactoryBakery.bake(model, :grumpy, name: 'Grace')
+    gadget = FactoryBakery.bake(model, :grumpy, name: 'Grace', fill_optional: true)
 
     expect(gadget.name).to eq('Grace')
     expect(gadget.body).to eq('Bah humbug')
@@ -91,7 +91,7 @@ RSpec.describe 'Sequel mapper public API', :sequel_mapper do
     end
 
     it 'still fills a plain _id-like column that backs no association' do
-      order = FactoryBakery.bake(owner_model)
+      order = FactoryBakery.bake(owner_model, fill_optional: true)
 
       expect(order.seq_clerk_id).to be_an(Integer)
     end

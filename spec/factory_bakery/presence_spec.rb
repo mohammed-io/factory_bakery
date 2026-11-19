@@ -65,7 +65,7 @@ RSpec.describe 'presence semantics (issue #34)' do
       end
       allow(FFaker::Lorem).to receive(:word).and_return('generated')
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       expect(record.status).to eq('generated')
       expect(record).to be_valid

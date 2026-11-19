@@ -30,7 +30,7 @@ RSpec.describe 'FactoryBakery belongs_to columns' do
     end
 
     it 'still fills integer columns that are not FKs' do
-      record = FactoryBakery.bake(user_model)
+      record = FactoryBakery.bake(user_model, fill_optional: true)
 
       expect(record.quantity).to be_a(Integer)
       expect(record.quantity).to be_between(1, 100).inclusive
@@ -73,7 +73,7 @@ RSpec.describe 'FactoryBakery belongs_to columns' do
     end
 
     it 'leaves every FK component nil' do
-      record = FactoryBakery.bake(child_model)
+      record = FactoryBakery.bake(child_model, fill_optional: true)
 
       expect([record.account_id, record.account_tenant_id]).to eq([nil, nil])
       expect(record.name).to be_a(String)

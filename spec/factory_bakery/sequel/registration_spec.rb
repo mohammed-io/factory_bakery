@@ -14,7 +14,9 @@ RSpec.describe 'Sequel mapper registration' do
   include DefineSequelModelMacros
 
   it 'raises a helpful FactoryBakery::Error when the sequel gem is absent' do
-    ffaker_lib = File.join(Gem::Specification.find_by_name('ffaker').gem_dir, 'lib')
+    dependency_libs = %w[ffaker regexp_parser].flat_map do |name|
+      ['-I', File.join(Gem::Specification.find_by_name(name).gem_dir, 'lib')]
+    end
     code = <<~RUBY
       require 'factory_bakery'
 
@@ -33,8 +35,9 @@ RSpec.describe 'Sequel mapper registration' do
 
     # A genuinely gemless environment: an empty GEM_HOME/GEM_PATH hides every
     # installed gem (the sequel gem is physically installed for this suite),
-    # while ffaker stays loadable through its lib dir on $LOAD_PATH, exactly
-    # like the architecture guard's framework-free probes.
+    # while the runtime dependencies (ffaker, regexp_parser) stay loadable
+    # through their lib dirs on $LOAD_PATH, exactly like the architecture
+    # guard's framework-free probes.
     gemless_home = Dir.mktmpdir
     stdout, stderr, status = nil
     begin
@@ -42,7 +45,7 @@ RSpec.describe 'Sequel mapper registration' do
         stdout, stderr, status = Open3.capture3(
           { 'GEM_HOME' => gemless_home, 'GEM_PATH' => gemless_home },
           RbConfig.ruby,
-          '-I', ffaker_lib, '-I', File.expand_path('lib'),
+          *dependency_libs, '-I', File.expand_path('lib'),
           '-e', code
         )
       end

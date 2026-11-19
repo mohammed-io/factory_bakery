@@ -53,7 +53,7 @@ RSpec.describe 'Sequel mapper persistence contract', :sequel_mapper do
     end
 
     it 'persists through the model save inside one transaction' do
-      record = FactoryBakery.bake!(model)
+      record = FactoryBakery.bake!(model, fill_optional: true)
 
       expect(record).not_to be_new
       expect(model.count).to eq(1)

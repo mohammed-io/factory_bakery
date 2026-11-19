@@ -46,6 +46,11 @@ module FactoryBakery
       def association_name_for(_record, _candidates)
         nil
       end
+
+      # Sequel has no read-only record notion that maps to this contract.
+      def read_only?(_record)
+        false
+      end
     end
   end
 end

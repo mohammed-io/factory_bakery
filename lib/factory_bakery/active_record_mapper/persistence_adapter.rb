@@ -62,6 +62,14 @@ module FactoryBakery
       rescue StandardError
         nil
       end
+
+      # Read-only is a property of the record, not the class: models over
+      # database views define `readonly?` as true on every instance, while a
+      # single record can be marked read-only after loading. Both are refused
+      # by bake! and left alone by bake.
+      def read_only?(record)
+        record.respond_to?(:readonly?) && record.readonly?
+      end
     end
   end
 end

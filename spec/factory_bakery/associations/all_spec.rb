@@ -318,7 +318,7 @@ RSpec.describe 'FactoryBakery associations :all mode' do
       allow(FFaker::Lorem).to receive(:sentence).and_return(*(1..8).map { |index| "body-#{index}" })
       FactoryBakery::Associations.default_count = 2
 
-      author = FactoryBakery.bake(author_model)
+      author = FactoryBakery.bake(author_model, fill_optional: true)
       bodies = author.posts.flat_map { |post| post.comments.map(&:body) }
 
       expect(bodies.size).to eq(4)

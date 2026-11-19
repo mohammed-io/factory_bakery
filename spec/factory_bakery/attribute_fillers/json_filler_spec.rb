@@ -9,7 +9,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
     it 'fills a json column with a JSON-serializable Hash instead of a String' do
       model = define_model('JsonPayload', payload: :json)
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       expect(record).to be_new_record
       expect(record.payload).to be_a(Hash)
@@ -20,7 +20,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
     it 'fills a jsonb column with a Hash' do
       model = define_model('JsonbPayload', payload: :jsonb)
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       expect(record.payload).to be_a(Hash)
       expect(JSON.parse(JSON.generate(record.payload))).to eq(record.payload)
@@ -29,7 +29,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
     it 'generates shallow structures with a variety of JSON value types' do
       model = define_model('VariedJsonPayload', payload: :json)
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
       payload = record.payload
 
       expect(payload.keys).to all(be_a(String))
@@ -46,7 +46,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
     it 'persists and reloads the Hash with its structure intact' do
       model = define_model('JsonDocument', payload: :json)
 
-      record = FactoryBakery.bake!(model)
+      record = FactoryBakery.bake!(model, fill_optional: true)
       reloaded = model.find(record.id)
 
       expect(record).to be_persisted
@@ -64,7 +64,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
         end
       end
 
-      record = FactoryBakery.bake!(model)
+      record = FactoryBakery.bake!(model, fill_optional: true)
 
       expect(record).to be_persisted
       expect(record.site_settings).to be_a(Hash)
@@ -79,7 +79,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
         validates :payload, inclusion: { in: options }
       end
 
-      record = FactoryBakery.bake!(model)
+      record = FactoryBakery.bake!(model, fill_optional: true)
 
       expect(options).to include(record.payload)
       expect(record).to be_valid
@@ -93,7 +93,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
 
       allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
 
-      record = FactoryBakery.bake!(model)
+      record = FactoryBakery.bake!(model, fill_optional: true)
 
       expect(record.payload).to be_a(Hash)
       expect(record.payload).not_to eq(forbidden)
@@ -111,8 +111,8 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
 
       allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'alpha', 'beta')
 
-      first = FactoryBakery.bake!(model)
-      second = FactoryBakery.bake!(model)
+      first = FactoryBakery.bake!(model, fill_optional: true)
+      second = FactoryBakery.bake!(model, fill_optional: true)
 
       expect(first.payload).to be_a(Hash)
       expect(second.payload).to be_a(Hash)
@@ -135,7 +135,7 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
     it 'leaves text, binary and string columns on the string filler' do
       model = define_model('NonJsonPayload', body: :text, blob: :binary, title: :string)
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       expect(record.body).to be_a(String)
       expect(record.blob).to be_a(String)

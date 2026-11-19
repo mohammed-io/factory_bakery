@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'timeout'
-
 module FactoryBakery
   module AttributeFillers
     class StringFiller
@@ -18,10 +16,9 @@ module FactoryBakery
       ResolvedLengths = Struct.new(:minimum, :maximum, :exact, keyword_init: true)
       private_constant :ResolvedLengths
 
-      # Hard bounds around synthesis itself. FFaker's from_regexp can spin
-      # forever on POSIX classes, so every call gets a wall-clock guard; the
-      # deadline caps total synthesis work for one attribute (one filler
-      # invocation), and the attempt cap bounds raw generator calls.
+      # Hard bounds around synthesis itself: the deadline caps total
+      # generation work for one attribute (one filler invocation), and the
+      # attempt cap bounds raw generator calls.
       SYNTHESIS_TIME_LIMIT = 2.0
       SYNTHESIS_ATTEMPT_CAP = 25
 
@@ -77,7 +74,7 @@ module FactoryBakery
                       past_deadline?(deadline)
           raise format_exhaustion_error(value) if exhausted
 
-          value = build_candidate(deadline, lengths)
+          value = build_candidate(lengths, context)
           synthesis_attempts += 1
           return value if compliant?(value, context, lengths)
 
@@ -131,8 +128,8 @@ module FactoryBakery
         Process.clock_gettime(Process::CLOCK_MONOTONIC) >= deadline
       end
 
-      def build_candidate(deadline, lengths)
-        value = generate_value(deadline)
+      def build_candidate(lengths, context)
+        value = generate_value(lengths, context)
         # Truncating/padding a regex-generated value is what turns a compliant
         # value into a non-match. For regex-constrained strings, length is a
         # verification predicate instead of a post-processing step.
@@ -181,51 +178,44 @@ module FactoryBakery
         { is: @exact_length, minimum: @min_length, maximum: @max_length, db_limit: @db_limit }.compact
       end
 
-      def generate_value(deadline)
-        # Priority 1: Format regex constraint
-        return generate_from_regex(deadline) if @with_regexes.any?
+      def generate_value(lengths, context)
+        # Priority 1: Format regex constraint. For a URL-named attribute a few
+        # plausible, reserved-domain candidates are checked against every
+        # declared constraint first; synthesis is the fallback when none fits.
+        return generate_with_format(lengths, context) if @with_regexes.any?
 
-        # Priority 2: Attribute name patterns
-        generate_by_pattern
+        # Priority 2: Column type / attribute name patterns. The cap is passed
+        # down so a name-like value keeps its entropy suffix when truncated.
+        generate_by_pattern(max_length: pattern_max_length(lengths), type: @constraints.type)
       end
 
-      def generate_from_regex(deadline)
-        regex = @with_regexes.first
-        return generate_by_pattern unless regex
+      # Verification is shared with the ordinary candidate loop: a URL
+      # candidate is never returned unless it satisfies the format, length and
+      # exclusion constraints too. Both the lookahead URI regex and
+      # URI.regexp(%w[http https]) already synthesize valid values; the
+      # candidate-first step just makes a URL-named attribute produce a
+      # reserved URL instead of synthesized characters.
+      def generate_with_format(lengths, context)
+        candidate = plausible_url_candidates.find { |value| compliant?(value, context, lengths) }
+        return candidate if candidate
 
-        synthesizer = RegexSynthesizer.new(regex)
-
-        # Simple regexes stay on the FFaker path, preserving V5 regeneration
-        # semantics and leaving probe-6-style behavior unchanged.
-        return synthesize_with_ffaker(regex, deadline) if synthesizer.ffaker_expressible?
-
-        # For groups, alternation, inline flags and POSIX classes FFaker emits
-        # literal junk or spins forever. Synthesize them ourselves instead.
-        return synthesizer.generate if synthesizer.supported?
-
-        # Truly unsupported constructs produce no candidate at all: the V5
-        # verifier turns this into the contextual exhaustion error, fast.
-        nil
+        generate_from_regex(lengths)
       end
 
-      def synthesize_with_ffaker(regex, deadline)
-        return generate_by_pattern unless defined?(FFaker::String) &&
-                                           FFaker::String.respond_to?(:from_regexp)
+      # The same cap #adjust_length enforces, in the same precedence order.
+      def pattern_max_length(lengths)
+        [lengths.exact || lengths.maximum, @db_limit].compact.min
+      end
 
-        remaining = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
-        raise Timeout::Error if remaining <= 0
-
-        value = Timeout.timeout(remaining) { FFaker::String.from_regexp(regex) }
-        value.is_a?(String) ? value : generate_by_pattern
-      rescue Timeout::Error
-        # A spinning synthesis is never retried through FFaker: the attribute
-        # deadline is already exhausted, so fall through to the exhaustion
-        # error on the next loop check instead of burning more wall clock.
-        nil
-      rescue StandardError
-        # A plain FFaker failure falls back to a name-pattern candidate; the
-        # verifier rejects it when it violates the regex and retries.
-        generate_by_pattern
+      # The regex generator walks the regex itself, so an unsupported or
+      # unsatisfiable regex yields no candidate at all: the verifier turns
+      # that into the contextual exhaustion error, fast.
+      def generate_from_regex(lengths)
+        RegexGeneration.generate(
+          @with_regexes.first,
+          min_length: lengths.exact || lengths.minimum,
+          max_length: [lengths.exact || lengths.maximum, @db_limit].compact.min
+        )
       end
 
       def adjust_length(value, lengths)

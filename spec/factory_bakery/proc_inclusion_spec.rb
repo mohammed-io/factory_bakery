@@ -68,7 +68,7 @@ RSpec.describe 'lazy proc :in inclusion/exclusion sets (issue #36)' do
       end
       allow(FFaker::Lorem).to receive(:word).and_return('basic', 'pro')
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       expect(record.code).to eq('pro')
       expect(record).to be_valid
@@ -90,7 +90,7 @@ RSpec.describe 'lazy proc :in inclusion/exclusion sets (issue #36)' do
       FactoryBakery::AttributeFillers::StringFiller.new(model, :code)
       expect(calls).to eq(0)
 
-      FactoryBakery.bake(model)
+      FactoryBakery.bake(model, fill_optional: true)
       expect(calls).to eq(1)
     end
   end
@@ -112,7 +112,7 @@ RSpec.describe 'lazy proc :in inclusion/exclusion sets (issue #36)' do
         validates :code, exclusion: { in: ->(_record) { MissingExclusionNamespace::VALUES } }
       end
 
-      expect { FactoryBakery.bake(model) }
+      expect { FactoryBakery.bake(model, fill_optional: true) }
         .to raise_error(FactoryBakery::Error, /ProcRaiseExclusion#code.*exclusion.*MissingExclusionNamespace/m)
     end
   end

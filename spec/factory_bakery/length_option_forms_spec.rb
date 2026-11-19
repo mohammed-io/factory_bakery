@@ -18,7 +18,7 @@ RSpec.describe 'length option forms (issue #45)' do
       end
 
       expect(calls).to be_empty
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       expect(calls.length).to eq(1)
       expect(calls.first).to be_a(model)
@@ -31,7 +31,7 @@ RSpec.describe 'length option forms (issue #45)' do
         validates :code, length: { maximum: -> { 4 } }
       end
 
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records.map(&:code).map(&:length)).to all(be <= 4)
       expect(records).to all(be_valid)
@@ -67,7 +67,7 @@ RSpec.describe 'length option forms (issue #45)' do
     end
 
     it 'resolves the symbol against the object and fills an attribute generated later in column order' do
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each do |record|
@@ -77,7 +77,7 @@ RSpec.describe 'length option forms (issue #45)' do
     end
 
     it 'honors a call-site override for the referenced attribute' do
-      record = FactoryBakery.bake(model, max_chars: 3)
+      record = FactoryBakery.bake(model, max_chars: 3, fill_optional: true)
 
       expect(record.max_chars).to eq(3)
       expect(record.summary.length).to be <= 3
@@ -89,7 +89,7 @@ RSpec.describe 'length option forms (issue #45)' do
         validates :summary, length: { maximum: ->(record) { record.body.length } }
       end
 
-      records = 10.times.map { FactoryBakery.bake(articles) }
+      records = 10.times.map { FactoryBakery.bake(articles, fill_optional: true) }
 
       records.each do |record|
         expect(record.summary.length).to be <= record.body.length
@@ -105,7 +105,7 @@ RSpec.describe 'length option forms (issue #45)' do
         validates :code, length: { is: ->(_record) { 8 } }
       end
 
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records.map(&:code)).to all(match(/\A[a-z]{8}\z/))
       expect(records).to all(be_valid)
@@ -117,7 +117,7 @@ RSpec.describe 'length option forms (issue #45)' do
         validates :code, length: { is: :max_chars }
       end
 
-      expect { FactoryBakery.bake(model, max_chars: 12) }
+      expect { FactoryBakery.bake(model, max_chars: 12, fill_optional: true) }
         .to raise_error(FactoryBakery::Error, /DynamicLengthExhaustion#code.*:max_chars.*attempts/m)
     end
   end
@@ -128,7 +128,7 @@ RSpec.describe 'length option forms (issue #45)' do
         validates :title, length: { minimum: ->(_record) { MissingLengthNamespace::MIN } }
       end
 
-      expect { FactoryBakery.bake(model) }
+      expect { FactoryBakery.bake(model, fill_optional: true) }
         .to raise_error(FactoryBakery::Error, /RaisingLengthProc#title.*minimum.*MissingLengthNamespace/m) { |error|
           expect(error.cause).to be_a(NameError)
         }
@@ -139,7 +139,7 @@ RSpec.describe 'length option forms (issue #45)' do
         validates :title, length: { minimum: ->(_record) { 'not-a-number' } }
       end
 
-      expect { FactoryBakery.bake(model) }
+      expect { FactoryBakery.bake(model, fill_optional: true) }
         .to raise_error(FactoryBakery::Error, /UnusableLengthValue#title.*minimum.*not-a-number/m)
     end
 
@@ -149,7 +149,7 @@ RSpec.describe 'length option forms (issue #45)' do
       end
 
       record = nil
-      expect { record = FactoryBakery.bake(model) }.not_to raise_error
+      expect { record = FactoryBakery.bake(model, fill_optional: true) }.not_to raise_error
       expect(record.title).to be_a(String)
     end
   end
@@ -160,7 +160,7 @@ RSpec.describe 'length option forms (issue #45)' do
         validates :title, length: { minimum: 3, maximum: 12 }
       end
 
-      records = 20.times.map { FactoryBakery.bake(model) }
+      records = 20.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records.map(&:title).map(&:length)).to all(be_between(3, 12).inclusive)
       expect(records).to all(be_valid)

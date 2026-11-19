@@ -1,12 +1,12 @@
 # FactoryBakery
 
-FactoryBakery builds fully populated test objects **from your model's own metadata**. Validators and database column types decide what goes into each attribute; factory definitions are a thin customization layer for the few attributes a test actually cares about.
+FactoryBakery builds test objects **from your model's own metadata**. Validators and database column types decide what goes into each attribute; factory definitions are a thin customization layer for the few attributes a test actually cares about. A default bake fills only the attributes a valid record needs and leaves optional columns at their database default or `nil`.
 
 The gem is inspired by Python's [model-bakery](https://pypi.org/project/model-bakery/). It is deliberately **not** a [factory_bot](https://github.com/thoughtbot/factory_bot) mirror: you do not describe every attribute. You describe the exceptions, and heuristics fill the rest.
 
 ```ruby
 user = FactoryBakery.bake(User, email: 'john@example.com')
-user.email # => "john@example.com" — every other attribute was filled heuristically
+user.email # => "john@example.com" — other required attributes were filled heuristically
 ```
 
 ## Requirements
@@ -85,6 +85,40 @@ Traits are applied in the order given, so later traits win for overlapping attri
 
 Undeclared attributes are still filled heuristically. Requesting an unknown trait raises `FactoryBakery::Error`, as does baking an unregistered symbol.
 
+### Omitting attributes: `skip`
+
+`skip` leaves an attribute completely unassigned: the model keeps the value it already has (its database default, usually `nil`), and the setter is never called. This matters for setters with side effects, such as a remote-URL setter that fetches over the network.
+
+```ruby
+FactoryBakery.define(Account) do
+  skip :avatar_remote_url, :header_remote_url
+
+  trait :with_avatar do
+    avatar_remote_url { 'https://example.test/a.png' } # a later trait replaces the omission
+  end
+end
+
+FactoryBakery.bake(Account)                         # setters not called, defaults kept
+FactoryBakery.bake(Account, :with_avatar)           # trait value wins
+FactoryBakery.bake(Account, avatar_remote_url: nil) # an explicit nil wins and calls the setter
+```
+
+An omission is a declaration for precedence purposes, so it slots into the same ordering as attribute blocks:
+
+> call-site overrides > traits (in application order) > declarations and `skip` in declaration order > heuristics
+
+A later declaration or trait replaces an earlier `skip`; a later `skip` replaces an earlier declaration. A call-site value always wins, including an explicit `nil`. `skip` covers the whole alias group, so `skip :account` also suppresses the foreign key and polymorphic type columns and prevents plugin auto-build of that association along with heuristic fills.
+
+`skip` is a DSL method, so a model with a real attribute named `skip` should declare it with the explicit `add_attribute` form:
+
+```ruby
+FactoryBakery.define(Account) do
+  add_attribute(:skip) { 'a value' } # equivalent to `skip { 'a value' }` without the DSL collision
+end
+```
+
+Using `skip` with a value block raises a `FactoryBakery::Error` pointing to `add_attribute` instead of silently dropping the attribute.
+
 ### Constructors: `initialize_with`
 
 When a constructor needs arguments, declare them with `initialize_with`. It accepts a hash:
@@ -106,6 +140,24 @@ FactoryBakery.bake(Invoice).number # => "INV-001"
 ```
 
 For a class with a zero-argument constructor (including most POROs), the same hash is applied through setters. For an ActiveRecord model it is passed to `new` as attributes.
+
+### Models whose `new` raises
+
+Some models cannot be instantiated with `new`: a `default_scope` that raises while Rails applies its create attributes, or an `after_initialize` callback that raises. Baking retries, in this order, and only when the previous attempt raised:
+
+1. `new` — the ordinary constructor, unchanged.
+2. `unscoped { new }` — skips the raising `default_scope`, keeps `after_initialize` defaults.
+3. Callback-free construction — the same default attributes and framework internals as `new`, without running `initialize` callbacks, so it also survives a raising `after_initialize`. It drops app-defined initialization, so it is the last resort.
+
+```ruby
+class PluginModel < ApplicationRecord
+  default_scope { raise 'not implemented' } # breaks `new` in Rails
+end
+
+FactoryBakery.bake(PluginModel) # => a populated, unsaved record
+```
+
+`initialize_with` values, declarations, overrides and heuristics apply exactly as for an ordinary bake (when a fallback had to skip the constructor, `initialize_with` values go through setters). A normal model still calls `new` exactly once, and `bake!` saves these records normally. If every step fails, the original exception class and message are re-raised with a note that fallbacks were tried; callback-free construction uses Rails internals, so a version without them skips that step instead.
 
 ### Named factories
 
@@ -155,6 +207,34 @@ FactoryBakery.bake!(Contact) # => a Contact, with no persistence attempted
 ```
 
 POROs that include `ActiveModel::Model` / `ActiveModel::Validations` also get validator-driven heuristics for their undeclared attributes. With no schema and no validators, attributes that have no value supplied are left `nil` rather than raising.
+
+### Read-only models
+
+Models whose `readonly?` is true — database views, or any model that marks records read-only — are first-class `bake` targets:
+
+```ruby
+class Instance < ApplicationRecord
+  self.table_name = 'instances' # backed by a database view
+
+  def readonly? = true
+end
+
+instance = FactoryBakery.bake(Instance)
+instance.new_record? # => true; attributes and required associations are filled
+instance.valid?      # => true; required attributes are filled, optional ones keep their defaults
+```
+
+`bake` itself only calls `valid?` for this probe when a defaulted validated column was left unset or the model carries validation the mapper cannot read; otherwise the discovered constraints are trusted and no validation runs.
+
+`bake!` refuses to write such a record and raises `FactoryBakery::ReadOnlyTargetError` before attempting any save:
+
+```
+Instance is read-only (readonly? is true, e.g. a database view); use FactoryBakery.bake to get a populated record, or create the underlying rows yourself. A persist_with hook is not supported yet.
+```
+
+The check reads the **instance**, so a single record marked read-only after loading is caught as well as a model whose every instance is read-only. It runs after the graph is built but before the root save, inside `bake!`'s savepoint: any parent row the graph inserted earlier is rolled back and the database is unchanged. When a read-only record is a required parent, the error names the chain, for example `InstanceModerationNote#instance -> Instance is read-only (...)`.
+
+To store the data, create the underlying rows yourself and use `bake` for the in-memory object. A `persist_with` hook that writes through another model is a possible future option; it is not supported yet.
 
 ## Definition loading
 
@@ -228,7 +308,35 @@ Both `bake` and `bake!` are available bare after the include, with exactly the s
 
 ## How heuristics work
 
-For each attribute not supplied by a declaration, a trait, or an override, FactoryBakery picks a filler. ActiveRecord models contribute their column types; any ActiveModel-compatible object contributes its validators. The filler then reads the validator options to produce a valid value:
+For each attribute not supplied by a declaration, a trait, or an override, FactoryBakery picks a filler. ActiveRecord models contribute their column types; any ActiveModel-compatible object contributes its validators. The filler then reads the validator options to produce a valid value.
+
+### What gets filled
+
+By default a bake fills only the attributes a valid record **needs**:
+
+1. A validated attribute with no database column (a `has_secure_password` `password`, an `attr_accessor` with presence, an acceptance flag, a confirmation twin) is filled when the model exposes a public setter and an applicable validator rejects `nil`; acceptance and confirmation attributes are filled too, since they only mean something with a value. Association names, column aliases and foreign-key/type columns are never added.
+2. A `NOT NULL` column with no default is filled.
+3. A column with a blank default (`''`, `false`, whitespace) is filled when an applicable presence validator requires it. A non-blank default is left alone.
+4. A nullable column with no default is filled when an applicable validator rejects `nil` — `presence`, `inclusion`, `format`, `numericality`, `acceptance`, `uniqueness`, `comparison`, or `length` with `minimum > 0` — unless that validator has `allow_nil` / `allow_blank`. Rails treats a NULL duplicate as taken and a nil comparison as invalid, so uniqueness and comparison columns are filled too.
+
+Everything else keeps its database default or stays `nil`, and the setter of an optional column is never called. This avoids side-effecting setters and validators on optional fields (for example a remote URL setter that performs a network fetch). `if:` / `unless:` conditions are evaluated against the record being baked, so "applicable" means the condition holds for that record.
+
+Custom `EachValidator`s never force a fill on their own. If app-specific validation does need an optional column, the bake is verified and rebuilt once with optional columns filled when that is what makes it valid (the required-only result is preferred). A bake calls `valid?` **only** when a defaulted, validated column was left unset or the model has validation logic heuristics cannot read (a custom validator, `validates_with`, or a `validate` override). Framework-owned autosave callbacks (`validate_associated_records_for_*`, installed for every `has_many` / `has_one`) do not count, so a plain model gains no validation pass. Each attempt runs in its own savepoint: writes made by declaration blocks during a discarded lean attempt roll back before the rebuild, and those blocks may therefore run twice. See [ADR-0006](docs/adr/0006-required-only-baking-and-verified-fallback.md).
+
+#### Opting in to filling everything
+
+To restore the old "fill every column" behaviour, opt in globally or for one bake:
+
+```ruby
+FactoryBakery.configure { |config| config.fill_optional = true } # or FactoryBakery.fill_optional = true
+FactoryBakery.bake(User)                                         # every column filled
+
+FactoryBakery.bake(User, fill_optional: true)                    # opt in for one call
+FactoryBakery.bake(User, fill_optional: false)                   # opt out of the global setting
+FactoryBakery.bake(User, fill_optional: [:bio, :website])        # opt in just these names
+```
+
+The per-call setting applies to nested bakes made from declaration blocks too. Declarations, traits and call-site overrides still take precedence over heuristics in every mode.
 
 | Metadata | Example | Result |
 | --- | --- | --- |
@@ -237,19 +345,59 @@ For each attribute not supplied by a declaration, a trait, or an override, Facto
 | `exclusion` | `exclusion: { in: %w[www ftp] }` | A generated value outside the forbidden set |
 | `length` | `length: { is: 5 }`, `{ in: 3..8 }` | A string padded or truncated to the required length |
 | `numericality`, `comparison` | `greater_than: 18`, `in: 1..10` | A number inside the permitted bounds |
-| `format` | `with: /\A[a-z]+\z/` | A string generated from the regex where possible |
+| `format` | `with: /\A[a-z]+\z/` | A string generated from the regex itself (see [Format validators](#format-validators)) |
 | `acceptance` | `acceptance: { accept: 'yes' }` | The accepted value |
 | `confirmation` | `confirmation: true` on `password` | `password_confirmation` is copied from `password`; overriding the source propagates |
+| Virtual attribute | `attr_accessor :password` + `validates :password, presence: true, confirmation: true` | Filled and `password_confirmation` matched, although no column exists |
 | `presence`, `absence` | `presence: true`, `absence: true` | A non-blank value, or `nil` |
 | `enum` | `enum status: { pending: 0, done: 1 }` | One of the defined enum keys |
-| Column default | `default: 'draft'` | Left to the database; the database default is kept |
+| Column default | `default: 'draft'` | Left to the database; the database default is kept unless it is blank and presence-validated |
 | Primary key | `id` | Skipped |
 | `belongs_to` foreign keys and polymorphic pairs | `account_id`, `commentable_type` / `commentable_id` | Left `nil`; a made-up row or class name would dangle |
 | STI inheritance column | `type` | Left to Rails (the subclass's name, or `nil` on the base) |
 | Counter cache | `comments_count` | Left to Rails: the DB default is kept, else `0` if NOT NULL with no default, else `nil` |
-| No information | A PORO attribute with no validator | Left `nil` |
+| No information | A nullable column or PORO attribute with no validator | Left `nil` |
 
-This is why a zero-setup `bake(User)` usually produces a valid record: the same validators that check your data are used to generate it. Complex or deliberately unusual values are what factory declarations and traits are for.
+Name-, title-, slug-, key- and label-like string attributes get a six-digit random suffix (`"Voluptas 482193"`, `"voluptas-482193"`) so values your app derives from them — a `slug` computed from `name`, a normalized key — stay distinct across bakes even though that derivation is invisible to validators. Emails, identifier-like names (`username`, `login`, …), declared formats and explicit values are unaffected, and length limits truncate the base while keeping the suffix.
+
+#### Semantic string values
+
+When an attribute name (or a normalized column type) says what the value holds, the heuristic uses a shape that matches it:
+
+| Signal | Generated shape |
+| --- | --- |
+| `title`, `subject`, `headline` | 4–8 distinct words (>= 20 chars), with the entropy suffix appended after the sentence |
+| `body`, `raw`, `content`, `description`, `message`, `text` | a paragraph of several sentences (>= 60 chars) |
+| `url`, `*_url`, `website`, `endpoint`, `uri`, `link` | an `https://` URL on a reserved RFC 2606 domain (`example.com`, `www.example.com`, `example.test`, `sub.example`) |
+| `filename`, `file_name` | `<word>.png` (an image extension unless constraints say otherwise) |
+| `host`, `hostname`, `domain` | `<word>.example.com` |
+| `ip`, `ip_address`, or an `inet` / `cidr` column | `192.0.2.<n>` (RFC 5737 TEST-NET-1); a `cidr` column gets `192.0.2.0/24` |
+| `timezone`, `time_zone` | `UTC` or a real IANA zone |
+| a `tsvector` column with a presence requirement | several lorem words (the database casts text to `tsvector`) |
+
+Name rules are ordered most specific first, so `ip_address` is not mistaken for a street address and `hostname` / `file_name` are not given person names. For a URL-named attribute with a declared `format`, a few plausible reserved-domain URL candidates are checked against all declared constraints before falling back to [regex generation](#format-validators); every candidate is still verified. Both `URI.regexp(%w[http https])` and the Discourse WebHook lookahead regex already generate valid values from the regex itself — the candidate-first step simply keeps the result a reserved URL. All generated hosts, URLs and IPs are reserved test values, never real hosts. Column-type rules come from the mapper's normalized type in `ConstraintSet`, so the core needs no framework classes ([ADR-0001](docs/adr/0001-framework-agnostic-core-mapper-plugins.md)).
+
+This is why a zero-setup `bake(User)` usually produces a valid record: the same validators that check your data are used to generate it, and the columns a valid record does not need are left alone. Complex or deliberately unusual values are what factory declarations and traits are for.
+
+### Format validators
+
+A `format: { with: regex }` value is generated by walking the regex's syntax tree (parsed with the [`regexp_parser`](https://github.com/ammar/regexp_parser) gem, a runtime dependency), so the value is built from the pattern instead of guessed and filtered:
+
+```ruby
+validates :email, format: { with: /\A[^@\s]+@[^@\s]+\z/ }              # "VHkG7299@EfErTJ"
+validates :uuid,  format: { with: /\A\h{8}-\h{4}-\h{4}-\h{4}-\h{12}\z/ }   # "3f9a0c1e-5b7d-4e2a-9c61-0d8f2b4a7e13"
+validates :tag,   format: { with: /\A#[[:alnum:]_]+\z/ }                  # "#k3Qa9"
+```
+
+Everything Ruby (Onigmo) regexes can say is understood: literals and escapes (`\x41`, `\u{1F600}`, `\cA`), character types (`\d \w \s \h \R \X`, dot), sets (negation, nesting, `&&` intersection, POSIX classes, `\p{...}` properties), anchors and `\b`/`\B` (respected when composing), every group form (capturing, named, atomic, option groups, comments, absence `(?~...)`), alternation, all quantifiers (lazy and possessive too), backreferences (`\1`, `\k<name>`, relative), lookahead and lookbehind, conditionals (`(?(1)yes|no)`), subexpression calls (`\g<name>`), and the `i`, `m` and `x` options (inline and scoped). Negated sets and properties never emit a forbidden character: candidates are filtered by the regex engine itself.
+
+Notes:
+
+- **Length constraints steer the value.** `length` validators and the column limit are passed to the generator as hints: `validates :code, format: { with: /\A\w+\z/ }, length: { is: 12 }` generates twelve characters instead of retrying until luck.
+- **Every value is still verified.** The generated value is checked against every `format` regex (`with:` and `without:`), the length constraints and uniqueness. If no value can be produced the bake raises a `FactoryBakery::Error` naming the model, attribute and regex, as before.
+- **Bounded by design.** Unbounded quantifiers (`*`, `+`, `{n,}`) repeat at most 8 times beyond their minimum unless a length hint asks for more; depth, work per value and value length (256 characters, or the requested minimum if larger) are capped. A regex that cannot be satisfied (`/\Afoo(?=bar)\z/`) or exceeds a bound gives the exhaustion error quickly rather than hanging.
+- **Seeded randomness.** The generator uses Ruby's global random number generator, so `srand` makes baked values repeatable.
+- **Out of reach.** Patterns no string can match, and patterns Ruby itself accepts but `regexp_parser` cannot parse, produce no candidate; supply the value with an override or a factory declaration.
 
 ## Associations
 
@@ -276,7 +424,7 @@ Only the winning declaration is evaluated. An association name, its FK columns a
 
 `account { nil }` (or `comments { [] }`) in a trait or at the call site opts an edge out without a separate DSL.
 
-**Persistence contract.** `bake!` wraps graph building, nested `bake!` calls and the root `save!` in one transaction opened with `requires_new`: a savepoint when your code already has a transaction. Any failure rolls back every row the bake wrote, even if you rescue the error in an outer transaction. After the root saves, every generated record is verified. A record that would silently stay unsaved — for example with `autosave: false` or `validate: false` on an invalid child — makes `bake!` raise `FactoryBakery::IncompletePersistenceError` and roll back. The error names the record and its association; persist that record explicitly in a declaration or override, or fix the association's autosave/validate options. Non-ActiveRecord targets skip persistence as before, and `bake` stays database-free — apart from [raw-FK presence edges](#raw-fk-presence-edges), the documented exception below.
+**Persistence contract.** `bake!` wraps graph building, nested `bake!` calls and the root `save!` in one transaction opened with `requires_new`: a savepoint when your code already has a transaction. Any failure rolls back every row the bake wrote, even if you rescue the error in an outer transaction. After the root saves, every generated record is verified. A record that would silently stay unsaved — for example with `autosave: false` or `validate: false` on an invalid child — makes `bake!` raise `FactoryBakery::IncompletePersistenceError` and roll back. The error names the record and its association; persist that record explicitly in a declaration or override, or fix the association's autosave/validate options. Non-ActiveRecord targets skip persistence as before. `bake` writes nothing of its own — apart from [raw-FK presence edges](#raw-fk-presence-edges), the documented exception below — but a required-only bake opens a savepoint through the persistence adapter so the fallback can roll the lean attempt back. The savepoint is released unchanged when no fallback fires; when it does, declaration blocks may run twice.
 
 **Depth backstop.** Runaway nested bakes raise `FactoryBakery::NestingTooDeepError` with the class path instead of `SystemStackError`. `FactoryBakery.max_bake_depth` defaults to 10; raise it for legitimately deep graphs.
 
@@ -296,17 +444,19 @@ config.factory_bakery.associations = { mode: :required_only } # omitted keys kee
 # leaving it unset (or false) keeps core behavior
 ```
 
-The hash accepts `mode`, `strategy`, `max_depth` and `default_count`; a bare mode symbol such as `:all` is accepted too. Unknown keys and invalid values raise `ArgumentError`.
+The hash accepts `mode`, `strategy`, `max_depth`, `default_count` and `eager_load`; a bare mode symbol such as `:all` is accepted too. Unknown keys and invalid values raise `ArgumentError`.
 
 ### Modes
 
 | Mode | Auto-builds (unless declared or overridden) | Never auto-builds |
 | --- | --- | --- |
 | `:none` | Nothing; only explicit `association` declarations | Everything else |
-| `:required_only` (default) | Required `belongs_to`, recursively (presence validator on the association name **or the raw FK column**, or a NOT NULL FK) | Optional `belongs_to`, `has_one`, `has_many`, through / HABTM; optional polymorphic |
+| `:required_only` (default) | Required `belongs_to`, recursively (presence validator on the association name **or the raw FK column**, or a NOT NULL FK); a direct `has_one` whose presence validator applies to the owner | Optional `belongs_to`, `has_one` without an applicable presence validator, `has_many`, through / HABTM; optional polymorphic |
 | `:all` | Every non-polymorphic `belongs_to` (optional too), `has_one` (one child), `has_many` (`default_count`) | Through / HABTM, optional polymorphic |
 
-"Required" follows your model and schema: a presence validator on the association name — including `on: :create` and conditional validators — or a NOT NULL FK column counts. A presence validator on the raw FK column also counts, and is tracked separately because it changes the persistence contract (see below). Plain ActiveRecord outside Rails defaults `belongs_to` to optional, so specs using it must say `optional: false` when they mean required. A required polymorphic `belongs_to` with no declaration raises an actionable error asking for `factory:`.
+"Required" follows your model and schema: a presence validator on the association name — including `on: :create` and conditional validators — or a NOT NULL FK column counts. A presence validator on the raw FK column also counts, and is tracked separately because it changes the persistence contract (see below). Plain ActiveRecord outside Rails defaults `belongs_to` to optional, so specs using it must say `optional: false` when they mean required. A required polymorphic `belongs_to` with no declaration now discovers its target (see below) and only raises an actionable error asking for `factory:` when nothing is discoverable.
+
+A direct `has_one` is auto-built only when a presence validator on the association name applies to the owner being baked. Its `if:` / `unless:` conditions are evaluated against that owner after declarations and overrides are assigned, so a guard such as `unless: :skip_email_validation` suppresses the child. The child is built through the association, so its create scope (for example `-> { where(primary: true) }`), foreign key and inverse are applied before the child's own heuristics run; its back-reference is the owner itself, so a required `belongs_to` on the child does not grow a second owner. `has_one :through` is never auto-built, and an explicit declaration, a call-site assignment or `skip :name` suppresses the build as for any other edge.
 
 Two rules keep `:all` bounded. It **never walks back the edge it came from**: a child of `post.comments` is bound to that post rather than growing a second one. And greater `max_depth` (default 2) **truncates `:all` to required-only** rather than raising, so objects stay valid. The root bake is depth 1, so with the default its direct associations are built; deeper hops keep only required parents. `default_count` (default 1) is the number of children per `has_many` in `:all` and when `count:` is omitted; `has_one` always builds one.
 
@@ -315,6 +465,39 @@ FactoryBakery::Associations.with(mode: :all, default_count: 3) do
   FactoryBakery.bake!(Post) # direct associations plus three comments per post
 end
 ```
+
+#### Polymorphic target discovery
+
+A required polymorphic `belongs_to` picks a concrete target when the mapper can discover one (ADR-0001 keeps every framework read in the ActiveRecord mapper; the plugin only sees the resulting classes):
+
+1. **Inclusion validator on the `*_type` column.** `validates :votable_type, inclusion: { in: %w[Post PostVotingComment] }` offers `Post` and `PostVotingComment` as candidates; each listed name that constantizes counts. This source needs no model loading.
+2. **Inverse `as:` reflections on loaded models.** A `has_one`/`has_many ..., as: :chatable` whose declared `class_name` matches the class being baked names its owner as a candidate. Matching accepts an ancestor or descendant, so an STI subclass gets its own owner while baking the base class may pick any candidate.
+3. **One `Rails.application.eager_load!` per process**, only when the first two sources found nothing and Rails is present, followed by a second inverse scan. This brings Zeitwerk-lazily-loaded models into view.
+
+Candidates are ordered deterministically: non-abstract first, then classes whose table exists, then by class name. The first candidate that bakes cleanly wins; with `strategy: :reuse` an existing row of a candidate is reused before building a fresh one. The result is cached per (class, association) for the process, so the descendant scan runs once.
+
+Explicit declarations, overrides and `skip` still win: `association :chatable, factory: Category`, a call-site `chatable:` / `chatable_type:` assignment or `skip :chatable` suppresses discovery for that edge. When no candidate is found (or none bakes), the original actionable error remains and now names the sources that were tried:
+
+```
+X#chatable is a required polymorphic association; no target discovered from:
+inclusion validator on chatable_type; inverse as: reflections on loaded models;
+Rails.application.eager_load! (disabled by config). Declare it (e.g.
+association :chatable, factory: SomeClass) or pass chatable: to name its target
+```
+
+Eager loading is on by default in Rails apps and costs a full load of all application models on first use. Turn it off when tests or the host app manage their own model loading:
+
+```ruby
+FactoryBakery::Associations.eager_load = false
+# or just one graph
+FactoryBakery::Associations.with(eager_load: false) { FactoryBakery.bake(PostVotingVote) }
+```
+
+#### Natural-key `belongs_to`
+
+A `belongs_to` declared with `primary_key:` other than the target's `id` (for example `foreign_key: :domain, primary_key: :domain`) is treated as **ordinary data**, not a reference to a generated parent id. Its FK column is filled by heuristics like any other column, so an **optional** natural-key edge with a NOT NULL key column leaves the association unset and the record stays valid — no parent is built or inserted. This is unlike an id-keyed edge, where a NOT NULL FK still forces a required parent even when the association is marked `optional: true`.
+
+When such an edge **is** required (a presence validator on the association name, e.g. `optional: false`), the parent is built after the child's key value is known: the value comes from a call-site override, a declaration or the heuristic fill, and is passed to the parent as its key override. Parent key and child FK therefore match, and several required parents sharing one FK column all carry the same value. An explicit association assignment, `skip :name` or an `association :name` declaration suppresses the auto-build as for any other edge. `:none` never builds these parents; `:all` builds them alongside the other `belongs_to` edges.
 
 #### Raw-FK presence edges
 
@@ -388,9 +571,10 @@ FactoryBakery::Associations.mode = :required_only   # :none | :required_only | :
 FactoryBakery::Associations.strategy = :fresh       # :fresh (default) | :reuse
 FactoryBakery::Associations.max_depth = 2           # non-negative Integer (default 2)
 FactoryBakery::Associations.default_count = 1       # non-negative Integer (default 1)
+FactoryBakery::Associations.eager_load = true       # true | false (default true; see polymorphic discovery)
 ```
 
-Invalid modes, strategies, negative or non-integer numbers, and unknown scope keys raise `ArgumentError`. The readers (`mode`, `strategy`, `max_depth`, `default_count`) report the *effective* value: the scoped override when one is active, otherwise the global value.
+Invalid modes, strategies, negative or non-integer numbers, non-boolean `eager_load`, and unknown scope keys raise `ArgumentError`. The readers (`mode`, `strategy`, `max_depth`, `default_count`, `eager_load`) report the *effective* value: the scoped override when one is active, otherwise the global value.
 
 Use `Associations.with` to override settings for one graph. It applies to every bake inside the block, including nested bakes from declaration blocks, is fiber-local (parallel threads and fibers never see each other's scope), nests with the inner scope winning, and restores the previous values even when the block raises. It returns the block's value.
 
@@ -417,6 +601,35 @@ The same association specs run in the 3 × 3 CI matrix — Rails 7.1 / 7.2 / 8.0
 | `create_list(:comment, 3, post: post)` | `association :comments, count: 3` inside the owner's definition |
 | `use_parent_strategy` / build vs create strategy | `bake` builds the whole graph unsaved; `bake!` persists the whole graph in one transaction |
 
+## File attachments
+
+Models with file attachments need the opt-in attachments plugin:
+
+```ruby
+require 'factory_bakery/attachments'
+```
+
+The plugin fills an attachment a valid record needs — one whose presence validator applies, `if:` / `unless:` included — with a tiny real fixture bundled inside the gem. The fixture is picked from the content types the attachment allows: a 1x1 PNG by default, then JPEG, GIF, WebP, MP4, MP3, PDF and plain text. A `type/*` wildcard and a Regexp rule are understood. The fixtures are all well under 1 KB, so size rules are satisfied, and the images are 1x1, which satisfies any dimension rule that admits them. Nothing is ever fetched from the network and `*_remote_url` setters are never used.
+
+Active Storage (`has_one_attached`) and Paperclip / kt-paperclip (`has_attached_file`) are supported; `has_many_attached` is left alone. `do_not_validate_attachment_file_type` declares no content-type rule, so the default PNG is used.
+
+Attachments follow the ordinary precedence rules: a declaration, a call-site override and `skip` all win, and an optional attachment is left empty by default.
+
+```ruby
+FactoryBakery.define(User) do
+  skip :avatar                                     # leave the attachment alone
+  cover_image { fixture_file_upload('cover.png') } # decide it explicitly
+end
+
+FactoryBakery.bake(User)                           # required attachments filled
+FactoryBakery.bake(User, fill_optional: true)      # optional attachments too
+FactoryBakery.bake(User, fill_optional: %i[avatar])
+```
+
+`bake!` attaches the blob and the attachment row with the record, inside the same transaction as the rest of the graph, and uploads the file when that transaction commits. The plugin is a no-op when neither library is loaded, and `require 'factory_bakery/attachments'` is the switch: the core never registers it on its own.
+
+Without the plugin, attachment names are left alone: the mapper excludes attachment reflections from the virtual attribute universe, so a `bake` never assigns a String to `avatar` and never raises — the attachment simply stays unattached.
+
 ## Sequel support
 
 `Sequel::Model` classes bake with the same heuristics through an opt-in mapper plugin:
@@ -440,7 +653,7 @@ What maps:
 
 Out of scope, documented rather than faked:
 
-- **`plugin :validation_helpers` declarations are not introspectable.** They run imperatively inside `Model#validate` — code, not data — so heuristics fall back to schema facts for those models. Use `plugin :validation_class_methods` (Sequel's reflective declaration API) when you want validator-driven generation.
+- **`plugin :validation_helpers` declarations are not introspectable.** They run imperatively inside `Model#validate` — code, not data — so heuristics fall back to schema facts and the verified fallback probes the model (a `validate` override is treated as unreadable validation, so a validator that needs a column is satisfied by the rebuild). Use `plugin :validation_class_methods` (Sequel's reflective declaration API) when you want validator-driven generation without that probe.
 - **Sequel associations are never auto-built.** `many_to_one` foreign keys stay `nil`; assign the associated object yourself in an attribute block. The opt-in associations plugin above works against the default mapper's models and answers its clear "not supported" error on Sequel classes.
 - Persisting JSON columns depends on Sequel's `serialization` plugin — a model-level concern outside the mapper.
 
@@ -451,6 +664,8 @@ These are planned, not shipped: sequences, callbacks, and transient attributes. 
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Run the linter with `bundle exec rubocop`.
+
+The regex generator (`lib/factory_bakery/regex_generation/`) is held to 100% line and branch coverage: [SimpleCov](https://github.com/simplecov-ruby/simplecov) is started from `spec/spec_helper.rb` and the full `bundle exec rspec` run fails if any generator file drops below it. The rest of the gem has no coverage minimum. A run of a single spec file cannot reach 100%; prefix it with `SKIP_REGEX_COVERAGE_GATE=1` for those. An isolation spec (`spec/factory_bakery/regex_generation_isolation_spec.rb`) parses the generator's source and fails if it references anything beyond Ruby, `regexp_parser` and its own namespace.
 
 The Railtie requires Rails at load time, so `rails` (plus `pg` and `mysql2`, so any adapter can be selected from any gemfile) are development dependencies in the root `Gemfile`. That fixes plain `bundle exec rspec`, which previously failed with `cannot load such file -- rails`. The alternative — making the Railtie require conditional — was rejected because the Railtie specs boot a real `Rails::Application` and would still need Rails installed.
 

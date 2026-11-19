@@ -14,4 +14,7 @@ gem "appraisal"
 gem "puma"
 gem "byebug"
 
+gem 'prism'
+gem 'simplecov', '~> 1.3', require: false
+
 gemspec path: "../"

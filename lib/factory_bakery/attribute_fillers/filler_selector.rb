@@ -10,6 +10,14 @@ module FactoryBakery
     class FillerSelector
       attr_reader :model_class, :attr_name
 
+      # Column types the mapper normalizes to plain symbols that hold text a
+      # database casts on write. The symbol is data from the mapper, so the
+      # routing policy stays framework-free (see ADR-0001). Add a type here
+      # (and a rule in PlausibleStrings::TYPE_RULES) for another text-castable
+      # type rather than reading a framework class in the core.
+      STRINGISH_TEXT_TYPES = %i[inet cidr tsvector].freeze
+      private_constant :STRINGISH_TEXT_TYPES
+
       # Fillers capture their constraints at construction and are otherwise
       # stateless: every `call` samples a fresh value. A bake resolves the
       # same model/attribute pair many times (once to generate, again for
@@ -17,7 +25,10 @@ module FactoryBakery
       # filler is kept on the model class, not in the per-bake builder.
       # Reloading a model drops its cache with it.
       def self.cached_for(model_class, attr_name)
-        return new(model_class, attr_name).call if model_class.frozen?
+        # An attribute whose rules depend on the bound record cannot reuse a
+        # cached filler (which captured its rules at construction) across
+        # bakes of the same class with different state.
+        return new(model_class, attr_name).call if model_class.frozen? || record_dependent?(model_class, attr_name)
 
         cache = model_class.instance_variable_get(:@factory_bakery_fillers) ||
                 model_class.instance_variable_set(:@factory_bakery_fillers, {})
@@ -33,6 +44,12 @@ module FactoryBakery
 
         cache[key] = filler
       end
+
+      def self.record_dependent?(model_class, attr_name)
+        BuildContext.current_record.is_a?(model_class) &&
+          FactoryBakery::MapperRegistry.record_dependent?(model_class, attr_name)
+      end
+      private_class_method :record_dependent?
 
       def initialize(model_class, attr_name)
         @model_class = model_class
@@ -69,17 +86,22 @@ module FactoryBakery
       end
 
       def column_routed_filler
-        # Priority 5: a defaulted or virtual attribute keeps its default
-        # unless a value-shaping validator needs a generated value. Leaving a
-        # defaulted column alone preserves a blank default (e.g. "" or false)
-        # that fails presence/format/length/etc. on every bake, so this
-        # escape hatch is decided before type routing.
-        return noop_filler if (@constraints.has_default || virtual?) && !@constraints.value_shaping
+        # Priority 5: a virtual attribute has no column type, so its validators
+        # decide the generator (issue #57). A name without validators of its
+        # own (a bare confirmation twin) still routes to the no-op.
+        return validator_routed_filler if virtual?
 
-        # Priority 6: enum attribute
+        # Priority 6: a defaulted column keeps its default unless a
+        # value-shaping validator needs a generated value. Leaving a defaulted
+        # column alone preserves a blank default (e.g. "" or false) that fails
+        # presence/format/length/etc. on every bake, so this escape hatch is
+        # decided before type routing.
+        return noop_filler if @constraints.has_default && !@constraints.value_shaping
+
+        # Priority 7: enum attribute
         return enum_filler if @constraints.enum_attribute
 
-        # Priority 7: type-based routing
+        # Priority 8: type-based routing
         type_based_filler
       end
 
@@ -119,8 +141,8 @@ module FactoryBakery
         @constraints.numericality_has_float_bound ? float_filler : integer_filler
       end
 
-      # An attribute without a column is virtual: it keeps whatever the
-      # target or the caller provided.
+      # An attribute without a column is virtual: it has no schema type, so
+      # its validators decide the generator.
       def virtual?
         !@constraints.column_backed
       end
@@ -143,7 +165,7 @@ module FactoryBakery
           json_filler
         when :array
           array_filler
-        when :text, :binary
+        when :text, :binary, *STRINGISH_TEXT_TYPES
           string_filler
         else
           noop_filler

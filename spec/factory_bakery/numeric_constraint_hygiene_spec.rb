@@ -39,7 +39,7 @@ RSpec.describe 'numeric constraint hygiene (issue #38)' do
         validates :rate, numericality: { equal_to: 0.5, other_than: 0.5 }
       end
 
-      expect { FactoryBakery.bake(floats) }
+      expect { FactoryBakery.bake(floats, fill_optional: true) }
         .to raise_error(FactoryBakery::Error, /OtherThanRate#rate.*other_than.*attempts/m)
     end
 
@@ -53,7 +53,7 @@ RSpec.describe 'numeric constraint hygiene (issue #38)' do
         }
       end
 
-      expect { FactoryBakery.bake(dates) }
+      expect { FactoryBakery.bake(dates, fill_optional: true) }
         .to raise_error(FactoryBakery::Error, /OtherThanDay#day.*other_than.*attempts/m)
     end
 
@@ -67,7 +67,7 @@ RSpec.describe 'numeric constraint hygiene (issue #38)' do
         }
       end
 
-      expect { FactoryBakery.bake(datetimes) }
+      expect { FactoryBakery.bake(datetimes, fill_optional: true) }
         .to raise_error(FactoryBakery::Error, /OtherThanMoment#moment.*other_than.*attempts/m)
     end
   end

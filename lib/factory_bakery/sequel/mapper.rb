@@ -100,6 +100,19 @@ module FactoryBakery
           .map { |type, opts| ConstraintReader.describe_reflection(type, opts) }
       end
 
+      # An imperative `validate` override is app logic the constraint reader
+      # cannot see — validation_helpers' `validates_presence` lives there — so
+      # a lean record must be verified. Stored declarations from
+      # validation_class_methods are discoverable and need no probe: their
+      # `validate` method is owned by the plugin module, not the model class.
+      def custom_validation?(klass)
+        return false unless sequel_model?(klass)
+
+        klass.instance_method(:validate).owner == klass
+      rescue NameError
+        false
+      end
+
       # Transactional semantics through the model's own database.
       def persistence_adapter(klass_or_record)
         subject = klass_or_record.is_a?(Class) ? klass_or_record : klass_or_record.class

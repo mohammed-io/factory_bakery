@@ -32,6 +32,9 @@ module FactoryBakery
   #       class is not association-introspectable at all (a plain object, or
   #       a mapper that does not know associations). An introspectable class
   #       with no associations answers an empty array.
+  #   polymorphic_targets(klass, entry, eager_load:) => DiscoveredTargets
+  #       Ordered candidate classes and the discovery sources tried for a
+  #       polymorphic belongs_to. Mappers without discovery may omit it.
   #   uniqueness_validated?(klass, attr_name) => bool
   #       Does the attribute carry a uniqueness constraint the mapper can
   #       check?
@@ -41,13 +44,21 @@ module FactoryBakery
   #       Human-readable descriptions for exhaustion errors.
   #   persistence_adapter(klass_or_record) => adapter or nil
   #       Adapter methods: transactional?, transaction(klass) { }, save!(record),
-  #       persisted?(record), association_name_for(record, candidates).
+  #       persisted?(record), association_name_for(record, candidates),
+  #       read_only?(record).
+  #   construct(klass, apply:) { } => object
+  #       Builds an instance. The block is the ordinary construction
+  #       (constructor arguments included) and is tried first; a mapper may
+  #       retry with framework-specific strategies when it raises, and must
+  #       re-raise the original error when none works. `apply` re-assigns the
+  #       caller's constructor attributes to an object a fallback built without
+  #       running the constructor.
   #
   # Targets no mapper claims fall back to empty answers, which reproduce the
   # pre-mapper duck-typed behavior exactly: an all-defaults ConstraintSet
-  # (routing to a no-op), an empty universe, no guards, and a null
-  # persistence adapter.
-  class MapperRegistry
+  # (routing to a no-op), an empty universe, no guards, a null persistence
+  # adapter, and the ordinary constructor.
+  class MapperRegistry # rubocop:disable Metrics/ClassLength
     # Guard columns of one target: the skip set for heuristics plus the
     # counter subset the value side special-cases.
     GuardColumns = Struct.new(:names, :counter_names, keyword_init: true) do
@@ -84,6 +95,8 @@ module FactoryBakery
       :polymorphic,
       # [String] counter-cache columns this association maintains on its owner
       :counter_cache_columns,
+      # [String] the target attribute backing a natural key, nil for an id-keyed edge
+      :natural_key_name,
       # Presence-validated or NOT NULL foreign key (belongs_to only)
       :required,
       # FK column itself carries a presence validator (non-polymorphic belongs_to only)
@@ -97,7 +110,10 @@ module FactoryBakery
       # Proc -> Symbol or nil, resolved lazily
       :inverse_name,
       # Proc -> Symbol or nil, resolved lazily
-      :inverse_kind
+      :inverse_kind,
+      # Proc -> (record) => bool: a presence validator on this association
+      # whose if:/unless: conditions hold for the given record
+      :presence_applicable
     ) do
       # Follow an edge. A target that cannot be resolved is an error at the
       # point of use, but it is reported with the association's name rather
@@ -111,6 +127,16 @@ module FactoryBakery
         raise FactoryBakery::Error,
               "#{name} (target #{target_class_name.inspect}) could not be resolved: " \
               "#{e.class}: #{e.message}"
+      end
+    end
+
+    # Ordered candidate classes for a polymorphic belongs_to plus the sources
+    # discovery considered, for an actionable error when none can be baked.
+    # Both fields are framework-agnostic data: plugin orchestration never
+    # touches framework-specific reflection objects.
+    DiscoveredTargets = Struct.new(:candidates, :sources, keyword_init: true) do
+      def self.none
+        new(candidates: [].freeze, sources: [].freeze)
       end
     end
 
@@ -157,6 +183,10 @@ module FactoryBakery
       def association_name_for(_record, _candidates)
         nil
       end
+
+      def read_only?(_record)
+        false
+      end
     end
 
     NULL_ADAPTER = NullPersistenceAdapter.new.freeze
@@ -187,8 +217,31 @@ module FactoryBakery
       end
 
       def constraints_for(klass, attr_name)
-        mapper_for(klass)&.constraints_for(klass, attr_name.to_s) ||
-          ConstraintSet.empty(klass, attr_name.to_s)
+        mapper_for(klass)&.constraints_for(klass, attr_name.to_s) || ConstraintSet.empty(klass, attr_name.to_s)
+      end
+
+      # Whether an attribute's constraints can differ between records of the
+      # same class (and so must not be served from a class-level cache while
+      # a record is bound). Mappers without the notion answer false.
+      def record_dependent?(klass, attr_name)
+        mapper = mapper_for(klass)
+        return false unless mapper.respond_to?(:record_dependent?)
+
+        mapper.record_dependent?(klass, attr_name.to_s)
+      end
+
+      # True when the target has validation logic the heuristics cannot read
+      # (custom validators, `validate` methods, `validates_with`). Those are
+      # the cases where leaving an optional column unset could make a record
+      # invalid for a reason no discovered constraint explains, so the core
+      # verifies the lean result and falls back if needed. A mapper that does
+      # not answer this question cannot promise its logic is discoverable, so
+      # it defaults to "verify" rather than silently skipping the check.
+      def custom_validation?(klass)
+        mapper = mapper_for(klass)
+        return true unless mapper.respond_to?(:custom_validation?)
+
+        mapper.custom_validation?(klass)
       end
 
       def attribute_universe(klass)
@@ -214,6 +267,15 @@ module FactoryBakery
         mapper_for(klass)&.association_introspection(klass)
       end
 
+      # Mappers that do not discover polymorphic targets simply contribute no
+      # candidates; the plugin then raises its actionable error.
+      def polymorphic_targets(klass, entry, eager_load: false)
+        mapper = mapper_for(klass)
+        return DiscoveredTargets.none unless mapper.respond_to?(:polymorphic_targets)
+
+        mapper.polymorphic_targets(klass, entry, eager_load: eager_load)
+      end
+
       def uniqueness_validated?(klass, attr_name)
         mapper_for(klass)&.uniqueness_validated?(klass, attr_name) || false
       end
@@ -228,6 +290,19 @@ module FactoryBakery
 
       def persistence_adapter(klass_or_record)
         mapper_for(klass_or_record)&.persistence_adapter(klass_or_record) || NULL_ADAPTER
+      end
+
+      # Whether the record refuses writes (a database view, or any model whose
+      # readonly? is true). Asked on the instance so instance-level read-only
+      # records are caught too. The adapters own the framework-specific read.
+      def read_only?(record) = persistence_adapter(record).read_only?(record)
+
+      # Builds an instance of the target. The block is the ordinary
+      # construction and is always tried first; a mapper that knows how to
+      # recover from a raising constructor answers with its own fallbacks.
+      def construct(klass, apply: nil, &block)
+        mapper = mapper_for(klass)
+        mapper.respond_to?(:construct) ? mapper.construct(klass, apply: apply, &block) : yield
       end
     end
   end

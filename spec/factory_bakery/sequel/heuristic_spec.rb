@@ -28,7 +28,7 @@ RSpec.describe 'Sequel mapper column heuristics', :sequel_mapper do
   end
 
   it 'generates a type-appropriate value for every column type' do
-    widget = FactoryBakery.bake(model)
+    widget = FactoryBakery.bake(model, fill_optional: true)
 
     expect(widget.name).to be_a(String)
     expect(widget.name.length).to be <= 60
@@ -43,13 +43,13 @@ RSpec.describe 'Sequel mapper column heuristics', :sequel_mapper do
   end
 
   it 'fills a NOT NULL column without a default with a non-nil value' do
-    widget = FactoryBakery.bake(model)
+    widget = FactoryBakery.bake(model, fill_optional: true)
 
     expect(widget.age).not_to be_nil
   end
 
   it 'fills a json column with a JSON-serializable Hash' do
-    widget = FactoryBakery.bake(model)
+    widget = FactoryBakery.bake(model, fill_optional: true)
 
     expect(widget.tags).to be_a(Hash)
     expect(widget.tags.keys).to all(be_a(String))
@@ -73,7 +73,7 @@ RSpec.describe 'Sequel mapper column heuristics', :sequel_mapper do
   end
 
   it 'leaves the primary key alone and excludes it from the universe' do
-    widget = FactoryBakery.bake(model)
+    widget = FactoryBakery.bake(model, fill_optional: true)
 
     expect(widget.id).to be_nil
     expect(FactoryBakery::MapperRegistry.attribute_universe(model)).not_to include('id')

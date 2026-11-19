@@ -16,7 +16,7 @@ RSpec.describe 'FactoryBakery public bake API' do
                            published_on: :date,
                            published_at: :datetime)
 
-      record = FactoryBakery.bake(model)
+      record = FactoryBakery.bake(model, fill_optional: true)
 
       expect(record).to be_a(model)
       expect(record).to be_new_record
@@ -77,7 +77,7 @@ RSpec.describe 'FactoryBakery public bake API' do
           validates :email, confirmation: true
         end
 
-        record = FactoryBakery.bake(model)
+        record = FactoryBakery.bake(model, fill_optional: true)
 
         expect(record.email).not_to be_empty
         expect(record.email_confirmation).to eq(record.email)
@@ -89,7 +89,7 @@ RSpec.describe 'FactoryBakery public bake API' do
           validates :terms, acceptance: { accept: 'yes' }
         end
 
-        record = FactoryBakery.bake(model)
+        record = FactoryBakery.bake(model, fill_optional: true)
 
         expect(record.terms).to eq('yes')
         expect(record).to be_valid
@@ -100,7 +100,7 @@ RSpec.describe 'FactoryBakery public bake API' do
           enum :status, { pending: 0, shipped: 1, delivered: 2 }
         end
 
-        record = FactoryBakery.bake(model)
+        record = FactoryBakery.bake(model, fill_optional: true)
 
         expect(%w[pending shipped delivered]).to include(record.status)
         expect(record).to be_valid
@@ -156,7 +156,7 @@ RSpec.describe 'FactoryBakery public bake API' do
       end
 
       it 'leaves columns with database defaults to the database' do
-        record = FactoryBakery.bake(model)
+        record = FactoryBakery.bake(model, fill_optional: true)
 
         expect(record.state).to eq('draft')
         expect(record.secret).to be_a(String)

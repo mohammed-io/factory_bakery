@@ -3,8 +3,9 @@
 module FactoryBakery
   module Associations
     # The plugin object registered with core on require. It evaluates explicit
-    # `association` declarations after the owner exists and delegates :all's
-    # automatic collection building to AllAutoBuilder.
+    # `association` declarations after the owner exists, auto-builds required
+    # has_one edges in :required_only and delegates :all's automatic collection
+    # building to AllAutoBuilder.
     #
     # Every class-level fact (kind, foreign keys, polymorphism, inverses)
     # arrives as plain association introspection from the mapper contract;
@@ -29,6 +30,8 @@ module FactoryBakery
         # afterwards through the same TargetBuilder machinery.
         def after_instantiate(object, declarations, context)
           build_declared_associations(object, declarations)
+          NaturalKeyBuilder.build(object, context)
+          RequiredHasOneBuilder.build(object, context)
           AllAutoBuilder.build(object, declarations, context)
         end
 

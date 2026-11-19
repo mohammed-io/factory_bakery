@@ -37,8 +37,8 @@ RSpec.describe 'format validator failure paths (issue #37)' do
       end
     end
 
-    it 'regenerates when FFaker produces a value that does not match the regex' do
-      allow(FFaker::String).to receive(:from_regexp).and_return('INVALID', 'ok-123')
+    it 'regenerates when the generator yields a value that does not match the regex' do
+      allow(FactoryBakery::RegexGeneration).to receive(:generate).and_return('INVALID', 'ok-123')
 
       record = FactoryBakery.bake(model)
 
@@ -54,7 +54,7 @@ RSpec.describe 'format validator failure paths (issue #37)' do
     end
 
     it 'raises a contextual error naming the attribute and regex on exhaustion' do
-      allow(FFaker::String).to receive(:from_regexp).and_return('short')
+      allow(FactoryBakery::RegexGeneration).to receive(:generate).and_return('short')
 
       expect { FactoryBakery.bake(model) }
         .to raise_error(FactoryBakery::Error, /VerifiedFormatCode#code.*\[a-z\].*attempts/m)
@@ -92,16 +92,13 @@ RSpec.describe 'format validator failure paths (issue #37)' do
         validates :code, uniqueness: true
       end
 
-      # First bake: compliant + free. Second bake: collision, then a FFaker
-      # failure (old code silently falls back to a name-pattern word that
-      # violates the regex), then a compliant + free value.
-      values = ['ABC-1234', 'ABC-1234', :raise, 'XYZ-5678']
+      # First bake: compliant + free. Second bake: collision, then no
+      # candidate at all (nil), then a compliant + free value.
+      values = ['ABC-1234', 'ABC-1234', nil, 'XYZ-5678']
       index = 0
-      allow(FFaker::String).to receive(:from_regexp) do
+      allow(FactoryBakery::RegexGeneration).to receive(:generate) do |*, **|
         value = values[index]
         index += 1
-        raise 'ffaker unavailable' if value == :raise
-
         value
       end
 

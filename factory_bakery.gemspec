@@ -23,7 +23,11 @@ Gem::Specification.new do |spec|
   # Specify which files should be added to the gem when it is released.
   # The `git ls-files -z` loads the files in the RubyGem that have been added into git.
   spec.files = Dir.chdir(File.expand_path(__dir__)) do
-    `git ls-files -z`.split("\x0").reject { |f| f.match(%r{\A(?:test|spec|features)/}) }
+    tracked = `git ls-files -z`.split("\x0")
+    # The attachment fixtures are binary files, so they are listed explicitly
+    # instead of relying on the tracked-file listing alone.
+    fixtures = Dir['lib/factory_bakery/attachments/fixtures/*']
+    (tracked + fixtures).uniq.reject { |f| f.match(%r{\A(?:test|spec|features)/}) }
   end
   spec.bindir        = 'exe'
   spec.executables   = spec.files.grep(%r{\Aexe/}) { |f| File.basename(f) }
@@ -37,6 +41,7 @@ Gem::Specification.new do |spec|
 
   # Production
   spec.add_dependency 'ffaker'
+  spec.add_dependency 'regexp_parser', '~> 2.9'
 
   # Development
   spec.add_development_dependency 'appraisal'

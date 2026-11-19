@@ -46,7 +46,7 @@ RSpec.describe 'counter-cache columns' do
     end
 
     it 'still fills non-counter columns on the same model heuristically' do
-      record = FactoryBakery.bake(Post)
+      record = FactoryBakery.bake(Post, fill_optional: true)
 
       expect(record.comments_count).to be_nil
       expect(record.title).to be_a(String)
@@ -100,7 +100,7 @@ RSpec.describe 'counter-cache columns' do
     it 'is still filled heuristically when it is not a counter cache' do
       define_model('Survey', answer_count: :integer)
 
-      value = FactoryBakery.bake(Survey).answer_count
+      value = FactoryBakery.bake(Survey, fill_optional: true).answer_count
 
       expect(value).to be_a(Integer)
     end
@@ -118,7 +118,7 @@ RSpec.describe 'counter-cache columns' do
       end
       define_model('Tag', name: :string)
 
-      record = FactoryBakery.bake(Article)
+      record = FactoryBakery.bake(Article, fill_optional: true)
 
       expect(record.title).to be_a(String)
     end

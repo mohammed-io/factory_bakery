@@ -23,10 +23,24 @@ module FactoryBakery
   # is created and cleared at the top-level boundary, so a nested bake can read
   # its parent's completed objects but no state leaks across bakes, threads or
   # fibers.
-  class BuildContext
+  #
+  # A fourth fiber-local slot holds the object whose rules are being resolved
+  # right now. The core binds it around heuristic generation as an opaque
+  # value; a mapper may read it to resolve rules that depend on the live
+  # record. It is saved and restored so nested bakes cannot leak their object
+  # outward.
+  #
+  # A fifth fiber-local map caches validator-condition outcomes per
+  # record/validator/attribute for one bake. The same rule is read several
+  # times while a bake partitions, routes and verifies attributes; evaluating
+  # a user-supplied condition that often was observable. It is cleared at the
+  # top-level boundary and never mutated in place.
+  class BuildContext # rubocop:disable Metrics/ClassLength
     STORAGE_KEY = :factory_bakery_build_context
     RECORDS_KEY = :factory_bakery_generated_records
     GRAPH_CACHE_KEY = :factory_bakery_graph_cache
+    RECORD_KEY = :factory_bakery_current_record
+    CONDITIONS_KEY = :factory_bakery_condition_results
     # FK-column-validated edges need a persisted parent. Under `bake!` that
     # parent is inserted inside the root savepoint; under plain `bake` it is an
     # explicit, documented exception to the unsaved graph. This fiber-local
@@ -46,6 +60,22 @@ module FactoryBakery
 
       def record_generated(object)
         generated_records << [current.path, object]
+      end
+
+      # Discards records from a build whose result is thrown away (a failed
+      # first attempt before the verified fallback rebuild), along with the
+      # strategy :reuse cache entries pointing at them: the rebuild must not
+      # hand out an object from an attempt whose writes were rolled back.
+      # Replace rather than mutate so a child fiber that inherited the
+      # array/map is unaffected.
+      def trim_generated_records!(mark)
+        records = generated_records
+        return if records.length <= mark
+
+        discarded = records.drop(mark).map { |_path, object| object.object_id }
+        Fiber[RECORDS_KEY] = records.first(mark)
+        stale = graph_cache.reject { |_key, (_path, object)| discarded.include?(object.object_id) }
+        Fiber[GRAPH_CACHE_KEY] = stale
       end
 
       # Per-top-level-bake cache used by :reuse edges. The value is a pair of
@@ -80,6 +110,40 @@ module FactoryBakery
         Fiber[PERSIST_PARENTS_KEY] = previous
       end
 
+      # The object currently being filled, or nil outside value generation.
+      # It is deliberately opaque to the core: only a mapper interprets it.
+      def current_record
+        Fiber[RECORD_KEY]
+      end
+
+      def with_record(object)
+        previous = Fiber[RECORD_KEY]
+        Fiber[RECORD_KEY] = object
+        yield
+      ensure
+        Fiber[RECORD_KEY] = previous
+      end
+
+      # Cached condition outcome for one (record, validator, attribute) in the
+      # current bake. nil means "not evaluated yet"; results are booleans. The
+      # map is read-only here and replaced on write, so an inherited child
+      # fiber can never change its parent's results.
+      def condition_result(key)
+        Fiber[CONDITIONS_KEY]&.[](key)
+      end
+
+      def record_condition_result(key, result)
+        Fiber[CONDITIONS_KEY] = (Fiber[CONDITIONS_KEY] || {}).merge(key => result)
+      end
+
+      # Assignments can change the value a condition reads (an if:/unless:
+      # guard on an override is the common case), so results cached before a
+      # batch of setters run are stale. The builder drops them at each
+      # assignment phase; the map itself stays scoped to this bake and fiber.
+      def invalidate_condition_results!
+        Fiber[CONDITIONS_KEY] = {}
+      end
+
       # Records generated at or below `path_prefix`. This scopes a nested
       # `bake!` to its own subtree instead of failing on a sibling's unsaved
       # object that the root `bake!` will verify later.
@@ -93,15 +157,22 @@ module FactoryBakery
         top_level = previous.depth.zero?
         enforce_depth_limit(previous, klass)
 
-        Fiber[RECORDS_KEY] = [] if top_level
-        Fiber[GRAPH_CACHE_KEY] = {} if top_level
+        reset_per_bake_caches! if top_level
         Fiber[STORAGE_KEY] = previous.append(klass)
         yield
       ensure
         Fiber[STORAGE_KEY] = previous
-        Fiber[RECORDS_KEY] = [] if top_level
-        Fiber[GRAPH_CACHE_KEY] = {} if top_level
+        reset_per_bake_caches! if top_level
       end
+
+      # Each public bake gets fresh record, graph and condition state; a
+      # declaration block that bakes again reads it but never writes back.
+      def reset_per_bake_caches!
+        Fiber[RECORDS_KEY] = []
+        Fiber[GRAPH_CACHE_KEY] = {}
+        Fiber[CONDITIONS_KEY] = {}
+      end
+      private :reset_per_bake_caches!
 
       private
 
@@ -119,6 +190,18 @@ module FactoryBakery
         klass.respond_to?(:name) && klass.name ? klass.name : klass.to_s
       end
     end
+
+    # The names explicitly decided at this bake's higher layers (declarations,
+    # overrides, initialize_with and omissions). Core fills it while resolving
+    # values; plugins read it after instantiation so object-level auto-builders
+    # can honour the same precedence the heuristic layer already applies.
+    attr_accessor :taken_names
+
+    # The same names before alias-group expansion. An auto-builder that must
+    # tell an explicit assignment of an association from an override of one of
+    # its columns reads this instead; plugins that honour the group as a whole
+    # keep using `taken_names`.
+    attr_accessor :explicit_names
 
     attr_reader :path
 

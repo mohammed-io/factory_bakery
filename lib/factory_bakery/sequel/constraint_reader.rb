@@ -31,6 +31,10 @@ module FactoryBakery
       # blank default would fail the reflection on every bake.
       VALUE_SHAPING_TYPES = %i[presence length format inclusion numericality uniqueness].freeze
 
+      # Reflections whose absence of allow_nil/allow_blank means a nil value
+      # cannot satisfy them (length only with a positive minimum).
+      NIL_REJECTING_TYPES = %i[presence inclusion format numericality acceptance].freeze
+
       class << self
         def call(model_class, attr_name)
           new(model_class, attr_name).read
@@ -57,6 +61,7 @@ module FactoryBakery
           db_limit: column&.fetch(:max_length, nil),
           nullable: column&.fetch(:allow_null, nil),
           has_default: !column.nil? && !column[:default].nil?,
+          default_value: column&.fetch(:default, nil),
           precision: precision_of(column),
           scale: scale_of(column),
           column_backed: !column.nil?,
@@ -70,6 +75,7 @@ module FactoryBakery
           forbidden_values: rules.forbidden_values,
           must_be_present: rules.must_be_present,
           absence_required: rules.absence_required,
+          nil_rejected: nil_rejecting?(reflections),
           accept_value: rules.accept_value,
           has_validators: !reflections.empty?,
           value_shaping: reflections.any? { |type, _opts| VALUE_SHAPING_TYPES.include?(type) },
@@ -152,6 +158,29 @@ module FactoryBakery
             rules.accept_value = opts[:accept]
           end
         end
+      end
+
+      def nil_rejecting?(reflections)
+        reflections.any? { |type, opts| nil_rejecting_reflection?(type, opts) }
+      end
+
+      def nil_rejecting_reflection?(type, opts)
+        return false unless NIL_REJECTING_TYPES.include?(type) || type == :length
+        return false if opts[:allow_nil] || opts[:allow_blank]
+
+        return positive_length?(minimum_of(opts)) if type == :length
+
+        true
+      end
+
+      def minimum_of(opts)
+        opts[:minimum] || opts[:is] || opts[:within]&.first
+      end
+
+      def positive_length?(minimum)
+        return true if minimum.is_a?(Proc) || minimum.is_a?(Symbol)
+
+        minimum.to_i.positive?
       end
 
       def apply_length_reflection(rules, opts)

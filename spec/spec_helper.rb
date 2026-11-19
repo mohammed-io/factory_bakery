@@ -1,5 +1,21 @@
 # frozen_string_literal: true
 
+# Coverage must be started before the gem loads. Only the regex generator is
+# measured and gated: every file under lib/factory_bakery/regex_generation/
+# (and its entry file) needs 100% line and branch coverage, and the run fails
+# otherwise. The rest of the gem has no coverage minimum. A partial run
+# (a single spec file) cannot reach 100%; set SKIP_REGEX_COVERAGE_GATE=1 for those.
+require 'simplecov'
+
+SimpleCov.start do
+  enable_coverage :branch
+  skip { |source_file| !source_file.filename.include?('/lib/factory_bakery/regex_generation') }
+  unless ENV['SKIP_REGEX_COVERAGE_GATE']
+    coverage(:line) { minimum 100, per: :file }
+    coverage(:branch) { minimum 100, per: :file }
+  end
+end
+
 # The suite exercises the gem inside a Rails/ActiveRecord context (it boots
 # real Rails applications and defines schema-backed models), so it loads the
 # frameworks before the gem: the gem's Rails integration (the Railtie and the

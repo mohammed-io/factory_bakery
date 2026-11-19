@@ -31,3 +31,11 @@ gem 'activerecord-jdbcsqlite3-adapter', platforms: [:jruby]
 gem 'sqlite3', platforms: [:ruby]
 
 gem 'appraisal'
+
+# Coverage for the regex generator (100% line + branch is enforced in the
+# spec run; see spec/spec_helper.rb).
+gem 'simplecov', '~> 1.3', require: false
+
+# Parses the regex generator's source in its isolation guard spec (stdlib on
+# Ruby >= 3.3; the gem covers Ruby 3.2).
+gem 'prism'

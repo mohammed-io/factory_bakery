@@ -6,6 +6,8 @@ module FactoryBakery
       include ValueResolution
       include NumericConstraintHygiene
 
+      SMALL_RANGE_WINDOW = 64
+
       # A pure generator: the constraints arrive already normalized in a
       # ConstraintSet, resolved from the target once at construction.
       def initialize(model_class, attr_name)
@@ -41,7 +43,13 @@ module FactoryBakery
       private
 
       def pick_from_allowed(context)
-        pick_from(@constraints.allowed_values, context).to_i
+        values = @constraints.allowed_values
+        if values.is_a?(Range) && (bounds = range_bounds(values, context))
+          value = generate_in_range(*bounds, context)
+          return value.to_i if value
+        end
+
+        pick_from(values, context).to_i
       end
 
       def generate_value(context)
@@ -49,9 +57,10 @@ module FactoryBakery
         equal_to = resolve_option_value(@equal_to, context)
         return equal_to.to_i if equal_to
 
-        # Priority 2: Range constraint
-        in_range = resolve_range(resolve_option_value(@in_range, context), context)
-        return generate_in_range(in_range) if in_range
+        # Priority 2: Range constraint. One open side is allowed; a range with
+        # both sides open carries no information and falls through to bounds.
+        bounds = resolved_range_bounds(context)
+        return generate_in_range(*bounds, context) if bounds
 
         # Priority 3: Comparison constraints
         lower_bound = calculate_lower_bound(context)
@@ -89,13 +98,75 @@ module FactoryBakery
         nil
       end
 
-      def generate_in_range(range)
-        values = range.to_a
-        return nil if values.empty?
+      # Bounds come from the range endpoints, never from materializing it: a
+      # numericality range such as -(2**31)..(2**31) would otherwise allocate
+      # billions of integers. Float endpoints are rounded inward so the sampled
+      # integer is covered by the original range.
+      def generate_in_range(first, last, exclude_end, context = nil)
+        lower_bound = integer_range_bound(first, :lower)
+        direction = exclude_end ? :upper_exclusive : :upper_inclusive
+        upper_bound = integer_range_bound(last, direction)
+        return nil if upper_bound && lower_bound && upper_bound < lower_bound
 
-        value = values.sample.to_i
-        apply_odd_even_constraint(value, values.first.to_i, values.last.to_i,
-                                  lower_explicit: true, upper_explicit: true)
+        sample_within_range(lower_bound, upper_bound, context)
+      end
+
+      def sample_within_range(lower_bound, upper_bound, context)
+        lower, upper = range_window(lower_bound, upper_bound)
+        return sample_small_window(lower, upper, context) if small_window?(lower_bound, upper_bound)
+
+        value = rand(lower..upper)
+        apply_odd_even_constraint(value, lower, upper,
+                                  lower_explicit: !lower_bound.nil?,
+                                  upper_explicit: !upper_bound.nil?)
+      end
+
+      # An open side gets a bounded window next to the supplied side.
+      def range_window(lower_bound, upper_bound)
+        lower = lower_bound || (upper_bound ? upper_bound - SMALL_RANGE_WINDOW : 0)
+        upper = upper_bound || (lower_bound ? lower_bound + SMALL_RANGE_WINDOW : SMALL_RANGE_WINDOW)
+        [lower, upper]
+      end
+
+      def small_window?(lower_bound, upper_bound)
+        lower_bound && upper_bound && (upper_bound - lower_bound) <= SMALL_RANGE_WINDOW
+      end
+
+      # Small explicit windows are filtered instead of guessed: the single
+      # survivor of `4..5, other_than: 5` is found without retry flake.
+      def sample_small_window(lower, upper, context)
+        survivors = (lower..upper).select { |value| parity_matches?(value) && numeric_compliant?(value, context) }
+        survivors.sample unless survivors.empty?
+      end
+
+      def resolved_range_bounds(context)
+        range = resolve_option_value(@in_range, context)
+        range_bounds(range, context) if range.is_a?(Range)
+      end
+
+      # Endpoints may be Procs or Symbols resolved against the object being
+      # built. A beginless or endless range leaves one side nil.
+      def range_bounds(range, context)
+        first = resolve_option_value(range.begin, context)
+        last = resolve_option_value(range.end, context)
+        return nil if first.nil? && last.nil?
+
+        [first, last, range.exclude_end?]
+      end
+
+      # An infinite endpoint carries no bound, exactly like a nil one.
+      def integer_range_bound(value, direction)
+        return nil if value.nil? || (value.is_a?(Float) && value.infinite?)
+        return rounded_integer(value, :ceil) if direction == :lower
+        return rounded_integer(value, :floor) if direction == :upper_inclusive
+
+        rounded_integer(value, :ceil) - 1
+      end
+
+      def rounded_integer(value, rounding)
+        return value.to_i unless value.is_a?(Float)
+
+        rounding == :ceil ? value.ceil : value.floor
       end
 
       def generate_in_bounds(lower, upper, lower_explicit: false, upper_explicit: false, context: nil)
@@ -120,7 +191,7 @@ module FactoryBakery
         # exclusions and parity are filters over the candidates, which removes
         # the retry-budget flake when the valid space is tiny (e.g. 4..5 with
         # other_than: 5 leaving exactly one survivor).
-        if lower_explicit && upper_explicit && (upper - lower) <= 64
+        if lower_explicit && upper_explicit && (upper - lower) <= SMALL_RANGE_WINDOW
           candidates = (lower..upper).to_a
           forbidden = context ? resolve_other_than(context) : nil
           candidates.delete_if { |v| forbidden && v == forbidden } if forbidden
@@ -177,8 +248,12 @@ module FactoryBakery
         raise numeric_constraint_error(value, "parity within #{lower.inspect}..#{upper.inspect}")
       end
 
+      # No parity rule means every integer matches.
       def parity_matches?(value)
-        @odd_only ? value.odd? : value.even?
+        return value.odd? if @odd_only
+        return value.even? if @even_only
+
+        true
       end
 
       def within_numeric_bounds?(value, lower, upper)

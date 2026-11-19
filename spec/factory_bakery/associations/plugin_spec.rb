@@ -107,7 +107,7 @@ RSpec.describe 'FactoryBakery associations plugin' do
       _account_model, user_model = define_account_and_user('AssocHeuristicUser')
       FactoryBakery.define(user_model) { association :account }
 
-      expect(FactoryBakery.bake(user_model).account.name).to be_a(String)
+      expect(FactoryBakery.bake(user_model, fill_optional: true).account.name).to be_a(String)
     end
 
     it 'persists owner and parent together under bake!' do

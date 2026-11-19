@@ -31,15 +31,37 @@ module FactoryBakery
         'ActiveModel::Validations::ComparisonValidator'
       ].freeze
 
+      # Validators that cannot accept nil (length only when it asks for a
+      # positive minimum). Uniqueness and comparison belong here too: Rails
+      # treats a NULL duplicate as taken and a nil bound as an invalid
+      # comparison, so a nullable column carrying either still needs a value.
+      # Custom EachValidators deliberately never force a fill: their behaviour
+      # is app-specific and may have side effects.
+      NIL_REJECTING_VALIDATORS = [
+        'ActiveModel::Validations::PresenceValidator',
+        'ActiveRecord::Validations::PresenceValidator',
+        'ActiveModel::Validations::InclusionValidator',
+        'ActiveModel::Validations::FormatValidator',
+        'ActiveModel::Validations::LengthValidator',
+        'ActiveRecord::Validations::LengthValidator',
+        'ActiveModel::Validations::NumericalityValidator',
+        'ActiveRecord::Validations::NumericalityValidator',
+        'ActiveModel::Validations::AcceptanceValidator',
+        'ActiveRecord::Validations::AcceptanceValidator',
+        'ActiveModel::Validations::ComparisonValidator',
+        'ActiveRecord::Validations::UniquenessValidator'
+      ].freeze
+
       class << self
-        def call(model_class, attr_name)
-          new(model_class, attr_name).read
+        def call(model_class, attr_name, record = nil)
+          new(model_class, attr_name, record).read
         end
       end
 
-      def initialize(model_class, attr_name)
+      def initialize(model_class, attr_name, record = nil)
         @model_class = model_class
         @attr_name = attr_name.to_s
+        @record = record
       end
 
       def read
@@ -47,17 +69,18 @@ module FactoryBakery
         validators = validators_for(@model_class, @attr_name)
 
         rules = fold_validators(validators)
-        enum_attribute, enum_values = read_enum
+        enum_attribute, enum_values = read_enum(attribute_names(@model_class, @attr_name))
         array_column = array_column?(column)
 
         ConstraintSet.new(
           model_class: @model_class,
           attr_name: @attr_name,
-          type: array_column ? :array : column&.type,
+          type: array_column ? :array : normalized_column_type(column),
           array_element_type: array_column ? array_element_type_for(column) : nil,
           db_limit: column&.limit,
           nullable: column&.null,
           has_default: !column&.default.nil?,
+          default_value: column&.default,
           precision: column&.precision,
           scale: column&.scale,
           column_backed: !column.nil?,
@@ -72,6 +95,7 @@ module FactoryBakery
           forbidden_values: rules.forbidden_values,
           must_be_present: rules.must_be_present,
           absence_required: rules.absence_required,
+          nil_rejected: nil_rejecting?(validators),
           accept_value: rules.accept_value,
           enum_attribute: enum_attribute,
           enum_values: enum_values.freeze,
@@ -79,6 +103,9 @@ module FactoryBakery
           value_shaping: validators.any? { |validator| VALUE_SHAPING_VALIDATORS.include?(validator.class.name) },
           acceptance_validated: validators.any? do |validator|
             validator.instance_of?(ActiveModel::Validations::AcceptanceValidator)
+          end,
+          confirmation_validated: validators.any? do |validator|
+            validator.instance_of?(ActiveModel::Validations::ConfirmationValidator)
           end,
           inclusion_validated: rules.inclusion_validated,
           first_inclusion_values: rules.first_inclusion_values,
@@ -165,6 +192,32 @@ module FactoryBakery
         end
       end
 
+      # A nullable column with no default is filled when an applicable
+      # validator rejects nil. `allow_nil` / `allow_blank` relax that, and a
+      # length validator only rejects nil when it sets a positive minimum.
+      def nil_rejecting?(validators)
+        validators.any? { |validator| nil_rejecting_validator?(validator) }
+      end
+
+      def nil_rejecting_validator?(validator)
+        return false unless NIL_REJECTING_VALIDATORS.include?(validator.class.name)
+        return false if validator.options[:allow_nil] || validator.options[:allow_blank]
+
+        return length_rejects_nil?(validator) if validator.class.name.include?('LengthValidator')
+
+        true
+      end
+
+      def length_rejects_nil?(validator)
+        opts = validator.options
+        minimum = opts[:minimum] || opts[:is] || opts[:in]&.first
+        # A lazy bound cannot be resolved while reading class-level rules;
+        # treat it as a real requirement and let the filler resolve it.
+        return true if minimum.is_a?(Proc) || minimum.is_a?(Symbol)
+
+        minimum.to_i.positive?
+      end
+
       def apply_length_validator(rules, opts)
         rules.min_length = opts[:minimum]
         rules.max_length = opts[:maximum]
@@ -227,7 +280,24 @@ module FactoryBakery
         return true if value.is_a?(Float)
         return false unless value.is_a?(Range)
 
-        [value.first, value.last].any? { |bound| bound.is_a?(Float) }
+        # `begin`/`end` stay nil on open ranges, unlike `first`/`last` which
+        # raise; either endpoint being a Float routes to the float generator.
+        [value.begin, value.end].any? { |bound| bound.is_a?(Float) }
+      end
+
+      # A text-castable type with no registered cast type (PostgreSQL's
+      # tsvector, for instance) reports a nil `type` but still has a `sql_type`.
+      # Normalize that into a plain symbol here so core routing can use it
+      # without ever reading a framework class (ADR-0001). Types with a real
+      # cast type are passed through unchanged.
+      def normalized_column_type(column)
+        return nil unless column
+        return column.type if column.type
+
+        sql_type = column.sql_type if column.respond_to?(:sql_type)
+        return nil unless sql_type.is_a?(String) && !sql_type.empty?
+
+        sql_type.to_sym
       end
 
       # PostgreSQL array columns expose array-ness on the column object; the
@@ -248,38 +318,47 @@ module FactoryBakery
       end
 
       # [routing flag, values]: the flag mirrors enum membership detection,
-      # the values mirror what the enum filler samples from. They are computed
-      # independently exactly as the router and the filler each did before,
-      # including their different fallback behavior.
-      def read_enum
-        [enum_attribute?, enum_values]
+      # the values mirror what the enum filler samples from. Both look at every
+      # name the attribute answers to: an enum declared on an `alias_attribute`
+      # is registered under the alias, not under the column (issue #61).
+      def read_enum(names)
+        [enum_attribute?(names), enum_values(names)]
       end
 
-      def enum_attribute?
-        if @model_class.respond_to?(:defined_enums)
-          @model_class.defined_enums.key?(@attr_name)
-        elsif @model_class.respond_to?(:pluralized_enum_values)
-          @model_class.pluralized_enum_values.key?(@attr_name.pluralize)
-        else
-          validators_for(@model_class, @attr_name).any? do |validator|
-            validator.instance_of?(ActiveModel::Validations::InclusionValidator) &&
-              Array(validator.options[:in]).all? { |value| value.is_a?(String) }
-          end
+      def enum_attribute?(names)
+        return defined_enum?(names) if @model_class.respond_to?(:defined_enums)
+        return pluralized_enum?(names) if @model_class.respond_to?(:pluralized_enum_values)
+
+        inclusion_enum?
+      end
+
+      def defined_enum?(names)
+        names.any? { |name| @model_class.defined_enums.key?(name) }
+      end
+
+      def pluralized_enum?(names)
+        names.any? { |name| @model_class.pluralized_enum_values.key?(name.pluralize) }
+      end
+
+      # Schema-less targets express an enum as an inclusion of strings.
+      def inclusion_enum?
+        validators_for(@model_class, @attr_name).any? do |validator|
+          validator.instance_of?(ActiveModel::Validations::InclusionValidator) &&
+            Array(validator.options[:in]).all? { |value| value.is_a?(String) }
         end
       end
 
-      def enum_values
+      def enum_values(names)
         values = []
         if @model_class.respond_to?(:defined_enums)
-          values = @model_class.defined_enums[@attr_name]&.keys || []
+          values = names.flat_map { |name| @model_class.defined_enums[name]&.keys || [] }
         end
 
         if values.empty? && @model_class.respond_to?(:pluralized_enum_values)
-          pluralized_name = @attr_name.pluralize
-          values = @model_class.pluralized_enum_values[pluralized_name]&.keys || []
+          values = names.flat_map { |name| @model_class.pluralized_enum_values[name.pluralize]&.keys || [] }
         end
 
-        return values unless values.empty?
+        return values.uniq unless values.empty?
 
         validators_for(@model_class, @attr_name).each do |validator|
           next unless validator.instance_of?(ActiveModel::Validations::InclusionValidator)
@@ -297,27 +376,54 @@ module FactoryBakery
       # The STI discriminator is owned by the framework: `new` assigns the
       # subclass's name into the inheritance column and a faked value would
       # make a persisted row unloadable. Disabling STI empties the column name,
-      # so a plain `type` column is still routed normally.
+      # so a plain `type` column is still routed normally. Only a real
+      # inheritance column is guarded: `alias_attribute :type, :other_column`
+      # leaves `other_column` fillable (issue #61).
       def sti_discriminator?
         return false unless @model_class.respond_to?(:inheritance_column)
 
-        column = @model_class.inheritance_column
-        !column.to_s.empty? && @attr_name == column.to_s
+        column = @model_class.inheritance_column.to_s
+        return false if column.empty?
+        return false unless @model_class.respond_to?(:columns_hash)
+        return false unless @model_class.columns_hash.key?(column)
+
+        @attr_name == column
       end
 
       # Targets without a schema expose no columns; targets without validators
       # expose no rules. Both lookups are optional so the reader runs on any
-      # target that exposes the relevant information.
+      # target that exposes the relevant information. An alias is a second
+      # spelling of its column, so either name reads the same schema facts.
       def column_for(model_class, attr_name)
         return nil unless model_class.respond_to?(:columns_hash)
 
-        model_class.columns_hash[attr_name.to_s]
+        model_class.columns_hash[column_name_for(model_class, attr_name)]
+      end
+
+      def column_name_for(model_class, attr_name)
+        return attr_name.to_s unless model_class.respond_to?(:attribute_aliases)
+
+        model_class.attribute_aliases.fetch(attr_name.to_s, attr_name.to_s)
+      end
+
+      # The attribute's own name plus the name it resolves to and every alias
+      # of that column (`alias_attribute` maps one way only).
+      def attribute_names(model_class, attr_name)
+        name = attr_name.to_s
+        return [name] unless model_class.respond_to?(:attribute_aliases)
+
+        aliases = model_class.attribute_aliases
+        column = aliases.fetch(name, name)
+        [name, column, *aliases.filter_map { |alias_name, target| alias_name if target == column }].uniq
       end
 
       def validators_for(model_class, attr_name)
         return [] unless model_class.respond_to?(:validators_on)
 
-        model_class.validators_on(attr_name)
+        validators = model_class.validators_on(attr_name)
+        return validators unless @record
+
+        validators.select { |validator| Conditional.applies?(validator, @record, @attr_name) }
       end
     end
   end

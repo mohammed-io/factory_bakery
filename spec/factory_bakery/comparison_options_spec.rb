@@ -13,7 +13,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
     end
 
     it 'resolves the symbol against the baked object without raising' do
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each do |record|
@@ -26,7 +26,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :used, numericality: { less_than: :total }
       end
 
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each { |record| expect(record.used).to be < record.total }
@@ -37,7 +37,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :discount, comparison: { less_than: :price }
       end
 
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each { |record| expect(record.discount).to be < record.price }
@@ -48,7 +48,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :discount, comparison: { less_than: :price }
       end
 
-      record = FactoryBakery.bake(model, price: 200.0)
+      record = FactoryBakery.bake(model, price: 200.0, fill_optional: true)
 
       expect(record.price).to eq(200.0)
       expect(record.discount).to be < 200.0
@@ -64,7 +64,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
     end
 
     it 'resolves the referenced date to a real bound' do
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each { |record| expect(record.end_date).to be > record.start_date }
@@ -75,7 +75,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :closes_at, comparison: { greater_than: :opens_at }
       end
 
-      records = 5.times.map { FactoryBakery.bake(model) }
+      records = 5.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each { |record| expect(record.closes_at).to be > record.opens_at }
@@ -95,7 +95,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
       end
 
       expect(calls).to be_empty
-      record = FactoryBakery.bake(model, price: 200.0)
+      record = FactoryBakery.bake(model, price: 200.0, fill_optional: true)
 
       expect(calls.length).to eq(1)
       expect(calls.first).to be_a(model)
@@ -108,7 +108,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :value, numericality: { less_than: -> { 25.0 } }
       end
 
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       expect(records.map(&:value)).to all(be < 25.0)
@@ -124,7 +124,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
     end
 
     it 'resolves dependencies in order and satisfies both constraints' do
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each do |record|
@@ -142,7 +142,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
       end
 
       record = nil
-      expect { record = FactoryBakery.bake(model) }.not_to raise_error
+      expect { record = FactoryBakery.bake(model, fill_optional: true) }.not_to raise_error
       expect(record.alpha).to be_a(Float)
       expect(record.beta).to be_a(Float)
     end
@@ -154,7 +154,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :value, comparison: { greater_than: 0, in: 10.0..20.0 }
       end
 
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records.map(&:value)).to all(be_between(10.0, 20.0).inclusive)
       expect(records).to all(be_valid)
@@ -165,7 +165,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :value, comparison: { greater_than: 0, in: 10..20 }
       end
 
-      records = 10.times.map { FactoryBakery.bake(model) }
+      records = 10.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records.map(&:value)).to all(be_between(10, 20).inclusive)
       expect(records).to all(be_valid)
@@ -178,7 +178,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :value, numericality: { greater_than: 10, less_than: 20 }
       end
 
-      records = 20.times.map { FactoryBakery.bake(model) }
+      records = 20.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each { |record| expect(record.value).to be_between(10, 20).exclusive }
@@ -189,7 +189,7 @@ RSpec.describe 'comparison/numericality option forms (issue #35)' do
         validates :value, comparison: { greater_than_or_equal_to: 5, less_than_or_equal_to: 8 }
       end
 
-      records = 20.times.map { FactoryBakery.bake(model) }
+      records = 20.times.map { FactoryBakery.bake(model, fill_optional: true) }
 
       expect(records).to all(be_valid)
       records.each { |record| expect(record.value).to be_between(5, 8).inclusive }

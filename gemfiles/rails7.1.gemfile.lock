@@ -3,6 +3,7 @@ PATH
   specs:
     factory_bakery (0.0.2.0)
       ffaker
+      regexp_parser (~> 2.9)
 
 GEM
   remote: https://rubygems.org/
@@ -238,6 +239,7 @@ GEM
       prism (~> 1.7)
     ruby-progressbar (1.13.0)
     securerandom (0.4.1)
+    simplecov (1.3.2)
     sqlite3 (1.7.3)
       mini_portile2 (~> 2.8.0)
     stringio (3.2.0)
@@ -267,11 +269,13 @@ DEPENDENCIES
   factory_bakery!
   mysql2 (~> 0.5)
   pg (~> 1.5)
+  prism
   puma
   rails (~> 7.1, >= 7.1)
   rake
   rspec
   rubocop
+  simplecov (~> 1.3)
   sqlite3 (~> 1.4)
 
 BUNDLED WITH

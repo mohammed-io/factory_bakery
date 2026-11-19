@@ -3,19 +3,20 @@
 module FactoryBakery
   # Opt-in association building. Configuration lives with the plugin so core
   # stays ignorant of it.
-  module Associations
+  module Associations # rubocop:disable Metrics/ModuleLength
     MODES = %i[none required_only all].freeze
     STRATEGIES = %i[fresh reuse].freeze
     DEFAULT_MODE = :required_only
     DEFAULT_STRATEGY = :fresh
     DEFAULT_MAX_DEPTH = 2
     DEFAULT_COUNT = 1
+    DEFAULT_EAGER_LOAD = true
 
     # Scoped overrides are fiber-local (like core's build context): sibling
     # threads and fibers never see each other's scope, and a value is replaced
     # rather than mutated so a child fiber cannot change its parent's scope.
     SCOPE_KEY = :factory_bakery_associations_scope
-    SCOPE_KEYS = %i[mode strategy max_depth default_count].freeze
+    SCOPE_KEYS = %i[mode strategy max_depth default_count eager_load].freeze
     EMPTY_SCOPE = {}.freeze
 
     class << self
@@ -59,6 +60,17 @@ module FactoryBakery
         @global_default_count = non_negative_integer!(value, :default_count)
       end
 
+      # Whether an unresolved polymorphic target may trigger one Rails
+      # application eager load per process to discover `as:` inverses. Costs a
+      # full load of the app's models on first use; turn off in tests.
+      def eager_load
+        scope.fetch(:eager_load) { global_eager_load }
+      end
+
+      def eager_load=(value)
+        @global_eager_load = boolean!(value, :eager_load)
+      end
+
       # Runs the block with temporary configuration overrides. The scope covers
       # the whole nested graph (including bakes made from declaration blocks),
       # nests with an inner scope winning, and is restored in `ensure` even if
@@ -83,6 +95,7 @@ module FactoryBakery
         @global_strategy = DEFAULT_STRATEGY
         @global_max_depth = DEFAULT_MAX_DEPTH
         @global_default_count = DEFAULT_COUNT
+        @global_eager_load = DEFAULT_EAGER_LOAD
         Fiber[SCOPE_KEY] = EMPTY_SCOPE
       end
 
@@ -122,6 +135,10 @@ module FactoryBakery
         @global_default_count ||= DEFAULT_COUNT
       end
 
+      def global_eager_load
+        @global_eager_load.nil? ? DEFAULT_EAGER_LOAD : @global_eager_load
+      end
+
       def validate_scope!(overrides)
         overrides.each_key do |key|
           next if SCOPE_KEYS.include?(key)
@@ -138,6 +155,7 @@ module FactoryBakery
         validated_strategy!(overrides[:strategy]) if overrides.key?(:strategy)
         non_negative_integer!(overrides[:max_depth], :max_depth) if overrides.key?(:max_depth)
         non_negative_integer!(overrides[:default_count], :default_count) if overrides.key?(:default_count)
+        boolean!(overrides[:eager_load], :eager_load) if overrides.key?(:eager_load)
       end
 
       def validated_mode!(value)
@@ -150,6 +168,12 @@ module FactoryBakery
         return value if value.is_a?(Integer) && value >= 0
 
         raise ArgumentError, "#{name} must be a non-negative Integer, got #{value.inspect}"
+      end
+
+      def boolean!(value, name)
+        return value if [true, false].include?(value)
+
+        raise ArgumentError, "#{name} must be true or false, got #{value.inspect}"
       end
     end
   end

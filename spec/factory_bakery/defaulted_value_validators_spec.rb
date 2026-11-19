@@ -17,11 +17,9 @@ RSpec.describe 'defaulted columns with value-shaping validators (issue #41)' do
     end
 
     it 'bakes a regex-compliant value instead of the blank default' do
-      allow(FFaker::String).to receive(:from_regexp).and_return('ABC-1234')
-
       record = FactoryBakery.bake(model)
 
-      expect(record.code).to eq('ABC-1234')
+      expect(record.code).not_to eq('')
       expect(record.code).to match(/\A[A-Z]{3}-\d{4}\z/)
       expect(record).to be_valid
     end
@@ -55,8 +53,8 @@ RSpec.describe 'defaulted columns with value-shaping validators (issue #41)' do
     it 'produces two distinct persisted records instead of colliding on the default' do
       allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'alpha', 'beta')
 
-      first = FactoryBakery.bake!(model)
-      second = FactoryBakery.bake!(model)
+      first = FactoryBakery.bake!(model, fill_optional: true)
+      second = FactoryBakery.bake!(model, fill_optional: true)
 
       expect(first.code).to eq('alpha')
       expect(second.code).to eq('beta')
@@ -145,7 +143,7 @@ RSpec.describe 'defaulted columns with value-shaping validators (issue #41)' do
     it 'bakes valid, format-compliant, distinct shortcodes' do
       values = %w[emoji_ab12 emoji_cd34 emoji_ef56]
       index = 0
-      allow(FFaker::String).to receive(:from_regexp) do
+      allow(FactoryBakery::RegexGeneration).to receive(:generate) do |*, **|
         value = values[index]
         index += 1
         value

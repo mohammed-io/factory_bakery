@@ -39,7 +39,7 @@ module FactoryBakery
         entries = ReflectionCache.all(klass).filter_map do |reflection|
           entry(klass, reflection, detector)
         rescue StandardError => e
-          failures[reflection_name(reflection)] = failure_message(e)
+          failures[reflection_name(reflection)] = "#{e.class}: #{e.message}"
           nil
         end
 
@@ -48,17 +48,13 @@ module FactoryBakery
         # A class whose whole reflection set cannot be read is still
         # introspectable; it simply has no usable associations. Keep the
         # [] contract distinct from the nil "no mapper can see this class".
-        FactoryBakery::MapperRegistry::Introspection.new([], { nil => failure_message(e) })
+        FactoryBakery::MapperRegistry::Introspection.new([], { nil => "#{e.class}: #{e.message}" })
       end
 
       def reflection_name(reflection)
         reflection.name.to_s
       rescue StandardError
         '<unknown>'
-      end
-
-      def failure_message(error)
-        "#{error.class}: #{error.message}"
       end
 
       def entry(klass, reflection, detector)
@@ -70,11 +66,12 @@ module FactoryBakery
           foreign_type: foreign_type(reflection),
           polymorphic: reflection.polymorphic?,
           counter_cache_columns: counter_columns(reflection, detector),
+          natural_key_name: NaturalKey.key_name(reflection),
           required: required?(klass, reflection),
           fk_presence: fk_presence?(klass, reflection),
           scope: association_scope(reflection),
           through: through_association?(reflection),
-          **lazy_resolvers(reflection)
+          **lazy_resolvers(klass, reflection)
         ).freeze
       end
 
@@ -103,11 +100,19 @@ module FactoryBakery
       # is required at the database level. A presence validator on the raw FK
       # column is required too, but is reported separately by `fk_presence?` so
       # callers can persist the parent (the only way to give the column a real
-      # value). `reflection.options[:optional]` is deliberately never read --
-      # plain ActiveRecord defaults it to optional. Only a belongs_to edge can
-      # be required.
+      # value). `reflection.options[:optional]` is deliberately never read for
+      # id-keyed edges -- plain ActiveRecord defaults them to optional, so the
+      # NOT NULL FK is their only required signal. Natural keys (issue #54) are
+      # different: the FK is a real data column the child fills itself, so a
+      # NOT NULL column there must not force a parent when the association is
+      # optional; only an explicit validator counts. Only belongs_to can be
+      # required.
       def required?(klass, reflection)
         return false unless reflection.macro == :belongs_to
+
+        if NaturalKey.natural?(reflection)
+          return fk_presence?(klass, reflection) || presence_validator?(klass, reflection)
+        end
 
         fk_presence?(klass, reflection) ||
           presence_validator?(klass, reflection) ||
@@ -125,9 +130,7 @@ module FactoryBakery
         return false unless klass.respond_to?(:validators_on)
 
         Array(reflection.foreign_key).any? do |key|
-          klass.validators_on(key).any? do |validator|
-            validator.is_a?(ActiveModel::Validations::PresenceValidator)
-          end
+          klass.validators_on(key).any? { |validator| validator.is_a?(ActiveModel::Validations::PresenceValidator) }
         end
       end
 
@@ -162,12 +165,14 @@ module FactoryBakery
       end
 
       # The callables carrying the fragile derivations: target resolution,
-      # the inverse's name and its kind.
-      def lazy_resolvers(reflection)
+      # the inverse's name and kind, and record-specific presence requirements.
+      def lazy_resolvers(klass, reflection)
+        inverse = -> { AssociationRequirements.inverse(reflection) }
         {
           target: -> { reflection.klass },
-          inverse_name: -> { reflection.inverse_of&.name },
-          inverse_kind: -> { reflection.inverse_of&.macro }
+          inverse_name: -> { inverse.call&.name },
+          inverse_kind: -> { inverse.call&.macro },
+          presence_applicable: ->(record) { AssociationRequirements.presence_applicable?(klass, reflection, record) }
         }
       end
     end

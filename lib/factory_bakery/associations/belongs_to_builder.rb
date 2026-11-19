@@ -11,11 +11,11 @@ module FactoryBakery
     # Which edges exist (and which are required) arrives as plain association
     # introspection from the mapper contract; the logic below is pure
     # orchestration over that data.
-    module BelongsToBuilder
+    module BelongsToBuilder # rubocop:disable Metrics/ModuleLength
       REFLECTION_PATH_KEY = :factory_bakery_associations_reflection_path
       SUPPRESSED_EDGES_KEY = :factory_bakery_associations_suppressed_edges
 
-      class << self
+      class << self # rubocop:disable Metrics/ClassLength
         def values(klass, context, taken)
           return {} unless auto_building?
 
@@ -25,7 +25,6 @@ module FactoryBakery
           entries_to_build(introspection, context).each_with_object({}) do |entry, values|
             next if suppressed?(entry, taken)
 
-            require_target!(klass, entry) if entry.polymorphic
             values[entry.name] = build_parent(klass, entry)
           end
         end
@@ -43,11 +42,17 @@ module FactoryBakery
         end
 
         def entries_to_build(introspection, context)
-          belongs_to = introspection.select { |entry| entry.kind == :belongs_to }
+          belongs_to = introspection.select { |entry| id_keyed_belongs_to?(entry) }
           required = belongs_to.select(&:required)
           return required unless Associations.mode == :all && !Associations.past_depth?(context)
 
           belongs_to.select { |entry| !entry.polymorphic || entry.required }
+        end
+
+        # Natural keys are handled after instantiation by NaturalKeyBuilder,
+        # once the child's own key value is known.
+        def id_keyed_belongs_to?(entry)
+          entry.kind == :belongs_to && entry.natural_key_name.nil?
         end
 
         def suppressed?(entry, taken)
@@ -60,23 +65,54 @@ module FactoryBakery
           names.uniq
         end
 
-        # The target class of a polymorphic belongs_to cannot be inferred from
-        # the owner side without scanning every model for `as:`.
-        def require_target!(klass, entry)
-          name = entry.name
-          raise FactoryBakery::Error,
-                "#{klass}##{name} is a required polymorphic association; " \
-                "declare it (e.g. association :#{name}, factory: SomeClass) or " \
-                "pass #{name}: to name its target"
+        # A polymorphic edge asks the mapper for candidate classes; an ordinary
+        # one resolves its target directly. Both arrive as plain data.
+        #
+        # A candidate that fails is discarded whole: its savepoint rolls back
+        # any row its FK-presence parent inserted, and the generated-record
+        # mark drops the records it built so `bake!` verifies only the graph
+        # that was kept (otherwise a failed candidate's unsaved parent fails
+        # the winning bake).
+        def build_parent(klass, entry)
+          discovered = entry.polymorphic ? polymorphic_targets(klass, entry) : direct_targets(entry)
+          failures = []
+          discovered.candidates.each do |target|
+            mark = BuildContext.generated_records.length
+            begin
+              return attempt_candidate(klass, entry, target)
+            rescue StandardError => e
+              BuildContext.trim_generated_records!(mark)
+              failures << [target, e]
+            end
+          end
+
+          raise_unresolved!(klass, entry, discovered, failures)
+        end
+
+        def attempt_candidate(klass, entry, target)
+          adapter = FactoryBakery::MapperRegistry.persistence_adapter(klass)
+          return build_for_target(klass, entry, target) unless adapter.transactional?
+
+          adapter.transaction(klass) { build_for_target(klass, entry, target) }
+        end
+
+        def direct_targets(entry)
+          FactoryBakery::MapperRegistry::DiscoveredTargets.new(
+            candidates: [entry.resolve_target].freeze, sources: [].freeze
+          )
+        end
+
+        def polymorphic_targets(klass, entry)
+          FactoryBakery::MapperRegistry.polymorphic_targets(klass, entry, eager_load: Associations.eager_load)
         end
 
         # Auto-built edges form a path of reflections (User#account ->
         # Account#owner -> ...). Re-encountering one means an insert cycle that
         # inverse_of cannot make persistable, so raise with the path and an
         # opt-out hint. A finite chain ended by a declaration never repeats an
-        # edge and is allowed.
-        def build_parent(klass, entry)
-          target_class = entry.resolve_target
+        # edge and is allowed. Candidates are tried in the mapper's deterministic
+        # order; the first one that bakes cleanly wins.
+        def build_for_target(klass, entry, target_class)
           reuse = ReuseResolver.strategy_for(nil) == :reuse
           if reuse
             existing = resolve_reuse(klass, target_class, entry)
@@ -93,6 +129,25 @@ module FactoryBakery
           end
         ensure
           Fiber[REFLECTION_PATH_KEY] = previous_path
+        end
+
+        # No candidates keeps the original actionable error, now naming the
+        # sources that were tried. Candidates that all failed to bake report
+        # what was attempted instead of hiding the cause.
+        def raise_unresolved!(klass, entry, discovered, failures)
+          name = entry.name
+          hint = "Declare it (e.g. association :#{name}, factory: SomeClass) or pass #{name}: to name its target"
+          if failures.empty?
+            raise FactoryBakery::Error,
+                  "#{klass}##{name} is a required polymorphic association; " \
+                  "no target discovered from: #{discovered.sources.join('; ')}. #{hint}"
+          end
+          raise failures.first.last if failures.one?
+
+          tried = failures.map { |target, error| "#{target} (#{error.class}: #{error.message})" }
+          raise FactoryBakery::Error,
+                "#{klass}##{name} is a required polymorphic association; " \
+                "none of #{tried.join(', ')} could be baked. #{hint}"
         end
 
         def bake_fresh(target_class, entry, reuse)

@@ -218,7 +218,7 @@ RSpec.describe 'real database constraints across adapters' do
       end
       document_model = define_class('GuardDocument', ActiveRecord::Base)
 
-      record = FactoryBakery.bake!(document_model)
+      record = FactoryBakery.bake!(document_model, fill_optional: true)
       reloaded = document_model.find(record.id)
 
       expect(reloaded.payload).to be_a(Hash)

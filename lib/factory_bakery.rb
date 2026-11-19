@@ -6,17 +6,21 @@ require 'time'
 require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/plugin_registry'
 require_relative 'factory_bakery/constraint_set'
+require_relative 'factory_bakery/fill_optional'
+require_relative 'factory_bakery/required_attribute'
+require_relative 'factory_bakery/fallback_builder'
 require_relative 'factory_bakery/mapper_registry'
 require_relative 'factory_bakery/bakery_builder'
 require_relative 'factory_bakery/build_context'
 require_relative 'factory_bakery/persistence_verifier'
+require_relative 'factory_bakery/read_only_guard'
+require_relative 'factory_bakery/regex_generation'
 require_relative 'factory_bakery/definition_loader'
 require_relative 'factory_bakery/methods'
 
 # Attribute fillers
 require_relative 'factory_bakery/attribute_fillers/value_resolution'
 require_relative 'factory_bakery/attribute_fillers/plausible_strings'
-require_relative 'factory_bakery/attribute_fillers/regex_synthesizer'
 require_relative 'factory_bakery/attribute_fillers/numeric_constraint_hygiene'
 require_relative 'factory_bakery/attribute_fillers/bake_time_values'
 require_relative 'factory_bakery/attribute_fillers/noop_filler'
@@ -40,9 +44,27 @@ module FactoryBakery
   class NestingTooDeepError < Error; end
   class CyclicAssociationError < Error; end
   class IncompletePersistenceError < Error; end
+  class ReadOnlyTargetError < Error; end
 
   class << self
     attr_writer :definition_paths, :max_bake_depth
+
+    # Process-wide configuration block, mirroring the other global settings.
+    def configure
+      yield self
+    end
+
+    # By default a bake fills only what a valid record needs. Set this to true
+    # to restore filling every column, or pass `fill_optional:` to one bake.
+    def fill_optional
+      FillOptional.global
+    end
+
+    # Validated and normalized like the per-call option, so `%i[bio]` and
+    # `%w[bio]` behave the same and a typo such as `'true'` raises.
+    def fill_optional=(value)
+      FillOptional.global = value.nil? ? false : normalize_fill_optional(value)
+    end
 
     # No paths are configured until the host app (or the Railtie) sets them.
     def definition_paths
@@ -78,10 +100,13 @@ module FactoryBakery
       BakeryBuilder.register(target, klass: klass, &block)
     end
 
-    def bake(target, *traits, **overrides)
-      model_klass, definition = BakeryBuilder.resolve(target)
-      BuildContext.push(model_klass) do
-        build_object(model_klass, definition, overrides, traits)
+    def bake(target, *traits, fill_optional: nil, **overrides)
+      mode = normalize_fill_optional(fill_optional)
+      FillOptional.with(mode) do
+        model_klass, definition = BakeryBuilder.resolve(target)
+        BuildContext.push(model_klass) do
+          build_with_fallback(model_klass, definition, overrides, traits, mode)
+        end
       end
     end
 
@@ -93,45 +118,67 @@ module FactoryBakery
     # disturbing the caller's transaction. The transaction, save and
     # persistence check are performed through the mapper's persistence adapter;
     # a target no mapper claims keeps plain build-and-save semantics.
-    def bake!(target, *traits, **overrides)
+    def bake!(target, *traits, fill_optional: nil, **overrides)
+      mode = normalize_fill_optional(fill_optional)
       # FK-column-validated edges insert their parent while the graph is being
       # built, so the flag must cover graph building too, not just the save.
       BuildContext.with_persistence do
-        model_klass, definition = BakeryBuilder.resolve(target)
-        adapter = MapperRegistry.persistence_adapter(model_klass)
+        FillOptional.with(mode) do
+          model_klass, definition = BakeryBuilder.resolve(target)
+          adapter = MapperRegistry.persistence_adapter(model_klass)
 
-        unless adapter.transactional?
-          object = bake(target, *traits, **overrides)
-          adapter.save!(object)
-          return object
-        end
+          return bake_untransactional(target, adapter, overrides, traits, mode) unless adapter.transactional?
 
-        object = nil
-        adapter.transaction(model_klass) do
-          object = BuildContext.push(model_klass) do
-            record = build_object(model_klass, definition, overrides, traits)
-            adapter.save!(record)
-            verify_persistence!(record, adapter)
-            record
+          object = nil
+          adapter.transaction(model_klass) do
+            object = BuildContext.push(model_klass) do
+              record = build_with_fallback(model_klass, definition, overrides, traits, mode)
+              # Check before any save: a read-only target cannot be persisted,
+              # and a read-only parent generated anywhere in the graph fails
+              # the whole bake! inside this savepoint.
+              ensure_writable!(record, adapter)
+              adapter.save!(record)
+              verify_persistence!(record, adapter)
+              record
+            end
           end
+          object
         end
-        object
       end
     end
 
     private
 
-    def build_object(model_klass, definition, overrides, traits)
-      builder = BakeryBuilder.new(model_klass, definition)
-      object = builder.build(overrides: overrides, traits: traits)
-      UniquenessEnforcer.new(object, builder.heuristic_attribute_names).call
-      BuildContext.record_generated(object)
-      object
+    def normalize_fill_optional(value)
+      return FillOptional.current if value.nil?
+      return value if [true, false].include?(value)
+      return value.map(&:to_s) if value.is_a?(Array)
+
+      raise ArgumentError, "fill_optional must be true, false, or an array of attribute names, got #{value.inspect}"
+    end
+
+    def build_with_fallback(model_klass, definition, overrides, traits, mode)
+      FallbackBuilder.new(mode).build(model_klass, definition, overrides, traits)
     end
 
     def verify_persistence!(root, adapter)
       entries = BuildContext.records_under(BuildContext.current.path)
       PersistenceVerifier.new(root, entries, adapter).call
+    end
+
+    def bake_untransactional(target, adapter, overrides, traits, mode)
+      object = bake(target, *traits, fill_optional: mode, **overrides)
+      ensure_writable!(object, adapter)
+      adapter.save!(object)
+      object
+    end
+
+    # Read-only targets are fine for `bake` but cannot be written. The guard
+    # runs after graph building and before the root save, inside the savepoint
+    # that rolls back any parent the graph inserted earlier.
+    def ensure_writable!(root, adapter)
+      entries = BuildContext.records_under(BuildContext.current.path)
+      ReadOnlyGuard.new(root, adapter, entries).call
     end
   end
 end

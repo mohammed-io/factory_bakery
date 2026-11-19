@@ -41,7 +41,7 @@ module FactoryBakery
                 # array_element_type is a plain-symbol hint (:string, :integer,
                 # :float, :boolean) derived by the mapper plugin from the
                 # column's underlying element type.
-                :type, :array_element_type, :db_limit, :nullable, :has_default, :precision, :scale,
+                :type, :array_element_type, :db_limit, :nullable, :has_default, :default_value, :precision, :scale,
                 # Target/attribute shape flags.
                 :column_backed, :column_backed_target, :sti_discriminator,
                 # Length rules.
@@ -51,13 +51,13 @@ module FactoryBakery
                 # Set rules in raw option form (Array/Range/Proc/Symbol).
                 :allowed_values, :forbidden_values,
                 # Nullability rules.
-                :must_be_present, :absence_required,
+                :must_be_present, :absence_required, :nil_rejected,
                 # Acceptance rule.
                 :accept_value,
                 # Enum rules.
                 :enum_attribute, :enum_values,
                 # Routing facts.
-                :has_validators, :value_shaping, :acceptance_validated,
+                :has_validators, :value_shaping, :acceptance_validated, :confirmation_validated,
                 :inclusion_validated, :first_inclusion_values,
                 :length_validated, :format_validated,
                 :numericality_validated, :numericality_only_integer,
@@ -67,16 +67,17 @@ module FactoryBakery
 
     def initialize(
       model_class:, attr_name:,
-      type: nil, array_element_type: nil, db_limit: nil, nullable: nil, has_default: false,
+      type: nil, array_element_type: nil, db_limit: nil, nullable: nil, has_default: false, default_value: nil,
       precision: nil, scale: nil,
       column_backed: false, column_backed_target: false, sti_discriminator: false,
       min_length: nil, max_length: nil, exact_length: nil,
       with_regexes: [].freeze, without_regexes: [].freeze,
       allowed_values: nil, forbidden_values: nil,
-      must_be_present: false, absence_required: false,
+      must_be_present: false, absence_required: false, nil_rejected: false,
       accept_value: nil,
       enum_attribute: false, enum_values: [].freeze,
       has_validators: false, value_shaping: false, acceptance_validated: false,
+      confirmation_validated: false,
       inclusion_validated: false, first_inclusion_values: nil,
       length_validated: false, format_validated: false,
       numericality_validated: false, numericality_only_integer: false,
@@ -90,6 +91,7 @@ module FactoryBakery
       @db_limit = db_limit
       @nullable = nullable
       @has_default = has_default
+      @default_value = default_value
       @precision = precision
       @scale = scale
       @column_backed = column_backed
@@ -104,12 +106,14 @@ module FactoryBakery
       @forbidden_values = forbidden_values
       @must_be_present = must_be_present
       @absence_required = absence_required
+      @nil_rejected = nil_rejected
       @accept_value = accept_value
       @enum_attribute = enum_attribute
       @enum_values = enum_values
       @has_validators = has_validators
       @value_shaping = value_shaping
       @acceptance_validated = acceptance_validated
+      @confirmation_validated = confirmation_validated
       @inclusion_validated = inclusion_validated
       @first_inclusion_values = first_inclusion_values
       @length_validated = length_validated

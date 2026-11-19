@@ -4,9 +4,10 @@ require 'spec_helper'
 require 'active_model'
 require 'timeout'
 
-# Issue #42: FFaker::String.from_regexp emits literal garbage for groups,
-# alternation and inline flags, and spins unboundedly on POSIX character
-# classes. Format synthesis must be bounded and must actually synthesize.
+# Issue #42: format synthesis must be bounded and must actually synthesize
+# groups, alternation, inline flags and POSIX character classes (FFaker's
+# from_regexp emitted literal garbage for the first three and spun
+# unboundedly on the last). Issue #65 moved synthesis onto RegexGeneration.
 RSpec.describe 'bounded, real format-regex synthesis (issue #42)' do
   include DefineConstantMacros
 
@@ -91,7 +92,7 @@ RSpec.describe 'bounded, real format-regex synthesis (issue #42)' do
     end
   end
 
-  describe 'unsupported constructs' do
+  describe 'unsatisfiable regexes' do
     it 'raises the contextual exhaustion error quickly, without junk' do
       model = define_model('LookaheadCode', code: :string) do
         validates :code, format: { with: /\Afoo(?=bar)\z/ }
@@ -104,17 +105,39 @@ RSpec.describe 'bounded, real format-regex synthesis (issue #42)' do
     end
   end
 
-  describe 'bounded FFaker synthesis' do
-    it 'caps a spinning from_regexp instead of hanging the bake' do
-      allow(FFaker::String).to receive(:from_regexp) { sleep 30 }
+  describe 'lookaround' do
+    it 'synthesizes a compliant value for a positive lookahead' do
+      model = define_model('LookaheadPrefixCode', code: :string) do
+        validates :code, format: { with: /\Afoo(?=bar)bar\z/ }
+      end
 
-      model = define_model('SpinningCode', code: :string) do
-        validates :code, format: { with: /\A[a-z]+\z/ }
+      record = FactoryBakery.bake(model)
+
+      expect(record.code).to eq('foobar')
+      expect(record).to be_valid
+    end
+  end
+
+  describe 'bounded synthesis' do
+    it 'abandons a regex whose shortest match exceeds the output bound instead of hanging' do
+      model = define_model('OversizedCode', code: :string) do
+        validates :code, format: { with: /\A[a-z]{5000}\z/ }
       end
 
       started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
       expect { FactoryBakery.bake(model) }
-        .to raise_error(FactoryBakery::Error, /SpinningCode#code.*attempts/m)
+        .to raise_error(FactoryBakery::Error, /OversizedCode#code.*attempts/m)
+      expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 6
+    end
+
+    it 'abandons a regex whose repetitions explode instead of hanging' do
+      model = define_model('ExplosiveCode', code: :string) do
+        validates :code, format: { with: /\A(?:(?:(?:(?:){9}){9}){9}){9}x\z/ }
+      end
+
+      started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      expect { FactoryBakery.bake(model) }
+        .to raise_error(FactoryBakery::Error, /ExplosiveCode#code.*attempts/m)
       expect(Process.clock_gettime(Process::CLOCK_MONOTONIC) - started).to be < 6
     end
   end
