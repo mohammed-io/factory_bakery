@@ -36,6 +36,16 @@
 
 - Added a CI matrix of Rails 7.1 / 7.2 / 8.0 × SQLite / PostgreSQL / MySQL (`DATABASE_URL`), running the same specs against in-memory SQLite by default and real FK constraints on every adapter. It covers savepoint rollback when the root fails or the caller rescues inside an outer transaction, NOT NULL FK parents inserted first, and `:reuse` lookups; adapter-specific notes are documented in the README.
 
+### Sequel mapper plugin (opt-in)
+
+- Added the opt-in Sequel mapper plugin: `require 'factory_bakery/sequel'` registers a mapper that makes `Sequel::Model` classes bake with the same heuristics (define, traits, named factories, overrides, `bake`, `bake!`). `sequel` stays an optional dependency — the gemspec is unchanged — and when the gem is absent the require raises a helpful `FactoryBakery::Error` naming the Gemfile line to add.
+- Added the Sequel constraint mapping: `db_schema` column types (including json-ish db_types), `max_length`, nullability, defaults and parsed `numeric(p, s)` precision/scale feed the existing generators; stored validations under `plugin :validation_class_methods` (`validates_presence_of`, `validates_length_of`, `validates_numericality_of`, `validates_format_of`, `validates_inclusion_of`, `validates_acceptance_of`) map onto the matching ConstraintSet fields.
+- Added Sequel uniqueness enforcement: `validates_uniqueness_of` declarations and single-column unique indexes feed the uniqueness flag; the collision check queries the model's own dataset, excluding the record itself, and composite unique indexes never flag a single column.
+- Added the Sequel persistence contract: `bake!` saves through Sequel's `save` (which raises on validation failure) wrapped in `db.transaction(savepoint: true)`, so a failure rolls back every row the bake wrote — including nested `bake!` writes — and a declaration that leaves a generated record unsaved raises `FactoryBakery::IncompletePersistenceError`.
+- Kept the guard-rail philosophy on Sequel: the primary key and `many_to_one` foreign keys are never auto-filled (alias groups keep an association name and its FK columns together for override precedence), Sequel associations are never auto-built, and counter caches / STI discriminators have no Sequel counterpart to guard. The associations plugin stays on the default mapper's models.
+- Documented limits instead of faking them: `plugin :validation_helpers` runs imperatively inside `Model#validate` and is not introspectable as data, so heuristics fall back to schema facts for those models; persisting JSON columns depends on Sequel's `serialization` plugin. The default mapper and the Sequel mapper can be registered in one process, each handling its own classes.
+- Added `sequel` as a development-only gem in the root Gemfile (never the gemspec); the Sequel specs run under the root Gemfile and report themselves skipped under the appraisal gemfiles.
+
 ## [0.0.2] - 2026-11-18
 
 Complete rewrite of the gem. This release has no compatibility with v0.0.1 or earlier.

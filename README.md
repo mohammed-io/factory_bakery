@@ -404,6 +404,33 @@ The same association specs run in the 3 × 3 CI matrix — Rails 7.1 / 7.2 / 8.0
 | `create_list(:comment, 3, post: post)` | `association :comments, count: 3` inside the owner's definition |
 | `use_parent_strategy` / build vs create strategy | `bake` builds the whole graph unsaved; `bake!` persists the whole graph in one transaction |
 
+## Sequel support
+
+`Sequel::Model` classes bake with the same heuristics through an opt-in mapper plugin:
+
+```ruby
+require 'factory_bakery/sequel'
+```
+
+The require registers a Sequel mapper that claims `Sequel::Model` descendants only; the default mapper keeps handling its own models in the same process. `sequel` stays an **optional dependency** — the gemspec never requires it. If the gem is missing, the require raises a helpful `FactoryBakery::Error` telling you to add `gem 'sequel'` to your Gemfile.
+
+What maps:
+
+| Sequel | Result |
+| --- | --- |
+| `db_schema` column types (`integer`, `string`, `text`, `float`, `decimal`, `date`, `datetime`, `time`, `boolean`, json-ish db types) | A type-appropriate fake value through the same generators the default mapper feeds |
+| Column `max_length`, nullability, defaults, `numeric(10, 2)` db_types | Length bound, nullability, database default kept, precision/scale |
+| Stored validations (`plugin :validation_class_methods`: `validates_presence_of`, `validates_length_of`, `validates_numericality_of`, `validates_format_of`, `validates_inclusion_of`, `validates_acceptance_of`) | The matching constraint fields (presence, length, numericality, format, inclusion, acceptance) |
+| `validates_uniqueness_of` and single-column unique indexes | Uniqueness flag + dataset-backed collision check (regeneration, exhaustion error) |
+| `many_to_one` reflections | Guard columns + alias groups: FKs stay `nil`, never auto-built |
+| `bake!` | Sequel's `save` (raises on validation failure) inside `db.transaction(savepoint: true)`, with the same rollback and verify contract as the default mapper |
+
+Out of scope, documented rather than faked:
+
+- **`plugin :validation_helpers` declarations are not introspectable.** They run imperatively inside `Model#validate` — code, not data — so heuristics fall back to schema facts for those models. Use `plugin :validation_class_methods` (Sequel's reflective declaration API) when you want validator-driven generation.
+- **Sequel associations are never auto-built.** `many_to_one` foreign keys stay `nil`; assign the associated object yourself in an attribute block. The opt-in associations plugin above works against the default mapper's models and answers its clear "not supported" error on Sequel classes.
+- Persisting JSON columns depends on Sequel's `serialization` plugin — a model-level concern outside the mapper.
+
 ## Not supported yet
 
 These are planned, not shipped: sequences, callbacks, and transient attributes. Associations are shipped as the opt-in plugin described above; [docs/associations-design.md](docs/associations-design.md) records the design decisions and rationale.
