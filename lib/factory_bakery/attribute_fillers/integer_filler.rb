@@ -65,7 +65,8 @@ module FactoryBakery
         # when the required parity cannot otherwise be reached.
         generate_in_bounds(lower_bound, upper_bound,
                            lower_explicit: !lower_bound.nil?,
-                           upper_explicit: !upper_bound.nil?)
+                           upper_explicit: !upper_bound.nil?,
+                           context: context)
       end
 
       def calculate_lower_bound(context)
@@ -97,7 +98,7 @@ module FactoryBakery
                                   lower_explicit: true, upper_explicit: true)
       end
 
-      def generate_in_bounds(lower, upper, lower_explicit: false, upper_explicit: false)
+      def generate_in_bounds(lower, upper, lower_explicit: false, upper_explicit: false, context: nil)
         lower_was_nil = lower.nil?
         upper_was_nil = upper.nil?
         lower ||= 0
@@ -113,6 +114,20 @@ module FactoryBakery
           else
             lower, upper = upper, lower
           end
+        end
+
+        # Small explicit windows are enumerated, not guessed: other_than,
+        # exclusions and parity are filters over the candidates, which removes
+        # the retry-budget flake when the valid space is tiny (e.g. 4..5 with
+        # other_than: 5 leaving exactly one survivor).
+        if lower_explicit && upper_explicit && (upper - lower) <= 64
+          candidates = (lower..upper).to_a
+          forbidden = context ? resolve_other_than(context) : nil
+          candidates.delete_if { |v| forbidden && v == forbidden } if forbidden
+          candidates.reject! { |v| @constraints.forbidden_values&.include?(v) } if @constraints.forbidden_values
+          candidates.select!(&:odd?) if @odd_only
+          candidates.select!(&:even?) if @even_only
+          return candidates.sample unless candidates.empty?
         end
 
         value = rand(lower..upper)
