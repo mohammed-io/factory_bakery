@@ -5,6 +5,11 @@ module FactoryBakery
     # The plugin object registered with core on require. It evaluates explicit
     # `association` declarations after the owner exists and delegates :all's
     # automatic collection building to AllAutoBuilder.
+    #
+    # Every class-level fact (kind, foreign keys, polymorphism, inverses)
+    # arrives as plain association introspection from the mapper contract;
+    # what remains here are orchestration decisions and operations on the
+    # live record itself (its association proxies and setters).
     module Plugin
       class << self
         def dsl_module
@@ -32,11 +37,12 @@ module FactoryBakery
         def build_declared_associations(object, declarations)
           return if declarations.empty?
 
-          unless object.class.respond_to?(:reflect_on_association)
-            raise FactoryBakery::Error, "no associations on #{object.class}; it is not ActiveRecord"
-          end
+          introspection = FactoryBakery::MapperRegistry.association_introspection(object.class)
+          raise FactoryBakery::Error, "no associations on #{object.class}; it is not ActiveRecord" unless introspection
 
-          winners(declarations).each_value { |declaration| build(object, declaration) }
+          winners(declarations).each_value do |declaration|
+            build(object, declaration, introspection)
+          end
         end
 
         # Base declaration first, then traits in application order. As with
@@ -47,78 +53,84 @@ module FactoryBakery
           end
         end
 
-        def build(object, declaration)
-          reflection = reflection_for(object, declaration.name)
-          validate!(object, declaration, reflection)
-          return if suppressed?(object, reflection)
+        def build(object, declaration, introspection)
+          entry = entry_for(object, declaration.name, introspection)
+          validate!(object, declaration, entry)
+          return if suppressed?(object, entry)
 
           if declaration.block
-            assign(object, reflection, declaration.block.call(object))
+            assign(object, entry, declaration.block.call(object))
           else
-            build_declared(object, declaration, reflection)
+            build_declared(object, declaration, entry)
           end
         end
 
-        def build_declared(object, declaration, reflection)
-          case reflection.macro
+        def build_declared(object, declaration, entry)
+          case entry.kind
           when :has_many
-            TargetBuilder.build_collection(object, declaration, reflection)
+            TargetBuilder.build_collection(object, declaration, entry)
           when :has_one
-            assign(object, reflection, TargetBuilder.bake_child(object, declaration, reflection))
+            assign(object, entry, TargetBuilder.bake_child(object, declaration, entry))
           else
-            assign(object, reflection, TargetBuilder.bake(object, declaration, reflection))
+            assign(object, entry, TargetBuilder.bake(object, declaration, entry))
           end
         end
 
-        def assign(object, reflection, target)
-          object.public_send("#{reflection.name}=", target)
+        def assign(object, entry, target)
+          object.public_send("#{entry.name}=", target)
         end
 
-        def reflection_for(object, name)
-          # Checked at bake time, not definition time, so factories can load
-          # before the models they name.
-          reflection = object.class.reflect_on_association(name)
-          raise FactoryBakery::Error, "#{object.class} has no association :#{name}" unless reflection
+        # Checked at bake time, not definition time, so factories can load
+        # before the models they name.
+        def entry_for(object, name, introspection)
+          entry = introspection.find { |candidate| candidate.name == name.to_s }
+          raise FactoryBakery::Error, "#{object.class} has no association :#{name}" unless entry
 
-          reflection
+          entry
         end
 
-        def validate!(object, declaration, reflection)
-          if unsupported_shape?(reflection)
+        def validate!(object, declaration, entry)
+          if unsupported_shape?(entry)
             raise FactoryBakery::Error,
-                  "#{object.class}##{reflection.name} (#{reflection.macro}) is not supported; " \
+                  "#{object.class}##{entry.name} (#{entry.kind}) is not supported; " \
                   'assign via an attribute block'
           end
-          validate_strategy!(declaration, reflection)
-          return if declaration.child_count.nil? || reflection.collection?
+          validate_strategy!(declaration, entry)
+          return if declaration.child_count.nil? || collection?(entry)
 
           raise ArgumentError,
-                "count: is only supported on collections, but #{object.class}##{reflection.name} " \
-                "is a #{reflection.macro} association"
+                "count: is only supported on collections, but #{object.class}##{entry.name} " \
+                "is a #{entry.kind} association"
         end
 
         # Reusing a child would rewrite its FK and steal it from another
         # owner, so only an *explicit* :reuse on a non-belongs_to edge raises.
         # An inherited scoped/global choice just skips ineligible edges.
-        def validate_strategy!(declaration, reflection)
+        def validate_strategy!(declaration, entry)
           return unless ReuseResolver.strategy_for(declaration) == :reuse
 
-          if declaration.strategy == :reuse && reflection.macro != :belongs_to
+          if declaration.strategy == :reuse && entry.kind != :belongs_to
             raise ArgumentError,
-                  "strategy: :reuse is only supported on belongs_to, but #{reflection.klass}##{reflection.name} " \
-                  "is a #{reflection.macro} association"
+                  "strategy: :reuse is only supported on belongs_to, but #{qualified(entry)} " \
+                  "is a #{entry.kind} association"
           end
-          return unless reflection.macro == :belongs_to
+          return unless entry.kind == :belongs_to
           return if declaration.traits.empty?
 
           raise ArgumentError,
-                "traits cannot be combined with strategy: :reuse on #{reflection.klass}##{reflection.name}"
+                "traits cannot be combined with strategy: :reuse on #{qualified(entry)}"
         end
 
-        def unsupported_shape?(reflection)
-          return true if reflection.macro == :has_and_belongs_to_many
+        def qualified(entry)
+          "#{entry.target.call}##{entry.name}"
+        end
 
-          reflection.respond_to?(:through_reflection) && !reflection.through_reflection.nil?
+        def unsupported_shape?(entry)
+          entry.kind == :has_and_belongs_to_many || entry.through
+        end
+
+        def collection?(entry)
+          %i[has_many has_and_belongs_to_many].include?(entry.kind)
         end
 
         # Core hands us the instantiated object rather than the overrides hash.
@@ -126,11 +138,11 @@ module FactoryBakery
         # the association loaded; a foreign-key override shows up on the column.
         # Either one suppresses our declaration. For collections the FK lives on
         # the child, so only the association's loaded state can suppress it.
-        def suppressed?(object, reflection)
-          return true if object.association(reflection.name).loaded?
-          return false unless reflection.macro == :belongs_to
+        def suppressed?(object, entry)
+          return true if object.association(entry.name.to_sym).loaded?
+          return false unless entry.kind == :belongs_to
 
-          Array(reflection.foreign_key).any? { |key| !object.public_send(key).nil? }
+          entry.foreign_keys.any? { |key| !object.public_send(key).nil? }
         end
       end
     end

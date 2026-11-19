@@ -20,6 +20,7 @@ if defined?(::ActiveRecord::Base)
   require_relative 'active_record_mapper/reflection_cache'
   require_relative 'active_record_mapper/constraint_reader'
   require_relative 'active_record_mapper/counter_cache_detector'
+  require_relative 'active_record_mapper/association_introspection'
   require_relative 'active_record_mapper/persistence_adapter'
   require_relative 'active_record_mapper/mapper'
 

@@ -67,6 +67,13 @@ module FactoryBakery
         ReflectionCache.belongs_to(klass).map { |reflection| reflection.name.to_s }
       end
 
+      # Plain per-association data for the associations orchestration, or nil
+      # when the class is not association-introspectable at all (see
+      # AssociationIntrospection, which builds and caches the entries).
+      def association_introspection(klass)
+        AssociationIntrospection.for(klass)
+      end
+
       # Uniqueness is delegated to the model's own uniqueness validator, so
       # scoping, case sensitivity, conditions, enum mapping and STI finder
       # resolution behave exactly as they do during a real save.

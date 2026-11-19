@@ -21,7 +21,15 @@ module FactoryBakery
       def column_names
         return [] unless detectable?
 
-        child_reflections.flat_map { |reflection| columns_for(reflection) }.compact.uniq
+        child_reflections.flat_map { |reflection| column_names_for(reflection) }.compact.uniq
+      end
+
+      # @return [Array<String>] names of the counter-cache columns one
+      #   has_many/has_one association maintains on the model (from either the
+      #   collection's own +counter_cache+ option or the child's belongs_to).
+      #   Also public so association introspection can report them per edge.
+      def column_names_for(reflection)
+        [declared_on_parent(reflection), *declared_on_child(reflection)]
       end
 
       private
@@ -33,10 +41,6 @@ module FactoryBakery
 
       def child_reflections
         ReflectionCache.many(@model_class) + ReflectionCache.one(@model_class)
-      end
-
-      def columns_for(reflection)
-        [declared_on_parent(reflection), *declared_on_child(reflection)]
       end
 
       # +counter_cache+ given on the has_many/has_one itself.

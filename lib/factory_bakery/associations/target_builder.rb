@@ -9,90 +9,96 @@ module FactoryBakery
     # bake, before the child's heuristics and auto-build run. Adding the child
     # through the collection writer then lets Rails fire callbacks and wire the
     # inverse exactly as `association.build` would.
+    #
+    # What the edge is (kind, target, inverse) arrives as plain association
+    # introspection from the mapper contract; the record-level operations
+    # below (the association proxy, the collection writer) run on the live
+    # owner exactly as before.
     module TargetBuilder
       class << self
         # A belongs_to target has no owner-side create scope to mirror. With
         # :reuse an existing object (in this graph or in the database) wins; a
         # miss falls through to the ordinary fresh bake.
-        def bake(object, declaration, reflection)
-          klass = target_klass(object, declaration, reflection)
+        def bake(object, declaration, entry)
+          klass = target_klass(object, declaration, entry)
           reuse = ReuseResolver.strategy_for(declaration) == :reuse
           if reuse
             resolved = BakeryBuilder.resolve(klass).first
-            existing = ReuseResolver.existing(resolved, declaration.overrides, reflection)
+            existing = ReuseResolver.existing(resolved, declaration.overrides, entry)
             return existing if existing
           end
 
           fresh = FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
-          ReuseResolver.remember(resolved, declaration.overrides, reflection, fresh) if reuse
+          ReuseResolver.remember(resolved, declaration.overrides, entry, fresh) if reuse
           fresh
         end
 
-        def bake_child(object, declaration, reflection)
+        def bake_child(object, declaration, entry)
           FactoryBakery.bake(
-            target_klass(object, declaration, reflection),
+            target_klass(object, declaration, entry),
             *declaration.traits,
-            **child_overrides(object, reflection).merge(declaration.overrides)
+            **child_overrides(object, entry).merge(declaration.overrides)
           )
         end
 
-        def build_collection(object, declaration, reflection)
+        def build_collection(object, declaration, entry)
           count = declaration.child_count || 1
           if count.zero?
-            empty_collection(object, reflection)
+            empty_collection(object, entry)
             return
           end
 
-          children = Array.new(count) { bake_child(object, declaration, reflection) }
+          children = Array.new(count) { bake_child(object, declaration, entry) }
           # concat is the public collection writer. It fires before_add/after_add
           # callbacks and sets the verified inverse on each child.
-          object.public_send(reflection.name).concat(children)
+          object.public_send(entry.name).concat(children)
         end
 
         private
 
-        def child_overrides(object, reflection)
+        def child_overrides(object, entry)
           # Rails keeps build-time attributes on the association itself; they
           # are exactly what `association.build` writes to a new record.
-          scope_attributes = object.association(reflection.name).send(:scope_for_create)
+          scope_attributes = object.association(entry.name.to_sym).send(:scope_for_create)
           overrides = scope_attributes.transform_keys(&:to_sym)
 
           # Only a verified reverse reflection may bind the inverse object.
           # Without one (a scope, inverse_of: false, custom keys) the create
           # scope above still sets the FK/type and suppresses the child's
           # auto-build of this edge.
-          inverse = reflection.inverse_of
-          overrides[inverse.name.to_sym] = object if inverse&.belongs_to?
+          inverse_name = entry.inverse_name.call
+          inverse_kind = entry.inverse_kind.call
+          overrides[inverse_name.to_sym] = object if !inverse_name.nil? && inverse_kind == :belongs_to
           overrides
         end
 
-        def empty_collection(object, reflection)
-          association = object.association(reflection.name)
+        def empty_collection(object, entry)
+          association = object.association(entry.name.to_sym)
           association.target = []
           association.loaded!
         end
 
-        def target_klass(object, declaration, reflection)
-          if reflection.polymorphic?
-            require_polymorphic_factory!(object, declaration, reflection)
+        def target_klass(object, declaration, entry)
+          if entry.polymorphic
+            require_polymorphic_factory!(object, declaration, entry)
           elsif declaration.factory
-            ensure_compatible!(object, declaration, reflection)
+            ensure_compatible!(object, declaration, entry)
           end
 
-          declaration.factory || reflection.klass
+          declaration.factory || entry.target.call
         end
 
-        def require_polymorphic_factory!(object, declaration, reflection)
+        def require_polymorphic_factory!(object, declaration, entry)
           return if declaration.factory
 
           raise FactoryBakery::Error,
-                "#{object.class} has a polymorphic association :#{reflection.name}; " \
+                "#{object.class} has a polymorphic association :#{entry.name}; " \
                 'pass factory: to name its target class'
         end
 
-        def ensure_compatible!(object, declaration, reflection)
+        def ensure_compatible!(object, declaration, entry)
           resolved, = BakeryBuilder.resolve(declaration.factory)
-          expected = reflection.klass
+          expected = entry.target.call
           return if resolved <= expected
 
           raise FactoryBakery::Error,

@@ -27,6 +27,11 @@ module FactoryBakery
   #       every member maps to the full member set.
   #   belongs_to_association_names(klass) => [String]
   #       Which alias-group members are association names.
+  #   association_introspection(klass) => [Association] or nil
+  #       Plain descriptions of the class's associations, or nil when the
+  #       class is not association-introspectable at all (a plain object, or
+  #       a mapper that does not know associations). An introspectable class
+  #       with no associations answers an empty array.
   #   uniqueness_validated?(klass, attr_name) => bool
   #       Does the attribute carry a uniqueness constraint the mapper can
   #       check?
@@ -50,6 +55,46 @@ module FactoryBakery
         new(names: [].freeze, counter_names: [].freeze)
       end
     end
+
+    # Plain description of one association on a mapped class. The fields are
+    # framework-agnostic data; orchestration over them never touches the
+    # source framework.
+    #
+    # `target`, `inverse_name` and `inverse_kind` are callables rather than
+    # values: a target class and a verified inverse are resolved exactly when
+    # the edge is actually used, so an unloadable sibling association or an
+    # underivable inverse raises the framework's own error at that moment --
+    # never while merely listing a class's associations. Calling `target` on
+    # a polymorphic edge likewise raises the framework's own error, exactly
+    # as reading the class off the source reflection does.
+    Association = Struct.new(
+      # String association name
+      :name,
+      # :belongs_to, :has_one, :has_many or :has_and_belongs_to_many
+      :kind,
+      # String target class name as declared, nil on a polymorphic edge
+      :target_class_name,
+      # [String] backing columns, composite allowed
+      :foreign_keys,
+      # String polymorphic type column, else nil
+      :foreign_type,
+      # Polymorphic edge?
+      :polymorphic,
+      # [String] counter-cache columns this association maintains on its owner
+      :counter_cache_columns,
+      # Presence-validated or NOT NULL foreign key (belongs_to only)
+      :required,
+      # Proc narrowing the edge, else nil
+      :scope,
+      # Join-backed edge (has_many/has_one :through)?
+      :through,
+      # Proc -> Class, resolved lazily
+      :target,
+      # Proc -> Symbol or nil, resolved lazily
+      :inverse_name,
+      # Proc -> Symbol or nil, resolved lazily
+      :inverse_kind
+    )
 
     # Duck-typed fallback for targets no mapper claims: builds never gain
     # transactional semantics, save! only runs when the target itself
@@ -122,6 +167,13 @@ module FactoryBakery
 
       def belongs_to_association_names(klass)
         mapper_for(klass)&.belongs_to_association_names(klass) || []
+      end
+
+      # nil is meaningful here (unlike the other registry answers): it marks a
+      # class no mapper can introspect associations for, which the plugins
+      # distinguish from an introspectable class with no associations.
+      def association_introspection(klass)
+        mapper_for(klass)&.association_introspection(klass)
       end
 
       def uniqueness_validated?(klass, attr_name)
