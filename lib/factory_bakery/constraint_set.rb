@@ -122,7 +122,12 @@ module FactoryBakery
     # introspect get the all-defaults set, which routes to a no-op exactly as
     # duck-typed lookups did before mappers existed.
     def self.for(model_class, attr_name)
-      FactoryBakery::ConstraintReader.call(model_class, attr_name.to_s)
+      FactoryBakery::MapperRegistry.constraints_for(model_class, attr_name)
+    end
+
+    # The all-defaults set for targets no mapper can introspect.
+    def self.empty(model_class, attr_name)
+      new(model_class: model_class, attr_name: attr_name.to_s)
     end
   end
 end

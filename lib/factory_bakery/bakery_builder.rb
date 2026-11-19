@@ -193,7 +193,7 @@ module FactoryBakery
       assign_values(object, counter_values.merge(plugin_values).merge(winning_declarations).merge(normalized_overrides))
 
       resolver = AttributeFillers::BakeTimeValues.new(
-        @model_klass, bound_values, (skip + [primary_key_name]).compact, object
+        @model_klass, bound_values, skip.compact, object
       )
       generated = heuristic_values(skip, resolver)
       @heuristic_attribute_names = generated.keys
@@ -255,9 +255,8 @@ module FactoryBakery
     end
 
     def belongs_to_association_names
-      return [] unless @model_klass.respond_to?(:reflect_on_all_associations)
-
-      ReflectionCache.belongs_to(@model_klass).map { |reflection| reflection.name.to_s }
+      @belongs_to_association_names ||=
+        FactoryBakery::MapperRegistry.belongs_to_association_names(@model_klass)
     end
 
     def plugin_declarations(plugin)
@@ -278,32 +277,24 @@ module FactoryBakery
     end
 
     # Lazily derived alias groups. Each member maps to the full set; attributes
-    # outside any group (and every attribute of a PORO, which has no
-    # reflections) are their own singleton group and resolve exactly as before.
+    # outside any group (and every attribute of a target without associations)
+    # are their own singleton group and resolve exactly as before.
     def alias_groups
-      return {} unless @model_klass.respond_to?(:reflect_on_all_associations)
-
-      ReflectionCache.belongs_to(@model_klass).each_with_object({}) do |reflection, groups|
-        members = [reflection.name.to_s, *Array(reflection.foreign_key).map(&:to_s)]
-        members << reflection.foreign_type.to_s if reflection.polymorphic?
-        members.uniq!
-        members.each { |member| groups[member] = members }
-      end
+      @alias_groups ||= FactoryBakery::MapperRegistry.alias_groups(@model_klass)
     end
 
     # A group taken by a declaration, an override or initialize_with suppresses
     # every heuristic member of that group, not just the member that was named.
-    # Columns behind a belongs_to are always skipped (see belongs_to_column_names),
-    # and Rails-maintained counter caches are never randomly filled either.
+    # Guard columns (foreign keys, polymorphic types, the STI discriminator,
+    # the primary key and framework-maintained counters) are never filled
+    # heuristically either.
     def suppressed_names(overrides, groups)
       names = declared_names + overrides.keys + normalize_keys(@initialize_with_attributes).keys
-      (names.flat_map { |name| groups.fetch(name, [name]) } + belongs_to_column_names +
-        counter_cache_column_names).uniq
+      (names.flat_map { |name| groups.fetch(name, [name]) } + guard_columns.names).uniq
     end
 
     def heuristic_values(skip, resolver)
       candidate_attribute_names.each do |attribute_name|
-        next if column_backed? && attribute_name == @model_klass.primary_key.to_s
         next if skip.include?(attribute_name)
 
         resolver.value_for(attribute_name)
@@ -311,17 +302,17 @@ module FactoryBakery
       resolver.values
     end
 
-    def skipped_attribute_names
-      declared_names + normalize_keys(@initialize_with_attributes).keys + counter_cache_column_names
+    def guard_columns
+      @guard_columns ||= FactoryBakery::MapperRegistry.guard_columns(@model_klass)
     end
 
     def counter_cache_column_names
-      @counter_cache_column_names ||= column_backed? ? CounterCacheDetector.new(@model_klass).column_names : []
+      guard_columns.counter_names
     end
 
-    # Rails maintains counter caches, so they are never randomly filled. A
-    # database default (and a naturally nil nullable column) is left untouched;
-    # a NOT NULL counter without a default becomes 0. This sits in the heuristic
+    # Framework-maintained counters are never randomly filled. A database
+    # default (and a naturally nil nullable column) is left untouched; a NOT
+    # NULL counter without a default becomes 0. This sits in the heuristic
     # layer, so declarations and overrides still win.
     def counter_cache_values
       explicitly_set = declared_names + normalize_keys(@initialize_with_attributes).keys
@@ -329,51 +320,16 @@ module FactoryBakery
       counter_cache_column_names.each_with_object({}) do |name, values|
         next if explicitly_set.include?(name)
 
-        column = @model_klass.columns_hash[name]
-        values[name] = 0 if column && !column.null && column.default.nil?
+        constraints = FactoryBakery::MapperRegistry.constraints_for(@model_klass, name)
+        values[name] = 0 if constraints.column_backed && !constraints.nullable && !constraints.has_default
       end
     end
 
-    def column_backed?
-      @model_klass.respond_to?(:columns_hash)
-    end
-
-    # Columns behind a belongs_to cannot be guessed: a random FK dangles
-    # against a real DB constraint, and a random polymorphic type is not a
-    # constant. Leave them nil so declarations and overrides are the only
-    # source of a value. POROs expose no reflections, so they are unaffected.
-    # `foreign_key` is an array for composite FKs and a string otherwise.
-    def belongs_to_column_names
-      return [] unless column_backed? && @model_klass.respond_to?(:reflect_on_all_associations)
-
-      ReflectionCache.belongs_to(@model_klass).flat_map do |reflection|
-        names = Array(reflection.foreign_key).map(&:to_s)
-        names << reflection.foreign_type.to_s if reflection.polymorphic?
-        names
-      end
-    end
-
-    # ActiveRecord targets enumerate their columns. POROs have no schema, so
-    # the only attributes that can carry heuristic information are the ones
-    # their validators declare.
+    # The mapper decides which attributes heuristics may consider: columns
+    # for schema-backed targets, validator-declared names (plus their
+    # confirmation twins) for validator-bearing ones.
     def candidate_attribute_names
-      return @model_klass.columns_hash.keys.map(&:to_s) if column_backed?
-
-      validator_attribute_names
-    end
-
-    def validator_attribute_names
-      return [] unless @model_klass.respond_to?(:validators)
-
-      @model_klass.validators.flat_map do |validator|
-        names = Array(validator.attributes).map(&:to_s)
-        class_name = validator.class.name
-        if class_name == 'ActiveModel::Validations::ConfirmationValidator'
-          names + names.map { |name| "#{name}_confirmation" }
-        else
-          names
-        end
-      end.uniq
+      @candidate_attribute_names ||= FactoryBakery::MapperRegistry.attribute_universe(@model_klass)
     end
 
     # Only winning declarations are evaluated: a losing block's value would be

@@ -5,11 +5,9 @@ require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/railitie'
 require_relative 'factory_bakery/plugin_registry'
 require_relative 'factory_bakery/constraint_set'
-require_relative 'factory_bakery/constraint_reader'
-require_relative 'factory_bakery/reflection_cache'
+require_relative 'factory_bakery/mapper_registry'
 require_relative 'factory_bakery/bakery_builder'
 require_relative 'factory_bakery/build_context'
-require_relative 'factory_bakery/counter_cache_detector'
 require_relative 'factory_bakery/persistence_verifier'
 require_relative 'factory_bakery/definition_loader'
 require_relative 'factory_bakery/methods'
@@ -87,22 +85,25 @@ module FactoryBakery
     # verify-and-raise step all run inside one transaction opened with
     # `requires_new`. That is a savepoint when the caller already has a
     # transaction, so a failure rolls back every row this bake wrote without
-    # disturbing the caller's transaction.
+    # disturbing the caller's transaction. The transaction, save and
+    # persistence check are performed through the mapper's persistence adapter;
+    # a target no mapper claims keeps plain build-and-save semantics.
     def bake!(target, *traits, **overrides)
       model_klass, definition = BakeryBuilder.resolve(target)
+      adapter = MapperRegistry.persistence_adapter(model_klass)
 
-      unless model_klass.respond_to?(:transaction)
+      unless adapter.transactional?
         object = bake(target, *traits, **overrides)
-        object.save! if object.respond_to?(:save!)
+        adapter.save!(object)
         return object
       end
 
       object = nil
-      model_klass.transaction(requires_new: true) do
+      adapter.transaction(model_klass) do
         object = BuildContext.push(model_klass) do
           record = build_object(model_klass, definition, overrides, traits)
-          record.save! if record.respond_to?(:save!)
-          verify_persistence!(record)
+          adapter.save!(record)
+          verify_persistence!(record, adapter)
           record
         end
       end
@@ -119,9 +120,14 @@ module FactoryBakery
       object
     end
 
-    def verify_persistence!(root)
+    def verify_persistence!(root, adapter)
       entries = BuildContext.records_under(BuildContext.current.path)
-      PersistenceVerifier.new(root, entries).call
+      PersistenceVerifier.new(root, entries, adapter).call
     end
   end
 end
+
+# Auto-register the built-in mapper plugins. Each plugin requires its own
+# framework and registers itself only when that framework is available; the
+# framework-agnostic core never references a framework constant.
+FactoryBakery::MapperRegistry.load_default_mappers
