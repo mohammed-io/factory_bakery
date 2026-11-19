@@ -3,10 +3,29 @@
 module FactoryBakery
   module AttributeFillers
     class FillerSelector
+      # V2: presence had to outrank the noop routing or a blank DB default
+      # failed on every bake. W1 (issue #41) generalizes that escape hatch to
+      # every validator that constrains the *shape* of the generated value.
+      # A defaulted column carrying any of these must reach the real type-based
+      # filler; only a defaulted column with none of them keeps its DB default.
+      # Absence is deliberately excluded: it wants nil, which noop already
+      # provides, and the fillers still honor it when they do run.
       PRESENCE_VALIDATORS = [
         'ActiveModel::Validations::PresenceValidator',
         'ActiveRecord::Validations::PresenceValidator'
       ].freeze
+
+      VALUE_SHAPING_VALIDATORS = (PRESENCE_VALIDATORS + [
+        'ActiveModel::Validations::FormatValidator',
+        'ActiveModel::Validations::LengthValidator',
+        'ActiveRecord::Validations::LengthValidator',
+        'ActiveRecord::Validations::UniquenessValidator',
+        'ActiveModel::Validations::InclusionValidator',
+        'ActiveModel::Validations::ExclusionValidator',
+        'ActiveModel::Validations::NumericalityValidator',
+        'ActiveRecord::Validations::NumericalityValidator',
+        'ActiveModel::Validations::ComparisonValidator'
+      ]).freeze
 
       attr_reader :model_class, :attr_name
 
@@ -95,10 +114,12 @@ module FactoryBakery
         column = model_class.columns_hash[attr_name]
 
         # Priority 3: Has default or virtual attribute -> Noop, unless a
-        # presence validator needs a value. Leaving a defaulted column alone
-        # preserves a blank default (e.g. "" or false) and fails presence on
-        # every bake, so presence must be decided before this routing.
-        return noop_filler if (has_default?(column) || virtual?(column)) && !presence_validator?
+        # value-shaping validator needs a generated value. Leaving a defaulted
+        # column alone preserves a blank default (e.g. "" or false) that fails
+        # presence/format/length/etc. on every bake, so the escape hatch must be
+        # decided before this routing. With no such validator the DB default
+        # still wins, unchanged from before W1.
+        return noop_filler if (has_default?(column) || virtual?(column)) && !value_shaping_validator?
 
         # Priority 4: Enum attribute
         return enum_filler if enum_attribute?
@@ -114,9 +135,9 @@ module FactoryBakery
         end
       end
 
-      def presence_validator?
+      def value_shaping_validator?
         validators_for(attr_name).any? do |validator|
-          PRESENCE_VALIDATORS.include?(validator.class.name)
+          VALUE_SHAPING_VALIDATORS.include?(validator.class.name)
         end
       end
 
