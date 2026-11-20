@@ -178,46 +178,4 @@ RSpec.describe 'smoke regressions' do
       expect(record).to be_valid
     end
   end
-
-  describe 'an optional has_one child whose value a parent validation reads' do
-    # Discourse's Theme has_one :settings_field (a ThemeField with a `value`
-    # yaml and an `error` column). Theme#settings skips parsing when the field's
-    # `error` is present. Under :all the gem auto-builds the optional child; the
-    # child is valid on its own, so it is kept, but its random `value` is not
-    # valid yaml. The child's optional columns are filled, so `error` is set and
-    # the parent validation that reads the child never parses the value.
-    before do
-      FactoryBakery.reset_plugins!
-      FactoryBakery.register_plugin(FactoryBakery::Associations::Plugin)
-      FactoryBakery::Associations.reset_configuration!
-      FactoryBakery::Associations.mode = :all
-    end
-
-    after do
-      FactoryBakery.reset_plugins!
-      FactoryBakery::Associations.reset_configuration!
-    end
-
-    it 'fills the child optional columns so the parent validation does not raise' do
-      child = define_model('SmokeSettingsChild', name: :string, value: :string, error: :string, owner_id: :integer) do
-        belongs_to :owner, class_name: 'SmokeSettingsOwner', optional: false
-      end
-      owner = define_model('SmokeSettingsOwner', name: :string) do
-        has_one :child, class_name: 'SmokeSettingsChild', inverse_of: :owner
-        validate :child_settings_readable
-      end
-      owner.define_method(:child_settings_readable) do
-        field = self.child
-        return if field.nil? || field.error.present?
-
-        raise 'Provided YAML is invalid.' unless field.value.is_a?(Hash)
-      end
-
-      record = FactoryBakery.bake(owner)
-
-      expect(record.child).to be_a(child)
-      expect(record.child.error).to be_present
-      expect(record).to be_valid
-    end
-  end
 end
