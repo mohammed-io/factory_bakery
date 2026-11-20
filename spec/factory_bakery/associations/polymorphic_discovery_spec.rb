@@ -104,6 +104,79 @@ RSpec.describe 'FactoryBakery polymorphic association discovery' do
     end
   end
 
+  describe 'inclusion validators backed by literal constants' do
+    it 'bakes a target named by a constant Array of class-name strings' do
+      topic = define_model('PolyConstTopic', title: :string)
+      post = define_model('PolyConstPost', title: :string)
+      stub_const('PolyConstLinkableTypes', %w[PolyConstTopic PolyConstPost])
+      link_model = define_model('PolyConstLink', target_type: :string, target_id: :integer) do
+        belongs_to :target, polymorphic: true, optional: false
+        validates :target_type, inclusion: { in: PolyConstLinkableTypes }
+      end
+
+      record = FactoryBakery.bake!(link_model)
+
+      expect([topic, post]).to include(record.target.class)
+      expect(record.target_type).to eq(record.target.class.polymorphic_name)
+      expect(record).to be_valid
+    end
+
+    it 'does not pick a class whose stored type the validator would reject' do
+      topic = define_model('PolyObjTopic', title: :string)
+      # Class objects never equal the String Rails stores in target_type, so
+      # Rails' own inclusion check would reject them: not a usable domain.
+      stub_const('PolyObjLinkableTypes', [topic])
+      link_model = define_model('PolyObjLink', target_type: :string, target_id: :integer) do
+        belongs_to :target, polymorphic: true, optional: false
+        validates :target_type, inclusion: { in: PolyObjLinkableTypes }
+      end
+
+      expect { FactoryBakery.bake(link_model) }
+        .to raise_error(FactoryBakery::Error, /required polymorphic.*target/)
+    end
+
+    it 'bakes a target named by a frozen Set constant' do
+      topic = define_model('PolySetTopic', title: :string)
+      post = define_model('PolySetPost', title: :string)
+      stub_const('PolySetLinkableTypes', Set.new(%w[PolySetTopic PolySetPost]).freeze)
+      link_model = define_model('PolySetLink', target_type: :string, target_id: :integer) do
+        belongs_to :target, polymorphic: true, optional: false
+        validates :target_type, inclusion: { in: PolySetLinkableTypes }
+      end
+
+      record = FactoryBakery.bake!(link_model)
+
+      expect([topic, post]).to include(record.target.class)
+      expect(record.target_type).to eq(record.target.class.polymorphic_name)
+      expect(record).to be_valid
+    end
+
+    it 'does not evaluate a lambda domain and still raises the no-target error' do
+      link_model = define_model('PolyLambdaLink', target_type: :string, target_id: :integer) do
+        belongs_to :target, polymorphic: true, optional: false
+        validates :target_type, inclusion: { in: -> { %w[PolyLambdaTopic] } }
+      end
+
+      expect { FactoryBakery.bake(link_model) }
+        .to raise_error(FactoryBakery::Error, /required polymorphic.*target/)
+    end
+
+    it 'skips an allowed name that does not constantize and bakes another allowed class' do
+      topic = define_model('PolySkipTopic', title: :string)
+      stub_const('PolySkipTypes', %w[PolySkipTopic NoSuchClass])
+      link_model = define_model('PolySkipLink', target_type: :string, target_id: :integer) do
+        belongs_to :target, polymorphic: true, optional: false
+        validates :target_type, inclusion: { in: PolySkipTypes }
+      end
+
+      record = FactoryBakery.bake!(link_model)
+
+      expect(record.target).to be_a(topic)
+      expect(record.target_type).to eq(topic.polymorphic_name)
+      expect(record).to be_valid
+    end
+  end
+
   describe 'errors and precedence' do
     it 'keeps the actionable error and lists every discovery source when nothing is found' do
       owner = define_model('PolyNoInverseOwner', name: :string)

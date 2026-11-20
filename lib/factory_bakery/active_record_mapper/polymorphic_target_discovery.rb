@@ -52,7 +52,7 @@ module FactoryBakery
         end
 
         def discover(klass, entry, eager_load)
-          candidates = inclusion_candidates(klass, entry.foreign_type)
+          candidates = inclusion_candidates(klass, entry)
           candidates = inverse_candidates(klass, entry.name) if candidates.empty?
           candidates = eager_load_candidates(klass, entry.name) if candidates.empty? && eager_load
 
@@ -62,19 +62,44 @@ module FactoryBakery
         end
 
         # Inclusion validators name their targets in plain strings, so this
-        # source needs no model loading (the lazy-Zeitwerk case).
-        def inclusion_candidates(klass, column)
+        # source needs no model loading (the lazy-Zeitwerk case). Only literal,
+        # statically known `:in` values are read: a Proc or Symbol is evaluated
+        # by Rails against the record at validation time, so we never evaluate
+        # it here (conditional validators with `if:`/`unless:` are left to
+        # definitions). A candidate must be a table-backed ActiveRecord class
+        # whose `polymorphic_name` (the value Rails writes to the type column,
+        # the STI base class for STI targets) is itself in the allowed list;
+        # otherwise the validator would reject what Rails stores. Class
+        # objects in the list never match the stored String, so they are
+        # skipped too.
+        def inclusion_candidates(klass, entry)
           return [] unless klass.respond_to?(:validators_on)
           return [] unless defined?(::ActiveModel::Validations::InclusionValidator)
 
-          klass.validators_on(column.to_s).flat_map do |validator|
+          klass.validators_on(entry.foreign_type.to_s).flat_map do |validator|
             next [] unless validator.is_a?(::ActiveModel::Validations::InclusionValidator)
 
-            Array(validator.options[:in]).filter_map do |name|
+            allowed = static_domain(validator.options[:in])
+            allowed.filter_map do |name|
               candidate = constantize(name, klass)
-              candidate if candidate.is_a?(Class)
+              candidate if viable_candidate?(candidate, allowed)
             end
           end.uniq
+        end
+
+        # Literal Array / Set domains only; a Proc or Symbol is resolved by
+        # Rails per record and is left to definitions.
+        def static_domain(raw)
+          return [] unless raw.is_a?(Array) || raw.is_a?(::Set)
+
+          raw.grep(String)
+        end
+
+        def viable_candidate?(candidate, allowed)
+          candidate.is_a?(Class) &&
+            defined?(::ActiveRecord::Base) && candidate < ::ActiveRecord::Base &&
+            table_exists?(candidate) &&
+            allowed.include?(candidate.polymorphic_name)
         end
 
         # An `as:` inverse declares which child class its owner accepts. Match
