@@ -150,4 +150,32 @@ RSpec.describe 'smoke regressions' do
       expect(model.where(code: 'ex').count).to eq(1)
     end
   end
+
+  describe 'a virtual inclusion attribute whose filled value a custom validation rejects' do
+    # Discourse's LlmModel#requested_vision_mode is an attr_accessor with an
+    # inclusion validator that allows nil, and a `validate` block that rejects a
+    # non-nil value ("a vision model must be selected"). The lean record is
+    # invalid for an unrelated reason (missing credential), so the verified
+    # fallback rebuilds with optional columns filled, and the rebuild fills
+    # requested_vision_mode. The rebuild's error lands on :base, not on the
+    # filled attribute, so the fill must still be put back to nil.
+    it 'leaves the virtual attribute nil instead of returning the rejected fill' do
+      model = define_model('SmokeVirtualVision', name: :string, api_key: :string) do
+        attr_accessor :requested_vision_mode
+
+        validates :name, presence: true
+        validates :requested_vision_mode,
+                  inclusion: { in: %w[disabled delegated native] },
+                  allow_nil: true
+        validate { errors.add(:base, 'a credential must be selected') if api_key.blank? }
+        validate { errors.add(:base, 'a vision model must be selected') if requested_vision_mode.present? }
+      end
+
+      record = FactoryBakery.bake(model)
+
+      expect(record.api_key).to be_present
+      expect(record.requested_vision_mode).to be_nil
+      expect(record).to be_valid
+    end
+  end
 end

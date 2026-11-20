@@ -36,7 +36,7 @@ module FactoryBakery
       attempt, probe = attempt_in_savepoint(model_klass, definition, overrides, traits, adapter)
       return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
-      rebuild(model_klass, definition, overrides, traits, adapter)
+      verify_rebuild!(rebuild(model_klass, definition, overrides, traits, adapter))
     end
 
     def build_object(model_klass, definition, overrides, traits, mode)
@@ -75,15 +75,16 @@ module FactoryBakery
     end
 
     # The rebuild, with the opt-in scoped on. It answers a lean record that was
-    # already probed and found invalid, so it is returned as built, exactly as
-    # before. The opt-in applies only to the record being rebuilt: a nested
-    # bake (a parent built by a declaration or association) is a separate
-    # record with its own fallback and stays lean, so the rebuild cannot turn
-    # a nested parent into a fuller record that fails its own validation.
+    # already probed and found invalid. The opt-in applies only to the record
+    # being rebuilt: a nested bake (a parent built by a declaration or
+    # association) is a separate record with its own fallback and stays lean, so
+    # the rebuild cannot turn a nested parent into a fuller record that fails its
+    # own validation. The rebuilt record is verified by the caller, which puts
+    # back any virtual optional fill a custom validation rejects.
     def rebuild(model_klass, definition, overrides, traits, adapter)
       FillOptional.with_rebuild(BuildContext.current.depth) do
         adapter.transaction(model_klass) do
-          build_object(model_klass, definition, overrides, traits, true).first
+          build_object(model_klass, definition, overrides, traits, true)
         end
       end
     end
@@ -120,9 +121,11 @@ module FactoryBakery
       return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
       BuildContext.trim_generated_records!(mark)
-      FillOptional.with_rebuild(BuildContext.current.depth) do
-        build_object(model_klass, definition, overrides, traits, true).first
-      end
+      verify_rebuild!(
+        FillOptional.with_rebuild(BuildContext.current.depth) do
+          build_object(model_klass, definition, overrides, traits, true)
+        end
+      )
     end
 
     # :invalid when the lean record must be rebuilt, :valid when the probe
@@ -142,10 +145,39 @@ module FactoryBakery
       valid?(object) ? :valid : :invalid
     end
 
+    # A rebuild answers a lean record that was probed and found invalid, so it
+    # is normally returned as built. It is verified only when it filled a
+    # virtual (non-column-backed) optional attribute: such a value is the one
+    # the heuristics cannot validate against the schema, and the custom
+    # validator that rejects it may name :base or another attribute rather than
+    # the filled one (Discourse's LlmModel#requested_vision_mode is exactly
+    # this shape). A rebuild of only column-backed optionals is already known
+    # valid, so it is returned without another `valid?`.
+    def verify_rebuild!(attempt)
+      object, builder = attempt
+      return object unless builder.verification_needed?
+      return object unless builder.optional_candidates?
+      return object unless builder.optional_candidates.any? { |name| virtual_optional?(object, name) }
+
+      verify_optional_fills!(attempt, nil)
+    end
+
+    def virtual_optional?(object, name)
+      !MapperRegistry.constraints_for(object.class, name).column_backed
+    rescue StandardError
+      false
+    end
+
     # Undo optional fills that app validation rejects: an optional column
-    # carries a generated value, a custom validator adds an error to it, and
-    # the record the caller gets back would be invalid. Each such fill is put
-    # back to its column default and kept only when that reduces the errors.
+    # carries a generated value, a custom validator adds an error, and the
+    # record the caller gets back would be invalid. A custom validator can add
+    # that error to :base or to another attribute rather than to the filled one
+    # (for example a virtual inclusion attribute whose value a `validate` block
+    # rejects), so every optional fill is tried, not just the ones whose own
+    # attribute carries an error. Each fill is put back to its column default
+    # and kept only when that makes the record valid with fewer errors;
+    # otherwise the generated value is restored, so a reset is never a
+    # regression.
     def verify_optional_fills!(attempt, probe)
       object, builder = attempt
       return object unless builder.verification_needed?
@@ -153,7 +185,9 @@ module FactoryBakery
       return object if probe == :valid
       return object if valid?(object)
 
-      (builder.optional_candidates & error_attributes(object)).each do |name|
+      errored = error_attributes(object)
+      candidates = builder.optional_candidates
+      (candidates.select { |name| errored.include?(name) } + (candidates - errored)).each do |name|
         reset_optional_fill(object, name)
       end
       object
