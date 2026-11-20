@@ -6,6 +6,10 @@
 
 ### Smoke regression fixes
 
+- Preserve the original column name when an ActiveRecord attribute has no alias, so JSON-cast index detection applies to both ordinary column names and aliases. This covers Discourse's `notifications.data` expression and partial indexes.
+- In `:all`, skip automatic optional `belongs_to` associations with missing foreign-key columns before assigning them. Required associations and explicit declarations continue to report failures.
+- The Mastodon smoke definitions let `FeaturedTag` resolve its own tag by name and let `AccountConversation` derive `last_status` from a persisted status ID.
+
 - Automatic `:all` child builds honor `skip` and explicit values for collections and singular associations, including Mastodon's `Status#reblogs`.
 - When an FK-presence parent shares its primary key with a newly baked `has_one` owner, ActiveRecord saves the owner first and uses the matching row if the owner's callback creates it.
 - The Mastodon smoke definitions create a matching account summary for recommendations, a persisted follow for list memberships, and an original public status for pins.

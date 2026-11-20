@@ -67,6 +67,22 @@ RSpec.describe 'JSON stored in a text column (index-cast)' do
     expect { JSON.parse(record.data) }.not_to raise_error
   end
 
+  it 'generates JSON for both a cast column and its attribute alias' do
+    model = define_model('JsonCastAliasedNote', data: { type: :string, null: false }) do
+      alias_attribute :payload, :data
+    end
+    connection = model.connection
+    index = ActiveRecord::ConnectionAdapters::IndexDefinition.new(
+      model.table_name, 'data_username', false, "(((data)::jsonb ->> 'username'::text))"
+    )
+    allow(connection).to receive(:indexes).with(model.table_name).and_return([index])
+
+    record = FactoryBakery.bake!(model).reload
+
+    expect(JSON.parse(record.data)).to be_a(Hash)
+    expect(JSON.parse(record.payload)).to be_a(Hash)
+  end
+
   it 'leaves a text column no index casts alone' do
     model = define_model('JsonCastPlain', data: { type: :string, limit: 1000, null: false })
     stub_json_cast(model, [])

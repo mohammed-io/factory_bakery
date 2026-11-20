@@ -186,7 +186,7 @@ module FactoryBakery
       # document for such a column. An alias name resolves to its column.
       def json_text?(klass, attr_name)
         column = attr_name.to_s
-        column = klass.attribute_aliases[column] if klass.respond_to?(:attribute_aliases)
+        column = klass.attribute_aliases.fetch(column, column) if klass.respond_to?(:attribute_aliases)
 
         json_text_columns(klass).include?(column.to_s)
       end

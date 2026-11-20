@@ -102,6 +102,19 @@ RSpec.describe 'FactoryBakery associations :all bounded graph' do
   end
 
   describe 'optional edges are best-effort (B2)' do
+    it 'skips an optional belongs_to with a missing foreign key and keeps a writable sibling' do
+      parent = define_model('BoundWritableParent', name: :string)
+      child = define_model('BoundMissingForeignKey', title: :string, parent_id: :integer) do
+        belongs_to :retired_parent, class_name: 'BoundWritableParent', optional: true
+        belongs_to :parent, class_name: 'BoundWritableParent', optional: true
+      end
+
+      record = FactoryBakery.bake!(child).reload
+
+      expect(record.parent).to be_persisted
+      expect(parent.count).to eq(1)
+    end
+
     it 'leaves a has_many empty when every child is invalid' do
       define_model('BoundBadPost', title: :string, author_id: :integer) do
         belongs_to :author, class_name: 'BoundBadAuthor', optional: true

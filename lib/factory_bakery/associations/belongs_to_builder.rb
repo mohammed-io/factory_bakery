@@ -23,7 +23,7 @@ module FactoryBakery
           return {} unless introspection
 
           entries_to_build(introspection, context).each_with_object({}) do |entry, values|
-            next if suppressed?(entry, taken)
+            next if skip_automatic_edge?(klass, entry, taken)
 
             key, value = build_automatic_value(klass, entry, values.values)
             next if value.nil? && optional_edge?(entry)
@@ -119,8 +119,10 @@ module FactoryBakery
           entry.kind == :belongs_to && entry.natural_key_name.nil?
         end
 
-        def suppressed?(entry, taken)
-          alias_members(entry).any? { |name| taken.include?(name) }
+        def skip_automatic_edge?(klass, entry, taken)
+          return true if alias_members(entry).any? { |name| taken.include?(name) }
+
+          optional_edge?(entry) && entry.foreign_keys.any? { |key| !FactoryBakery::MapperRegistry.column?(klass, key) }
         end
 
         def alias_members(entry)

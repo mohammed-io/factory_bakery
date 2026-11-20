@@ -207,9 +207,18 @@ end
 FactoryBakery.define(Conversation) do
   skip :statuses
 end
+FactoryBakery.define(FeaturedTag) do
+  # set_tag resolves the tag by name. Giving it an unsaved Tag instead makes
+  # the callback save the Tag and any optional descendants while validating.
+  skip :tag
+  name { "smoke#{SecureRandom.hex(5)}" }
+end
 FactoryBakery.define(AccountConversation) do
-  # before_validation derives last_status_id from status_ids (account_conversation.rb:114-117).
-  status_ids { [FactoryBakery.bake!(Status).id] }
+  # set_last_status derives the association from persisted status IDs.
+  skip :last_status
+  status_ids do
+    FactoryBakery::Associations.with(mode: :required_only) { [FactoryBakery.bake!(Status).id] }
+  end
 end
 FactoryBakery.define(StatusPin) do
   pin_account = nil
