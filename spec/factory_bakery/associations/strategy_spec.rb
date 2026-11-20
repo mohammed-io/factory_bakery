@@ -181,6 +181,17 @@ RSpec.describe 'association strategies' do
   end
 
   describe 'uniqueness rule' do
+    it 'still reuses when the only unique index on the owner is an expression index' do
+      category, post = define_category_and_post('ReuseExpressionIndex')
+      post.connection.add_column(post.table_name, :title, :string)
+      post.connection.add_index(post.table_name, 'lower(title)', unique: true, name: 'reuse_expr_title')
+      post.reset_column_information
+      existing = category.create!(name: 'News')
+      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique }
+
+      expect(FactoryBakery.bake(post).category).to eq(existing)
+    end
+
     it 'builds a fresh parent when the foreign key has a unique index' do
       category, post = define_category_and_post('ReuseUniqueIndex')
       post.connection.add_index(post.table_name, :category_id, unique: true)

@@ -194,10 +194,14 @@ module FactoryBakery
       # Unique indexes as column-name arrays, composite included. The
       # associations strategy asks whether any index covers one of an edge's
       # foreign keys: any uniqueness there makes a reused row wrong, even when
-      # the index constrains a combination rather than the column alone.
+      # the index constrains a combination rather than the column alone. An
+      # expression index (`lower(name)`) reports its columns as one SQL string,
+      # not a column list, so it names no foreign key and is left out.
       def unique_index_groups(klass)
         class_memo(klass, :@factory_bakery_unique_index_groups) do
-          all_unique_indexes(klass).map { |index| index.columns.map(&:to_s).freeze }.freeze
+          all_unique_indexes(klass)
+            .select { |index| index.columns.is_a?(Array) }
+            .map { |index| index.columns.map(&:to_s).freeze }.freeze
         end
       end
 
