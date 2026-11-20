@@ -51,13 +51,7 @@ module FactoryBakery
 
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(klass)
           mark = BuildContext.generated_records.length
-          adapter.transaction(klass) do
-            parent = yield
-            settled = settle(parent, entry)
-            raise AdoptedParent, settled unless parent.equal?(settled)
-
-            parent
-          end
+          adapter.transaction(klass) { settle_fresh(yield, entry, mark) }
         rescue AdoptedParent => e
           BuildContext.trim_generated_records!(mark)
           e.row.reload
@@ -77,6 +71,22 @@ module FactoryBakery
 
         private
 
+        def settle_fresh(parent, entry, mark)
+          if read_only_new?(parent, entry)
+            settled = adopt(parent)
+            raise AdoptedParent, settled unless parent.equal?(settled)
+
+            return parent
+          end
+
+          persist_fk!(parent, entry) do |adapter|
+            next unless adapter.respond_to?(:callback_created_parent)
+
+            generated = BuildContext.generated_records.drop(mark).map { |_path, record| record }
+            adapter.callback_created_parent(parent, generated)
+          end
+        end
+
         def read_only_new?(parent, entry)
           new_record?(parent) &&
             FactoryBakery::MapperRegistry.read_only?(parent) &&
@@ -88,6 +98,12 @@ module FactoryBakery
 
           refuse_broken_parents!(parent)
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(parent)
+          replacement = yield adapter if block_given?
+          if replacement
+            BuildContext.replace_generated!(parent, replacement)
+            return replacement
+          end
+
           adapter.save!(parent)
           parent
         end

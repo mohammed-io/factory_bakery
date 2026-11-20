@@ -177,6 +177,26 @@ end
 FactoryBakery.define(List) do
   skip :list_accounts
 end
+FactoryBakery.define(ListAccount) do
+  list { FactoryBakery.bake!(List, account: FactoryBakery.bake!(Account)) }
+  association :account do |membership|
+    followed = FactoryBakery.bake!(Account)
+    FactoryBakery.bake!(Follow, account: membership.list.account, target_account: followed)
+    followed
+  end
+  skip :follow, :follow_request
+end
+
+# Both association readers use account_id. Populate the summary table, which
+# Mastodon normally maintains through AccountSummary.refresh.
+FactoryBakery.define(FollowRecommendation) do
+  account_id do
+    account = FactoryBakery.bake!(Account)
+    AccountSummary.insert_all!([{ account_id: account.id }])
+    account.id
+  end
+end
+
 FactoryBakery.define(Status) do
   text { 'smoke status text' }
   skip :bookmarks, :quotes, :reblogs, :replies, :media_attachments
@@ -194,5 +214,5 @@ end
 FactoryBakery.define(StatusPin) do
   pin_account = nil
   account { pin_account = FactoryBakery.bake!(Account) }
-  status { FactoryBakery.bake!(Status, account: pin_account) }
+  status { FactoryBakery.bake!(Status, account: pin_account, reblog: nil, visibility: :public) }
 end

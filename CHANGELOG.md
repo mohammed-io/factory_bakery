@@ -6,6 +6,10 @@
 
 ### Smoke regression fixes
 
+- Automatic `:all` child builds honor `skip` and explicit values for collections and singular associations, including Mastodon's `Status#reblogs`.
+- When an FK-presence parent shares its primary key with a newly baked `has_one` owner, ActiveRecord saves the owner first and uses the matching row if the owner's callback creates it.
+- The Mastodon smoke definitions create a matching account summary for recommendations, a persisted follow for list memberships, and an original public status for pins.
+
 - Ordinary database columns ending in `_confirmation` follow their schema unless the source attribute has a confirmation validator. This preserves defaults such as `Boards::Board#require_confirmation` when baking a board or a record that belongs to one.
 - Automatic optional `belongs_to` builds in `:all` skip unresolved targets without calling the association writer. Required and explicitly declared associations still report resolution errors.
 

@@ -16,7 +16,7 @@ module FactoryBakery
           return unless introspection
           return if Associations.past_depth?(context)
 
-          declared = declarations.map { |declaration| declaration.name.to_s }
+          declared = Array(context.taken_names) + declarations.map { |declaration| declaration.name.to_s }
           buildable_entries(introspection).each do |entry|
             next if skip?(object, entry, declared)
 

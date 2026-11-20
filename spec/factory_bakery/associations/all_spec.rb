@@ -54,6 +54,22 @@ RSpec.describe 'FactoryBakery associations :all mode' do
   end
 
   describe 'kinds built in :all' do
+    it 'honors skipped collections whose validation depends on the saved owner' do
+      post_model = define_model('AllSkippedPost', title: :string) do
+        has_many :replies, class_name: 'AllSkippedReply', inverse_of: :post
+      end
+      reply_model = define_model('AllSkippedReply', post_id: :integer) do
+        belongs_to :post, class_name: 'AllSkippedPost', optional: false
+        validate { errors.add(:post, :invalid) if post&.id }
+      end
+      FactoryBakery.define(post_model) { skip :replies }
+
+      post = FactoryBakery.bake!(post_model)
+
+      expect(post.reload.replies).to be_empty
+      expect(reply_model.count).to eq(0)
+    end
+
     it 'builds an optional belongs_to with the parent class and factory heuristics' do
       author_model, post_model, = define_graph('AllOptional')
       FactoryBakery.define(author_model) { name { 'from factory' } }

@@ -51,6 +51,59 @@ RSpec.describe 'raw-FK presence edges' do
     [owner, child]
   end
 
+  describe 'shared-primary-key parents' do
+    let(:models) do
+      account = define_model('FkCallbackAccount', name: :string) do
+        has_one :profile, class_name: 'FkCallbackProfile', inverse_of: :account
+      end
+      profile = define_model('FkCallbackProfile', account_id: :bigint, bio: :string) do
+        self.primary_key = :account_id
+        belongs_to :account, class_name: 'FkCallbackAccount', inverse_of: :profile, optional: false
+      end
+      profile.connection.add_index(profile.table_name, :account_id, unique: true)
+      view = define_model('FkCallbackView', profile_id: :integer) do
+        belongs_to :profile, class_name: 'FkCallbackProfile', optional: false
+        validates :profile_id, presence: true
+      end
+      [account, profile, view]
+    end
+
+    def add_profile_callback(account)
+      account.after_create do
+        FkCallbackProfile.create!(account_id: id, bio: 'from callback')
+      end
+    end
+
+    it 'uses the shared-primary-key parent created by a newly baked owner callback' do
+      account, profile, view = models
+      add_profile_callback(account)
+      record = FactoryBakery.bake!(view).reload
+
+      expect(record.profile.bio).to eq('from callback')
+      expect(record.profile_id).to eq(account.sole.id)
+      expect(profile.count).to eq(1)
+    end
+
+    it 'inserts the generated parent when the owner callback creates no row' do
+      account, profile, view = models
+      FactoryBakery.define(profile) { bio { 'from definition' } }
+      record = FactoryBakery.bake!(view).reload
+
+      expect(record.profile.bio).to eq('from definition')
+      expect(record.profile_id).to eq(account.sole.id)
+      expect(profile.count).to eq(1)
+    end
+
+    it 'rolls the owner and its callback-created parent back when saving the root fails' do
+      account, profile, view = models
+      add_profile_callback(account)
+      view.validate { errors.add(:base, 'cannot save view') }
+
+      expect { FactoryBakery.bake!(view) }.to raise_error(ActiveRecord::RecordInvalid, /cannot save view/)
+      expect([account.count, profile.count, view.count]).to eq([0, 0, 0])
+    end
+  end
+
   describe 'bake!' do
     it 'persists a real parent, fills the FK and produces a valid record end-to-end' do
       owner_model, child_model = define_fk_edge('FkBang')

@@ -27,6 +27,36 @@ module FactoryBakery
         record.save! if record.respond_to?(:save!)
       end
 
+      # A shared primary key gives the callback row and the candidate the same
+      # identity. Save the new owner first so its callback can claim that key.
+      def callback_created_parent(parent, generated)
+        ReflectionCache.all(parent.class).lazy.filter_map do |reflection|
+          next unless shared_primary_key_owner?(parent, reflection)
+
+          owner = parent.association(reflection.name).target
+          next unless owner&.new_record? && generated.any? { |record| record.equal?(owner) }
+
+          save_owner_and_find_parent(owner, parent, reflection)
+        end.first
+      end
+
+      def save_owner_and_find_parent(owner, parent, reflection)
+        inverse = owner.association(reflection.inverse_of.name)
+        inverse.reset if inverse.target.equal?(parent)
+        save!(owner)
+        replacement = inverse.reload&.target
+        return replacement if replacement.instance_of?(parent.class)
+
+        parent.public_send("#{reflection.name}=", owner)
+        nil
+      end
+
+      def shared_primary_key_owner?(parent, reflection)
+        reflection.macro == :belongs_to && !reflection.polymorphic? &&
+          Array(reflection.foreign_key) == Array(parent.class.primary_key) &&
+          reflection.inverse_of&.macro == :has_one
+      end
+
       def persisted?(record)
         !record.respond_to?(:new_record?) || !record.new_record?
       end
