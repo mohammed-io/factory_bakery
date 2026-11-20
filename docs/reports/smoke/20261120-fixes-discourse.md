@@ -16,6 +16,67 @@ checked with `valid?(:create) || valid?`, with the attachments plugin active.
 
 ---
 
+## 0. Update: primary-email fix (`c9bbf79`, C/D rerun)
+
+The top remaining defect (§5.1) is fixed. Discourse already filled
+`primary_email`. Three related gem bugs kept it from sticking in `:all`:
+
+1. `AllAutoBuilder` builds no children past `max_depth`, and the required
+   `has_one` builder only ran in `:required_only`. So a deep `User` had no
+   primary email. Required `has_one`s are now built past the depth in `:all`
+   too (`9094bf5`).
+2. A required `belongs_to` accepts any parent object. Rails' autosave then
+   quietly skips an *invalid* unsaved parent and inserts the child with a nil
+   FK (`uploads.user_id`, `mcp_oauth_authorizations.mcp_oauth_client_id`,
+   `post_hotlinked_media.post_id`). An optional `:all` child is now kept only
+   when its unsaved required parents are valid, checked transitively. An
+   FK-presence parent the gem inserts is checked first, and if one is broken
+   the gem raises an error naming it (`b2ebc40`, `c9bbf79`).
+3. Records still being built are never validated early. Discourse's
+   `before_validation` loads `primary_email`, and an early validation made the
+   still-empty association read as decided (`BuildContext.building`,
+   `c9bbf79`).
+
+```ruby
+# lib/factory_bakery/associations/required_has_one_builder.rb
+return unless Associations.mode == :required_only || Associations.past_depth?(context)
+
+# lib/factory_bakery/associations/graph_validity.rb
+def judgeable?(parent)
+  parent.respond_to?(:new_record?) && parent.new_record? && !BuildContext.in_progress?(parent)
+end
+```
+
+C/D rerun at `c9bbf79` (A/B are unaffected; the change is `:all`-only):
+
+| Pass | Automatic: `e207d72` → `c9bbf79` | Definitions: `e207d72` → `c9bbf79` |
+|---|---|---|
+| C (all / fresh) | 249 → **329** /414 (**79.5 %**) | 332 → **335** (80.9 %) |
+| D (all / reuse) | 374 → 375 | 381 → 382 |
+
+- 76 models that failed with `Primary email can't be blank` are now valid.
+  None fail with it any more.
+- 4 models that failed on a NOT NULL are now valid: `AiAgentMcpServer`,
+  `DiscourseWorkflows::WorkflowPublishHistory`,
+  `DiscourseWorkflows::WorkflowVersion`, `Invite`.
+- The new C drops (`AiMcpServer` DNS, `LlmCreditDailyUsage` "Vision dependents
+  is invalid") are in the random-provider/DNS group of §5.3. In Mastodon the
+  same rerun moved C 111 → 110 automatic and 113 → 114 defined. Its two C
+  drops fail the same way at `9c5d49e`: `Collection` 1/3 runs, and
+  `AccountConversation` 3/3.
+- The largest remaining C cluster is now `RateLimiter::LimitExceeded`
+  (26 automatic, 29 defined). Discourse's development rate limiter fills up as
+  the run goes on, so this comes from the environment, not the gem. Running the
+  smoke with `RateLimiter.disable` would remove it.
+- Next gem-side clusters: 6 × duplicate key (e.g. `user_profiles_pkey`, where
+  User's `after_create :create_user_profile` and the auto-built `has_one`
+  collide), 4 × `Topic can't be blank, User can't be blank`, 3 × NOT NULL.
+
+Raw JSONL: `…/discourse/fix4-auto.jsonl`, `…/discourse/fix4-defined.jsonl`
+(passes C and D only).
+
+---
+
 ## 1. Summary
 
 ### Automatic round: no app definitions
@@ -249,7 +310,7 @@ FactoryBakery.define(Theme) { skip :settings_field }
 
 ## 5. Still failing and what is next
 
-### 5.1 `:all` + fresh `User` (98 models with `Primary email can't be blank`, plus 29 on `uploads.user_id`, automatic C)
+### 5.1 `:all` + fresh `User` (98 models with `Primary email can't be blank`, plus 29 on `uploads.user_id`, automatic C). **Fixed in `c9bbf79`, see §0**
 
 `User has_one :primary_email` with `validates :primary_email, presence: true`.
 In required-only mode the required `has_one` is built and `bake!(User)` works.
