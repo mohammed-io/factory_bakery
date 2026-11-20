@@ -30,9 +30,9 @@ module FactoryBakery
             return FkParentPersistence.settle(existing, entry) if existing
           end
 
-          fresh = FkParentPersistence.settle(
-            FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides), entry
-          )
+          fresh = FkParentPersistence.build(object.class, entry) do
+            FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
+          end
           ReuseResolver.remember(resolved, declaration.overrides, entry, fresh) if reuse
           fresh
         end

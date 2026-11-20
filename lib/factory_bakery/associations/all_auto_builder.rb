@@ -177,7 +177,9 @@ module FactoryBakery
         def build_optional_child(object, entry, declaration, refresh: false)
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(object.class)
           mark = BuildContext.generated_records.length
-          build = lambda do
+          # A proc, not a lambda: the adapter's transaction may yield the
+          # transaction object, which this block ignores.
+          build = proc do
             next if refresh && object.association(entry.name.to_sym).reload
 
             build_and_validate(object, entry, declaration)

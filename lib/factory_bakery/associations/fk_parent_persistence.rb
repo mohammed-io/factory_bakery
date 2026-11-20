@@ -29,9 +29,38 @@ module FactoryBakery
     # database-free under `bake`. Polymorphic edges keep their existing
     # behavior too.
     module FkParentPersistence
+      # Carries the replacement out of the savepoint after the fresh build rolls back.
+      class AdoptedParent < StandardError
+        attr_reader :row
+
+        def initialize(row)
+          @row = row
+          super()
+        end
+      end
+
       class << self
         def required?(entry)
           !entry.nil? && entry.fk_presence && !entry.polymorphic
+        end
+
+        # Adopting a row discards the entire fresh build, including writes
+        # made by nested declarations or FK-presence edges.
+        def build(klass, entry)
+          return yield unless required?(entry) || BuildContext.persisting?
+
+          adapter = FactoryBakery::MapperRegistry.persistence_adapter(klass)
+          mark = BuildContext.generated_records.length
+          adapter.transaction(klass) do
+            parent = yield
+            settled = settle(parent, entry)
+            raise AdoptedParent, settled unless parent.equal?(settled)
+
+            parent
+          end
+        rescue AdoptedParent => e
+          BuildContext.trim_generated_records!(mark)
+          e.row.reload
         end
 
         # Returns the parent that should be assigned to the owner: the object

@@ -25,7 +25,7 @@ module FactoryBakery
           entries_to_build(introspection, context).each_with_object({}) do |entry, values|
             next if suppressed?(entry, taken)
 
-            key, value = build_value(klass, entry, values.values)
+            key, value = build_automatic_value(klass, entry, values.values)
             values[key] = value
           end
         end
@@ -49,14 +49,31 @@ module FactoryBakery
 
         private
 
+        def build_automatic_value(klass, entry, siblings)
+          return build_value(klass, entry, siblings) unless BuildContext.persisting? && Associations.mode == :all
+
+          mark = BuildContext.generated_records.length
+          key, value = build_value(klass, entry, siblings)
+          BuildContext.record_automatic_parent(BuildContext.current_record, entry, value, mark)
+          [key, value]
+        end
+
         def auto_building?
           %i[required_only all].include?(Associations.mode)
         end
 
         def entries_to_build(introspection, context)
           belongs_to = introspection.select { |entry| id_keyed_belongs_to?(entry) }
+          belongs_to = without_polymorphic_aliases(belongs_to) if Associations.mode == :all
           entries = mode_entries(belongs_to, context)
           (entries + error_directed(belongs_to, entries)).map { |entry| fk_blamed(entry) }
+        end
+
+        # Typed readers of the same polymorphic FK do not represent separate
+        # parents. Writing them would overwrite the chosen activity's ID.
+        def without_polymorphic_aliases(entries)
+          polymorphic_keys = entries.select(&:polymorphic).map { |entry| entry.foreign_keys.sort }
+          entries.reject { |entry| !entry.polymorphic && polymorphic_keys.include?(entry.foreign_keys.sort) }
         end
 
         def mode_entries(belongs_to, context)
@@ -309,7 +326,7 @@ module FactoryBakery
         end
 
         def bake_fresh(target_class, entry, reuse)
-          fresh = FkParentPersistence.settle(FactoryBakery.bake(target_class), entry)
+          fresh = FkParentPersistence.build(target_class, entry) { FactoryBakery.bake(target_class) }
           ReuseResolver.remember(target_class, {}, entry, fresh) if reuse
           fresh
         end

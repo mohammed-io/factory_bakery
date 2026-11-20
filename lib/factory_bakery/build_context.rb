@@ -50,6 +50,8 @@ module FactoryBakery
     RECORD_KEY = :factory_bakery_current_record
     CONDITIONS_KEY = :factory_bakery_condition_results
     UNIQUE_VALUES_KEY = :factory_bakery_unique_values
+    AUTOMATIC_PARENTS_KEY = :factory_bakery_automatic_parents
+    AutomaticParent = Data.define(:owner, :entry, :parent, :records)
     # FK-column-validated edges need a persisted parent. Under `bake!` that
     # parent is inserted inside the root savepoint; under plain `bake` it is an
     # explicit, documented exception to the unsaved graph. This fiber-local
@@ -103,6 +105,18 @@ module FactoryBakery
         end
       end
 
+      def automatic_parents
+        Fiber[AUTOMATIC_PARENTS_KEY] ||= []
+      end
+
+      def record_automatic_parent(owner, entry, parent, mark)
+        records = generated_records.drop(mark).map { |_path, object| object }
+        return unless records.any? { |record| record.equal?(parent) }
+
+        edge = AutomaticParent.new(owner:, entry:, parent:, records:)
+        Fiber[AUTOMATIC_PARENTS_KEY] = automatic_parents + [edge]
+      end
+
       # Swaps an object the bake built for the object that ends up in the
       # graph. An FK-presence parent that cannot be written (a read-only
       # model) is replaced by the existing row it adopted, so `bake!`
@@ -127,11 +141,16 @@ module FactoryBakery
         records = generated_records
         return if records.length <= mark
 
-        discarded = records.drop(mark).map { |_path, object| object.object_id }
+        discarded = Set.new.compare_by_identity.merge(records.drop(mark).map { |_path, object| object })
         Fiber[RECORDS_KEY] = records.first(mark)
-        stale = graph_cache.reject { |_key, (_path, object)| discarded.include?(object.object_id) }
-        Fiber[GRAPH_CACHE_KEY] = stale
+        discard_cached_records!(discarded)
       end
+
+      def discard_cached_records!(discarded)
+        Fiber[AUTOMATIC_PARENTS_KEY] = automatic_parents.reject { |edge| discarded.include?(edge.parent) }
+        Fiber[GRAPH_CACHE_KEY] = graph_cache.reject { |_key, (_path, object)| discarded.include?(object) }
+      end
+      private :discard_cached_records!
 
       # Per-top-level-bake cache used by :reuse_non_unique edges. The value is a pair of
       # the build path (nil for an object adopted from the database) and the
@@ -269,6 +288,7 @@ module FactoryBakery
         Fiber[GRAPH_CACHE_KEY] = {}
         Fiber[CONDITIONS_KEY] = {}
         Fiber[UNIQUE_VALUES_KEY] = {}
+        Fiber[AUTOMATIC_PARENTS_KEY] = []
       end
       private :reset_per_bake_caches!
 

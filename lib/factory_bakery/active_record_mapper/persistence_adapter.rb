@@ -19,8 +19,8 @@ module FactoryBakery
       end
 
       # A savepoint relative to the caller's transaction, when there is one.
-      def transaction(klass)
-        klass.transaction(requires_new: true) { yield }
+      def transaction(klass, &block)
+        klass.transaction(requires_new: true, &block)
       end
 
       def save!(record)
@@ -29,6 +29,48 @@ module FactoryBakery
 
       def persisted?(record)
         !record.respond_to?(:new_record?) || !record.new_record?
+      end
+
+      def automatic_parent_discarded?(edge)
+        owner = edge.owner
+        return false unless owner.persisted?
+
+        association = owner.association(edge.entry.name.to_sym)
+        return true if optional_parent_cleared?(edge.entry, association, owner)
+        return false if association.target.equal?(edge.parent) && !association.stale_target?
+
+        persisted_replacement?(edge, association)
+      end
+
+      def optional_parent_cleared?(entry, association, owner)
+        return false if entry.required || entry.fk_presence
+        return false unless association.loaded? && association.target.nil?
+
+        entry.foreign_keys.all? { |key| owner[key].nil? && !owner.will_save_change_to_attribute?(key) }
+      end
+
+      def persisted_replacement?(edge, association)
+        return false unless foreign_key_persisted?(edge)
+
+        replacement = association.reader
+        replacement&.persisted? && !replacement.equal?(edge.parent)
+      end
+
+      def foreign_key_persisted?(edge)
+        owner = edge.owner
+        keys = [*edge.entry.foreign_keys, edge.entry.foreign_type].compact
+        keys.all? { |key| !owner[key].nil? && !owner.will_save_change_to_attribute?(key) }
+      end
+
+      def cached_association_targets(record)
+        return [] unless record.respond_to?(:association_cached?)
+
+        ReflectionCache.all(record.class).flat_map do |reflection|
+          next [] unless record.association_cached?(reflection.name)
+
+          association = record.association(reflection.name)
+          association.stale_target? ? [] : Array(association.target)
+        end
       end
 
       # Best-effort name of the association the record hangs off. The object
