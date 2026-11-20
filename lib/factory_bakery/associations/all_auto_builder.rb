@@ -155,11 +155,11 @@ module FactoryBakery
 
         def build_and_validate(object, entry, declaration)
           if entry.kind == :has_many
-            TargetBuilder.build_collection(object, declaration, entry)
+            TargetBuilder.build_collection(object, declaration, entry, fill_optional: true)
             children = object.public_send(entry.name).to_a
             raise FactoryBakery::FallbackBuilder::DiscardAttempt if children.any? { |child| invalid_child?(child) }
           else
-            child = TargetBuilder.bake_child(object, declaration, entry)
+            child = TargetBuilder.bake_child(object, declaration, entry, fill_optional: true)
             raise FactoryBakery::FallbackBuilder::DiscardAttempt if invalid_child?(child)
 
             object.public_send("#{entry.name}=", child)

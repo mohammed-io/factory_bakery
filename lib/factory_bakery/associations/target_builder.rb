@@ -35,22 +35,23 @@ module FactoryBakery
           fresh
         end
 
-        def bake_child(object, declaration, entry)
+        def bake_child(object, declaration, entry, fill_optional: nil)
           FactoryBakery.bake(
             target_klass(object, declaration, entry),
             *declaration.traits,
+            fill_optional: fill_optional,
             **child_overrides(object, entry).merge(declaration.overrides)
           )
         end
 
-        def build_collection(object, declaration, entry)
+        def build_collection(object, declaration, entry, fill_optional: nil)
           count = declaration.child_count || 1
           if count.zero?
             empty_collection(object, entry)
             return
           end
 
-          children = Array.new(count) { bake_child(object, declaration, entry) }
+          children = Array.new(count) { bake_child(object, declaration, entry, fill_optional: fill_optional) }
           # concat is the public collection writer. It fires before_add/after_add
           # callbacks and sets the verified inverse on each child.
           object.public_send(entry.name).concat(children)
