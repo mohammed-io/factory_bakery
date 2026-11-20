@@ -232,4 +232,50 @@ RSpec.describe 'FactoryBakery associations :all bounded graph' do
       expect(Object.const_get('BoundItem').count).to eq(0)
     end
   end
+
+  describe 'optional child whose required parent cannot be made valid (B6)' do
+    # Discourse: an optional :all child (McpOauthAuthorization) requires a
+    # parent (McpOauthClient) that bakes invalid. The child is valid on its own,
+    # because a required belongs_to accepts any parent object, but inserting it
+    # would skip the invalid parent and write a nil foreign key.
+    def define_broken_parent_graph(prefix)
+      define_model("#{prefix}Client", name: :string) do
+        validate { errors.add(:base, 'needs app knowledge') }
+      end
+      grant = define_model("#{prefix}Grant", note: :string, owner_id: :integer, client_id: :integer) do
+        belongs_to :owner, class_name: "#{prefix}Owner", optional: false
+        belongs_to :client, class_name: "#{prefix}Client", optional: false
+      end
+      owner = define_model("#{prefix}Owner", name: :string) do
+        has_many :grants, class_name: "#{prefix}Grant", foreign_key: :owner_id, inverse_of: :owner
+      end
+      [owner, grant]
+    end
+
+    it 'drops the optional collection instead of inserting a nil foreign key' do
+      owner_model, grant_model = define_broken_parent_graph('BoundBrokenParent')
+
+      owner = FactoryBakery.bake!(owner_model)
+
+      expect(owner).to be_persisted
+      expect(owner.grants).to be_empty
+      expect(grant_model.where(client_id: nil).count).to eq(0)
+    end
+
+    it 'keeps an optional child whose required parents are valid' do
+      define_model('BoundFineClient', name: :string)
+      define_model('BoundFineGrant', owner_id: :integer, client_id: :integer) do
+        belongs_to :owner, class_name: 'BoundFineOwner', optional: false
+        belongs_to :client, class_name: 'BoundFineClient', optional: false
+      end
+      owner_model = define_model('BoundFineOwner', name: :string) do
+        has_many :grants, class_name: 'BoundFineGrant', foreign_key: :owner_id, inverse_of: :owner
+      end
+
+      grant = FactoryBakery.bake!(owner_model).grants.first
+
+      expect(grant).to be_persisted
+      expect(grant.client).to be_persisted
+    end
+  end
 end

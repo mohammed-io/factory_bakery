@@ -177,13 +177,10 @@ module FactoryBakery
         end
 
         # A child whose validation raises cannot certify itself either, so it
-        # counts as invalid and the optional edge is dropped.
+        # counts as invalid and the optional edge is dropped. Its unsaved
+        # required parents must be valid too (GraphValidity).
         def invalid_child?(child)
-          return false unless child.respond_to?(:valid?)
-
-          !child.valid?
-        rescue StandardError
-          true
+          GraphValidity.invalid?(child)
         end
 
         # Rails' anonymous HABTM join model declares `belongs_to :left_side`

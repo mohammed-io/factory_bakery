@@ -167,11 +167,7 @@ module FactoryBakery
         end
 
         def invalid_child?(child)
-          return false unless child.respond_to?(:valid?)
-
-          !child.valid?
-        rescue StandardError
-          true
+          GraphValidity.invalid?(child)
         end
 
         def discard_child(object, entry)
