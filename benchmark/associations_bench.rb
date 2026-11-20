@@ -324,10 +324,10 @@ module AssocBench
         expect: { select: 4, insert: 8 }
       },
       {
-        name: ':reuse rows present bake!',
+        name: ':reuse_non_unique rows present bake!',
         plugin: true,
         mode: :required_only,
-        strategy: :reuse,
+        strategy: :reuse_non_unique,
         target: Comment,
         persist: true,
         prepare: lambda {
@@ -337,10 +337,10 @@ module AssocBench
         expect: { select: 2, insert: 1 }
       },
       {
-        name: ':reuse rows absent bake!',
+        name: ':reuse_non_unique rows absent bake!',
         plugin: true,
         mode: :required_only,
-        strategy: :reuse,
+        strategy: :reuse_non_unique,
         target: Comment,
         persist: true,
         prepare: -> { clear_tables! },

@@ -191,6 +191,16 @@ module FactoryBakery
           unique_index_columns(klass).include?(attr_name.to_s)
       end
 
+      # Unique indexes as column-name arrays, composite included. The
+      # associations strategy asks whether any index covers one of an edge's
+      # foreign keys: any uniqueness there makes a reused row wrong, even when
+      # the index constrains a combination rather than the column alone.
+      def unique_index_groups(klass)
+        class_memo(klass, :@factory_bakery_unique_index_groups) do
+          all_unique_indexes(klass).map { |index| index.columns.map(&:to_s).freeze }.freeze
+        end
+      end
+
       # A `case_sensitive: false` uniqueness validator treats "Token" and
       # "token" as one value. The core normalizes the values in its per-bake
       # collision registry with this, so two unsaved siblings collide the way
@@ -449,10 +459,15 @@ module FactoryBakery
       end
 
       def unique_indexes(klass)
+        all_unique_indexes(klass).select { |index| index.columns.length == 1 }
+      end
+
+      def all_unique_indexes(klass)
         return [] unless klass.respond_to?(:connection) && klass.respond_to?(:table_name)
 
-        klass.connection.indexes(klass.table_name)
-             .select { |index| index.unique && index.columns.length == 1 }
+        klass.connection.indexes(klass.table_name).select(&:unique)
+      rescue StandardError
+        []
       end
 
       def build_probe(record, attr_name, value)

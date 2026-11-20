@@ -146,7 +146,7 @@ RSpec.describe 'FactoryBakery polymorphic association discovery' do
       expect(FactoryBakery.bake(link_model).chatable).to be_nil
     end
 
-    it 'reuses an existing row of a discovered candidate under :reuse' do
+    it 'reuses an existing row of a discovered candidate under :reuse_non_unique' do
       link_model = define_link('PolyReuse', :chatable, :chatable_type)
       owner = define_model('PolyReuseOwner', name: :string) do
         has_one :reuse_channel, as: :chatable, class_name: 'PolyReuseLink'
@@ -154,7 +154,7 @@ RSpec.describe 'FactoryBakery polymorphic association discovery' do
       stub_descendants(owner)
       existing = owner.create!(name: 'existing')
 
-      record = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(link_model) }
+      record = FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake(link_model) }
 
       expect(record.chatable).to eq(existing)
       expect(owner.count).to eq(1)

@@ -225,7 +225,7 @@ module FactoryBakery
         # edge and is allowed. Candidates are tried in the mapper's deterministic
         # order; the first one that bakes cleanly wins.
         def build_for_target(klass, entry, target_class)
-          reuse = ReuseResolver.strategy_for(nil) == :reuse
+          reuse = ReuseResolver.reuse?(klass, nil, entry)
           if reuse
             existing = resolve_reuse(klass, target_class, entry)
             return existing if existing
@@ -284,8 +284,8 @@ module FactoryBakery
         # An in-graph or database hit is reused as-is, except that an FK-presence
         # edge still gives it a real id before the owner validates and a
         # read-only parent is settled exactly like a fresh one. A miss returns
-        # nil and the caller bakes a fresh parent, as it would without a reuse
-        # strategy.
+        # nil and the caller bakes a fresh parent, as it would without a
+        # reuse_non_unique strategy.
         def resolve_reuse(_klass, target_class, entry)
           existing = ReuseResolver.existing(target_class, {}, entry)
           FkParentPersistence.settle(existing, entry) if existing

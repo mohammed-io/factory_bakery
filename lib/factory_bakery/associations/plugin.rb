@@ -111,21 +111,22 @@ module FactoryBakery
         end
 
         # Reusing a child would rewrite its FK and steal it from another
-        # owner, so only an *explicit* :reuse on a non-belongs_to edge raises.
-        # An inherited scoped/global choice just skips ineligible edges.
+        # owner, so only an *explicit* :reuse_non_unique on a non-belongs_to
+        # edge raises. An inherited scoped/global choice just skips ineligible
+        # edges.
         def validate_strategy!(declaration, entry)
-          return unless ReuseResolver.strategy_for(declaration) == :reuse
+          return unless ReuseResolver.strategy_for(declaration) == :reuse_non_unique
 
-          if declaration.strategy == :reuse && entry.kind != :belongs_to
+          if declaration.strategy == :reuse_non_unique && entry.kind != :belongs_to
             raise ArgumentError,
-                  "strategy: :reuse is only supported on belongs_to, but #{qualified(entry)} " \
+                  "strategy: :reuse_non_unique is only supported on belongs_to, but #{qualified(entry)} " \
                   "is a #{entry.kind} association"
           end
           return unless entry.kind == :belongs_to
           return if declaration.traits.empty?
 
           raise ArgumentError,
-                "traits cannot be combined with strategy: :reuse on #{qualified(entry)}"
+                "traits cannot be combined with strategy: :reuse_non_unique on #{qualified(entry)}"
         end
 
         def qualified(entry)

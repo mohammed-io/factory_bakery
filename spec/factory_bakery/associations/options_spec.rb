@@ -286,10 +286,10 @@ RSpec.describe 'association options' do
   end
 
   describe 'unsupported options' do
-    it 'accepts an explicit strategy: :reuse on a belongs_to' do
+    it 'accepts an explicit strategy: :reuse_non_unique on a belongs_to' do
       author, post = define_author_and_post('AssocStrategyReuse')
       existing = author.create!(name: 'existing')
-      FactoryBakery.define(post) { association :author, strategy: :reuse }
+      FactoryBakery.define(post) { association :author, strategy: :reuse_non_unique }
 
       expect(FactoryBakery.bake(post).author).to eq(existing)
     end

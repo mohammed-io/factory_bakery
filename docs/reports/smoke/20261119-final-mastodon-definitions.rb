@@ -81,12 +81,13 @@ FactoryBakery.define(InstanceModerationNote) do
   domain { 'example.com' } # skip also suppresses the natural-key FK column
 end
 
-# AccountAlias#set_uri resolves the acct over the network; use a persisted local
-# account and explicit acct/uri so validation needs no outbound HTTP.
+# AccountAlias#set_uri runs ResolveAccountService before validation. A remote
+# acct (user@domain) makes it send a webfinger HTTP request; a bare local
+# username returns the local account straight from the database. So alias
+# another persisted local account: no network, and set_uri fills uri itself.
 FactoryBakery.define(AccountAlias) do
   account { FactoryBakery.bake!(Account) }
-  acct { 'smoke_alias@example.com' }
-  uri { 'https://example.com/accounts/smoke-alias' }
+  acct { FactoryBakery.bake!(Account).username }
 end
 
 # AccountMigration requires a target account whose also_known_as contains the

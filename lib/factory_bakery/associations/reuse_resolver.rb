@@ -4,9 +4,9 @@ require 'date'
 
 module FactoryBakery
   module Associations
-    # Finds an existing target for a `strategy: :reuse` edge. A strict per-bake
-    # cache is checked first, then the database. A miss returns nil and the
-    # caller builds fresh (unsaved under `bake`).
+    # Finds an existing target for a `strategy: :reuse_non_unique` edge. A
+    # strict per-bake cache is checked first, then the database. A miss returns
+    # nil and the caller builds fresh (unsaved under `bake`).
     #
     # The association facts arrive as plain introspection data (`scope` is the
     # very Proc the mapper copied off the reflection, so cache keys stay
@@ -19,14 +19,27 @@ module FactoryBakery
     # traits and non-scalar overrides are never part of it. Objects are only
     # entered once their build is complete, and an ancestor is never handed out
     # because that would close a cycle.
-    module ReuseResolver
+    module ReuseResolver # rubocop:disable Metrics/ModuleLength
       SCALAR_CLASSES = [String, Numeric, Symbol, Date, Time, TrueClass, FalseClass, NilClass].freeze
 
-      class << self
+      class << self # rubocop:disable Metrics/ClassLength
         # Most specific setting wins: the association, then the scope, then the
         # global value. :fresh is the default.
         def strategy_for(declaration)
           declaration&.strategy || Associations.strategy
+        end
+
+        # `:reuse_non_unique` takes an existing target only when the edge
+        # cannot be unique: a foreign key with any uniqueness (a uniqueness
+        # validator, a single or composite unique index) or a `has_one`
+        # inverse means one row per owner, so a fresh target is built instead,
+        # exactly as `:fresh` does. Such an edge is never looked up and never
+        # remembered.
+        def reuse?(owner_class, declaration, entry)
+          return false unless strategy_for(declaration) == :reuse_non_unique
+          return false unless entry.kind == :belongs_to
+
+          !unique?(owner_class, entry)
         end
 
         # `overrides` are the values passed to this association. Only scalar,
@@ -51,7 +64,8 @@ module FactoryBakery
         end
 
         # Registers an object that the caller just built after a miss. Only
-        # :reuse edges call this, so a :fresh build never writes the cache.
+        # :reuse_non_unique edges call this, so a :fresh build never writes the
+        # cache.
         def remember(klass, overrides, entry, object)
           return unless object && klass.respond_to?(:columns_hash)
 
@@ -74,12 +88,42 @@ module FactoryBakery
 
         private
 
+        # Any uniqueness on the edge makes a reused row wrong: the owner would
+        # have two rows competing for one target (or one target for two
+        # owners). The mapper reports both validator-backed uniqueness and
+        # single-column unique indexes; `unique_index_groups` adds the
+        # composite indexes the per-attribute check deliberately ignores.
+        def unique?(owner_class, entry)
+          columns = Array(entry.foreign_keys).map(&:to_s)
+
+          unique_index?(owner_class, columns) ||
+            columns.any? { |column| FactoryBakery::MapperRegistry.uniqueness_validated?(owner_class, column) } ||
+            FactoryBakery::MapperRegistry.uniqueness_validated?(owner_class, entry.name.to_s) ||
+            has_one_inverse?(entry)
+        end
+
+        # Inverse detection loads the target class, which a broken or missing
+        # constant can make raise; an unknown inverse is not a has_one.
+        def has_one_inverse?(entry) # rubocop:disable Naming/PredicatePrefix
+          entry.inverse_kind.call == :has_one
+        rescue StandardError
+          false
+        end
+
+        def unique_index?(owner_class, columns)
+          wanted = columns.map(&:to_s)
+
+          FactoryBakery::MapperRegistry.unique_index_groups(owner_class).any? do |group|
+            group.any? { |column| wanted.include?(column) }
+          end
+        end
+
         def validate_pk!(klass)
           primary_key = klass.primary_key
           return if primary_key.is_a?(String) || primary_key.is_a?(Symbol)
 
           raise ArgumentError,
-                'strategy: :reuse needs a single primary key to pick deterministically, ' \
+                'strategy: :reuse_non_unique needs a single primary key to pick deterministically, ' \
                 "but #{klass} has #{primary_key.inspect}"
         end
 
@@ -89,10 +133,12 @@ module FactoryBakery
           overrides.each_key do |name|
             key = name.to_s
             if encrypted?(klass, key)
-              raise ArgumentError, "strategy: :reuse cannot match encrypted attribute #{key.inspect} on #{klass}"
+              raise ArgumentError,
+                    "strategy: :reuse_non_unique cannot match encrypted attribute #{key.inspect} on #{klass}"
             end
             if serialized?(klass, key)
-              raise ArgumentError, "strategy: :reuse cannot match serialized column #{key.inspect} on #{klass}"
+              raise ArgumentError,
+                    "strategy: :reuse_non_unique cannot match serialized column #{key.inspect} on #{klass}"
             end
           end
         end

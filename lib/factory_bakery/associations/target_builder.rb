@@ -17,11 +17,13 @@ module FactoryBakery
     module TargetBuilder
       class << self
         # A belongs_to target has no owner-side create scope to mirror. With
-        # :reuse an existing object (in this graph or in the database) wins; a
-        # miss falls through to the ordinary fresh bake, exactly as :fresh does.
+        # :reuse_non_unique an existing object (in this graph or in the
+        # database) wins when the edge cannot be unique; a miss, or any unique
+        # edge, falls through to the ordinary fresh bake, exactly as :fresh
+        # does.
         def bake(object, declaration, entry)
           klass = target_klass(object, declaration, entry)
-          reuse = ReuseResolver.strategy_for(declaration) == :reuse
+          reuse = ReuseResolver.reuse?(object.class, declaration, entry)
           if reuse
             resolved = BakeryBuilder.resolve(klass).first
             existing = ReuseResolver.existing(resolved, declaration.overrides, entry)

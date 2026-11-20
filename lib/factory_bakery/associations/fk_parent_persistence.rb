@@ -11,8 +11,8 @@ module FactoryBakery
     # Under `bake!` the insert happens while the root savepoint is open, so it
     # rolls back atomically with every other row the bake wrote. Under plain
     # `bake` it is a documented exception to the unsaved contract: the row is
-    # inserted outside any transaction. A `:reuse` miss builds the parent
-    # exactly like `:fresh` does under the same mode.
+    # inserted outside any transaction. A `:reuse_non_unique` miss (or a unique
+    # edge) builds the parent exactly like `:fresh` does under the same mode.
     #
     # A read-only parent (a model whose `readonly?` is true, e.g. a database
     # view) can never be inserted. The edge adopts an existing row of exactly

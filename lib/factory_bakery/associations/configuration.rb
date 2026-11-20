@@ -5,7 +5,7 @@ module FactoryBakery
   # stays ignorant of it.
   module Associations # rubocop:disable Metrics/ModuleLength
     MODES = %i[none required_only all].freeze
-    STRATEGIES = %i[fresh reuse].freeze
+    STRATEGIES = %i[fresh reuse_non_unique].freeze
     DEFAULT_MODE = :required_only
     DEFAULT_STRATEGY = :fresh
     DEFAULT_MAX_DEPTH = 2

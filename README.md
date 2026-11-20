@@ -497,7 +497,7 @@ A required polymorphic `belongs_to` picks a concrete target when the mapper can 
 2. **Inverse `as:` reflections on loaded models.** A `has_one`/`has_many ..., as: :chatable` whose declared `class_name` matches the class being baked names its owner as a candidate. Matching accepts an ancestor or descendant, so an STI subclass gets its own owner while baking the base class may pick any candidate.
 3. **One `Rails.application.eager_load!` per process**, only when the first two sources found nothing and Rails is present, followed by a second inverse scan. This brings Zeitwerk-lazily-loaded models into view.
 
-Candidates are ordered deterministically: non-abstract first, then classes whose table exists, then by class name. The first candidate that bakes cleanly wins; with `strategy: :reuse` an existing row of a candidate is reused before building a fresh one. The result is cached per (class, association) for the process, so the descendant scan runs once.
+Candidates are ordered deterministically: non-abstract first, then classes whose table exists, then by class name. The first candidate that bakes cleanly wins; with `strategy: :reuse_non_unique` an existing row of a candidate is reused before building a fresh one. The result is cached per (class, association) for the process, so the descendant scan runs once.
 
 Explicit declarations, overrides and `skip` still win: `association :chatable, factory: Category`, a call-site `chatable:` / `chatable_type:` assignment or `skip :chatable` suppresses discovery for that edge. When no candidate is found (or none bakes), the original actionable error remains and now names the sources that were tried:
 
@@ -530,8 +530,8 @@ When such an edge **is** required (a presence validator on the association name,
 | --- | --- |
 | `bake!` | Creates the parent **inside the root savepoint** and sets the FK from its id. The insert rolls back atomically with the rest of the graph if anything fails. NOT NULL + real FK constraints are satisfiable end-to-end. |
 | `bake` (`:fresh`, the default) | Creates the parent and **inserts a row outside the unsaved contract**. This is the documented exception to "`bake` never writes": the raw column cannot be satisfied any other way. The root record itself stays unsaved. |
-| `bake` with `:reuse` | An existing database row is reused without writing. On a miss the parent is built and inserted exactly as with `:fresh` — the documented exception to "`bake` never writes". |
-| `bake!` with `:reuse` | An existing row is reused; on a miss a fresh parent is created inside the savepoint. |
+| `bake` with `:reuse_non_unique` | An existing database row is reused without writing when the edge cannot be unique. On a miss, or on a unique edge, the parent is built and inserted exactly as with `:fresh` — the documented exception to "`bake` never writes". |
+| `bake!` with `:reuse_non_unique` | An existing row is reused when the edge cannot be unique; on a miss, or on a unique edge, a fresh parent is created inside the savepoint. |
 
 Association-presence edges (`validates :user, presence: true`, `optional: false`) are unaffected: their parent stays unsaved under `bake` with zero INSERTs. Polymorphic edges keep their existing behavior (a raw FK signal never auto-builds them). Cycle detection, `max_bake_depth`, back-edge suppression, declarations and overrides all apply to the persisted-parent path as they do anywhere else; an explicit `user:` or `user_id:` at the call site suppresses it entirely.
 
@@ -563,23 +563,24 @@ end
 
   A later trait redeclaration replaces the base declaration. Likewise, a call-site override of `author` **or** `author_id` suppresses both the declaration and mode auto-building for that edge.
 
-**Strategies: `:fresh` and `:reuse`.** `:fresh` is the default: every edge bakes a new target (unsaved under `bake`, inserted by autosave under `bake!`). With `:reuse`, a `belongs_to` takes an existing object instead:
+**Strategies: `:fresh` and `:reuse_non_unique`.** `:fresh` is the default: every edge bakes a new target (unsaved under `bake`, inserted by autosave under `bake!`). With `:reuse_non_unique`, a `belongs_to` takes an existing object only when the edge cannot be unique — it reuses an existing row when one matches, and otherwise falls through to a fresh build:
 
-| | `:reuse` lookup |
+| | `:reuse_non_unique` lookup |
 | --- | --- |
+| Unique edge | A uniqueness validator or unique index on the owner's foreign key (single or composite), or a `has_one` inverse on the target, means one row per owner: the edge always builds a fresh target, skipping both the in-graph cache and the database lookup, and that fresh object is not remembered for reuse. |
 | In the same bake | A completed matching object is shared before the database is queried — e.g. `order.user` and `order.shop.user` are the same record. Ancestors still being built are never shared. |
 | In the database | Exact STI class + association scope + scalar column overrides from the declaration, oldest row by primary key (deterministic). |
 | On a miss | Falls through to an ordinary fresh build: unsaved under `bake`, inserted under `bake!` via autosave. [Raw-FK presence edges](#raw-fk-presence-edges) follow the same path, so they insert their parent under `bake` too. |
 
 ```ruby
 FactoryBakery.define(Post) do
-  association :category, strategy: :reuse # share the lookup row, or build one if none matches
+  association :category, strategy: :reuse_non_unique # share the lookup row, or build one if none matches
 end
 ```
 
-Settings are most-specific-first: per-association `strategy:` > `Associations.with(strategy:)` > global `Associations.strategy = :fresh`. `:reuse` applies to `belongs_to` only: an explicit setting on a collection raises `ArgumentError`, while an inherited scoped/global setting quietly skips ineligible edges. Traits with `:reuse` raise. Only scalar, column-backed overrides are matched; non-column or non-scalar overrides force a fresh build, while encrypted or serialized overrides and a missing or composite primary key raise `ArgumentError`. `factory:` is applied on a miss only and still names a polymorphic target.
+Settings are most-specific-first: per-association `strategy:` > `Associations.with(strategy:)` > global `Associations.strategy = :fresh`. `:reuse_non_unique` applies to `belongs_to` only: an explicit setting on a collection raises `ArgumentError`, while an inherited scoped/global setting quietly skips ineligible edges. Traits with `:reuse_non_unique` raise. Only scalar, column-backed overrides are matched; non-column or non-scalar overrides force a fresh build, while encrypted or serialized overrides and a missing or composite primary key raise `ArgumentError`. `factory:` is applied on a miss only and still names a polymorphic target.
 
-`:reuse` reads the database even under `bake` and picks whatever row is already there, so it couples tests to existing data. String matches can also be case-insensitive on MySQL — see [Adapter notes](#adapter-notes).
+`:reuse_non_unique` reads the database even under `bake` and picks whatever row is already there, so it couples tests to existing data. A unique edge never reaches the database lookup and always builds fresh. String matches can also be case-insensitive on MySQL — see [Adapter notes](#adapter-notes).
 
 ### Cycles and nesting
 
@@ -591,7 +592,7 @@ The plugin's defaults are process-wide and validated:
 
 ```ruby
 FactoryBakery::Associations.mode = :required_only   # :none | :required_only | :all (default)
-FactoryBakery::Associations.strategy = :fresh       # :fresh (default) | :reuse
+FactoryBakery::Associations.strategy = :fresh       # :fresh (default) | :reuse_non_unique
 FactoryBakery::Associations.max_depth = 2           # non-negative Integer (default 2)
 FactoryBakery::Associations.default_count = 1       # non-negative Integer (default 1)
 FactoryBakery::Associations.eager_load = true       # true | false (default true; see polymorphic discovery)
@@ -613,7 +614,7 @@ FactoryBakery::Associations.mode   # => the global mode again
 
 ### Adapter coverage
 
-The same association specs run in the 3 × 3 CI matrix — Rails 7.1 / 7.2 / 8.0 × SQLite / PostgreSQL / MySQL — against real foreign-key constraints (a dangling insert must raise `ActiveRecord::InvalidForeignKey`), transaction and savepoint rollback, NOT NULL FK parents inserted first, and `:reuse` database lookups. See [Full Rails × database matrix](#full-rails--database-matrix) and [Adapter notes](#adapter-notes) for how to run each combination locally and for adapter-specific behavior.
+The same association specs run in the 3 × 3 CI matrix — Rails 7.1 / 7.2 / 8.0 × SQLite / PostgreSQL / MySQL — against real foreign-key constraints (a dangling insert must raise `ActiveRecord::InvalidForeignKey`), transaction and savepoint rollback, NOT NULL FK parents inserted first, and `:reuse_non_unique` database lookups. See [Full Rails × database matrix](#full-rails--database-matrix) and [Adapter notes](#adapter-notes) for how to run each combination locally and for adapter-specific behavior.
 
 ### Coming from factory_bot
 
@@ -737,7 +738,7 @@ CI runs the 3 × 3 matrix (Rails 7.1 / 7.2 / 8.0 × SQLite / PostgreSQL / MySQL)
 
 - Real FK constraints are asserted on every adapter by attempting a dangling insert and expecting `ActiveRecord::InvalidForeignKey`. SQLite needs `PRAGMA foreign_keys = ON`; PostgreSQL and MySQL enforce FKs by default. Table cleanup drops children before parents so FK-constrained tables can be removed.
 - PostgreSQL uses `jsonb` for adapter-appropriate JSON columns; `json` has no equality operator, so a uniqueness-validated JSON column uses `jsonb` there.
-- MySQL uses `utf8mb4`. Its case-insensitive collation means `:reuse` string matches can be case-insensitive, unlike SQLite/PostgreSQL. JSON columns also cannot be compared to a bound string without `CAST(... AS JSON)`, so ActiveRecord's uniqueness validator cannot observe a duplicate JSON payload on MySQL; the uniqueness spec documents that behavior instead of faking a collision.
+- MySQL uses `utf8mb4`. Its case-insensitive collation means `:reuse_non_unique` string matches can be case-insensitive, unlike SQLite/PostgreSQL. JSON columns also cannot be compared to a bound string without `CAST(... AS JSON)`, so ActiveRecord's uniqueness validator cannot observe a duplicate JSON payload on MySQL; the uniqueness spec documents that behavior instead of faking a collision.
 - The `rails7.1` appraisal currently resolves Rails 7.2.3 (its constraint is `~> 7.1, >= 7.1`); the resolved versions are shown in the table above.
 
 ## Contributing

@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Association strategies
+
+- Renamed the `belongs_to` association strategy `:reuse` to `:reuse_non_unique` (no backwards-compatible alias; `strategy: :reuse` now raises `ArgumentError`). The strategy now reuses an existing target only when the edge has no uniqueness: if the owner's foreign key carries a uniqueness validator or a unique index (single or composite), or the target's inverse association is a `has_one`, the edge builds a fresh target exactly as `:fresh` does — skipping both the in-graph cache and the database lookup, and not remembering that fresh object for reuse.
+
 ### Smoke regression fixes
 
 - A validator-declared virtual attribute whose writer ActiveModel's `AcceptanceValidator` defines lazily (Mastodon's `User#agreement`) is now discovered and filled. The mapper treats an acceptance-validated name as settable even before the validator's first run defines the accessor, so `FactoryBakery.bake(User)` no longer returns a record whose service agreement is `nil`. Added `spec/factory_bakery/smoke_regressions_spec.rb`.

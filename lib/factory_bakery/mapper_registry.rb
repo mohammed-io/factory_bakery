@@ -298,6 +298,15 @@ module FactoryBakery
         mapper_for(klass)&.uniqueness_validated?(klass, attr_name) || false
       end
 
+      # Unique indexes as column-name arrays, composite included. Mappers that
+      # do not model indexes answer no groups.
+      def unique_index_groups(klass)
+        mapper = mapper_for(klass)
+        return [] unless mapper.respond_to?(:unique_index_groups)
+
+        mapper.unique_index_groups(klass)
+      end
+
       # Whether the attribute's uniqueness check folds case. Mappers without
       # the notion answer false; the core normalizes its per-bake collision
       # registry with it so two unsaved siblings cannot differ only by case.

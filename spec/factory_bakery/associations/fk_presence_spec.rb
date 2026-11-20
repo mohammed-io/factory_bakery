@@ -116,7 +116,7 @@ RSpec.describe 'raw-FK presence edges' do
       owner_model, child_model = define_fk_edge('FkReuseHit')
       existing = owner_model.create!(name: 'existing')
 
-      child = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake!(child_model) }
+      child = FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake!(child_model) }
 
       expect(child.owner).to eq(existing)
       expect(child.owner_id).to eq(existing.id)
@@ -126,7 +126,7 @@ RSpec.describe 'raw-FK presence edges' do
     it 'reuses an existing row for an explicit declaration' do
       owner_model, child_model = define_fk_edge('FkDeclReuse')
       existing = owner_model.create!(name: 'existing')
-      FactoryBakery.define(child_model) { association :owner, strategy: :reuse }
+      FactoryBakery.define(child_model) { association :owner, strategy: :reuse_non_unique }
 
       child = FactoryBakery.bake(child_model)
 
@@ -147,10 +147,10 @@ RSpec.describe 'raw-FK presence edges' do
         validates :first_id, presence: true
       end
       existing = owner_model.create!(name: 'existing')
-      FactoryBakery.define(first) { association :owner, strategy: :reuse }
+      FactoryBakery.define(first) { association :owner, strategy: :reuse_non_unique }
       FactoryBakery.define(second) do
         association :first
-        association :owner, strategy: :reuse
+        association :owner, strategy: :reuse_non_unique
       end
 
       baked = FactoryBakery.bake(second)
@@ -160,11 +160,11 @@ RSpec.describe 'raw-FK presence edges' do
       expect(owner_model.count).to eq(1)
     end
 
-    it 'falls back to a fresh, persisted parent on a reuse miss under bake' do
+    it 'falls back to a fresh, persisted parent on a reuse_non_unique miss under bake' do
       owner_model, child_model = define_fk_edge('FkReuseMiss')
 
       writes = inserts_in do
-        @baked = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(child_model) }
+        @baked = FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake(child_model) }
       end
 
       expect(@baked.owner).to be_persisted
@@ -174,9 +174,9 @@ RSpec.describe 'raw-FK presence edges' do
       expect(child_model.count).to eq(0)
     end
 
-    it 'falls back to a fresh, persisted parent for a declared edge on a reuse miss under bake' do
+    it 'falls back to a fresh, persisted parent for a declared edge on a reuse_non_unique miss under bake' do
       owner_model, child_model = define_fk_edge('FkDeclReuseMiss')
-      FactoryBakery.define(child_model) { association :owner, strategy: :reuse }
+      FactoryBakery.define(child_model) { association :owner, strategy: :reuse_non_unique }
 
       child = FactoryBakery.bake(child_model)
 
@@ -185,10 +185,10 @@ RSpec.describe 'raw-FK presence edges' do
       expect(owner_model.count).to eq(1)
     end
 
-    it 'creates the parent inside the savepoint on a reuse miss under bake!' do
+    it 'creates the parent inside the savepoint on a reuse_non_unique miss under bake!' do
       owner_model, child_model = define_fk_edge('FkReuseMissBang')
 
-      child = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake!(child_model) }
+      child = FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake!(child_model) }
 
       expect(child.owner).to be_persisted
       expect(owner_model.count).to eq(1)

@@ -102,7 +102,7 @@ module FactoryBakery
 
       # Discards records from a build whose result is thrown away (a failed
       # first attempt before the verified fallback rebuild), along with the
-      # strategy :reuse cache entries pointing at them: the rebuild must not
+      # strategy :reuse_non_unique cache entries pointing at them: the rebuild must not
       # hand out an object from an attempt whose writes were rolled back.
       # Replace rather than mutate so a child fiber that inherited the
       # array/map is unaffected.
@@ -116,7 +116,7 @@ module FactoryBakery
         Fiber[GRAPH_CACHE_KEY] = stale
       end
 
-      # Per-top-level-bake cache used by :reuse edges. The value is a pair of
+      # Per-top-level-bake cache used by :reuse_non_unique edges. The value is a pair of
       # the build path (nil for an object adopted from the database) and the
       # object itself, so a lookup can refuse an ancestor still being built.
       def graph_cache

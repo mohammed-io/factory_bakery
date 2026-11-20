@@ -214,12 +214,12 @@ RSpec.describe FactoryBakery::Railtie do
     it 'applies every supported Hash key through the plugin setters' do
       boot_app do |config|
         config.factory_bakery.associations = {
-          mode: :all, strategy: :reuse, max_depth: 4, default_count: 3
+          mode: :all, strategy: :reuse_non_unique, max_depth: 4, default_count: 3
         }
       end
 
       expect(FactoryBakery::Associations.mode).to eq(:all)
-      expect(FactoryBakery::Associations.strategy).to eq(:reuse)
+      expect(FactoryBakery::Associations.strategy).to eq(:reuse_non_unique)
       expect(FactoryBakery::Associations.max_depth).to eq(4)
       expect(FactoryBakery::Associations.default_count).to eq(3)
     end

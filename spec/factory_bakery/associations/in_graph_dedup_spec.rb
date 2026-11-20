@@ -3,9 +3,9 @@
 require 'spec_helper'
 require 'factory_bakery/associations'
 
-# A16: in-graph sharing under :reuse (diamond dedup). Every assertion goes
+# A16: in-graph sharing under :reuse_non_unique (diamond dedup). Every assertion goes
 # through define/bake/bake! or the plugin's public configuration API.
-RSpec.describe 'in-graph sharing under :reuse' do
+RSpec.describe 'in-graph sharing under :reuse_non_unique' do
   before do
     FactoryBakery.reset_plugins!
     FactoryBakery.register_plugin(FactoryBakery::Associations::Plugin)
@@ -34,7 +34,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
     it 'shares one parent across two paths in a graph even when the table is empty' do
       _user, _shop, order = define_order_graph('DedupDiamond')
 
-      baked = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(order) }
+      baked = FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake(order) }
 
       expect(baked.user).to equal(baked.shop.user)
     end
@@ -42,7 +42,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
     it 'persists the shared parent exactly once under bake!' do
       user, _shop, order = define_order_graph('DedupBang')
 
-      FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake!(order) }
+      FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake!(order) }
 
       expect(user.count).to eq(1)
     end
@@ -50,7 +50,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
     it 'starts with an empty graph for each separate top-level bake' do
       _user, _shop, order = define_order_graph('DedupSeparate')
 
-      first, second = FactoryBakery::Associations.with(strategy: :reuse) do
+      first, second = FactoryBakery::Associations.with(strategy: :reuse_non_unique) do
         [FactoryBakery.bake(order), FactoryBakery.bake(order)]
       end
 
@@ -74,8 +74,8 @@ RSpec.describe 'in-graph sharing under :reuse' do
         belongs_to :assignee, class_name: 'DedupAgent', optional: false
       end
       FactoryBakery.define(task) do
-        association :creator, strategy: :reuse
-        association :assignee, strategy: :reuse
+        association :creator, strategy: :reuse_non_unique
+        association :assignee, strategy: :reuse_non_unique
       end
 
       baked = FactoryBakery.bake(task)
@@ -91,8 +91,8 @@ RSpec.describe 'in-graph sharing under :reuse' do
         belongs_to :editor, class_name: 'DedupPerson', optional: false
       end
       FactoryBakery.define(post) do
-        association :author, strategy: :reuse, name: 'Author'
-        association :editor, strategy: :reuse, name: 'Editor'
+        association :author, strategy: :reuse_non_unique, name: 'Author'
+        association :editor, strategy: :reuse_non_unique, name: 'Editor'
       end
 
       baked = FactoryBakery.bake(post)
@@ -109,7 +109,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
         belongs_to :car, class_name: 'DedupCar', optional: false
       end
 
-      baked = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(trip) }
+      baked = FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake(trip) }
 
       expect(baked.vehicle).not_to equal(baked.car)
       expect(baked.vehicle.class).not_to eq(baked.car.class)
@@ -125,7 +125,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
                    class_name: 'DedupScopedAccount', optional: false
       end
 
-      baked = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(profile) }
+      baked = FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake(profile) }
 
       expect(baked.active_account).not_to equal(baked.archived_account)
     end
@@ -142,22 +142,22 @@ RSpec.describe 'in-graph sharing under :reuse' do
       end
 
       expect do
-        FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake!(user) }
+        FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake!(user) }
       end.to raise_error(FactoryBakery::CyclicAssociationError, /DedupCycleUser#account/)
     end
 
-    it 'keeps the nesting backstop intact under reuse' do
+    it 'keeps the nesting backstop intact under reuse_non_unique' do
       node = define_model('DedupNode', name: :string, parent_id: :integer) do
         belongs_to :parent, class_name: 'DedupNode', optional: false
       end
       # A self-reference declared explicitly never repeats a reflection path, so
       # the core depth backstop -- not the reflection cycle detector -- owns it.
       FactoryBakery.define(node) do
-        association :parent, strategy: :reuse
+        association :parent, strategy: :reuse_non_unique
       end
 
       expect do
-        FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(node) }
+        FactoryBakery::Associations.with(strategy: :reuse_non_unique) { FactoryBakery.bake(node) }
       end.to raise_error(FactoryBakery::NestingTooDeepError, /max_bake_depth/)
     end
   end
