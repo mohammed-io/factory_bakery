@@ -64,11 +64,16 @@ module FactoryBakery
         # Priority 2: Acceptance attribute
         return acceptance_filler if acceptance_attribute?
 
-        # Priority 3: the STI discriminator is owned by the framework; never
+        # Priority 3: a writer with side effects (Mastodon's Remotable
+        # `avatar_remote_url=` downloads the URL it is given) must never
+        # receive a heuristic value, not even when filling optional attributes.
+        return guarded_writer_filler if @constraints.guarded_writer
+
+        # Priority 4: the STI discriminator is owned by the framework; never
         # overwrite what `new` assigned.
         return noop_filler if @constraints.sti_discriminator
 
-        # Priority 4: targets without a schema are routed by the rules their
+        # Priority 5: targets without a schema are routed by the rules their
         # validators expose instead of by column type.
         return validator_routed_filler unless @constraints.column_backed_target
 
@@ -86,22 +91,27 @@ module FactoryBakery
       end
 
       def column_routed_filler
-        # Priority 5: a virtual attribute has no column type, so its validators
+        # Priority 6: a virtual attribute has no column type, so its validators
         # decide the generator (issue #57). A name without validators of its
         # own (a bare confirmation twin) still routes to the no-op.
         return validator_routed_filler if virtual?
 
-        # Priority 6: a defaulted column keeps its default unless a
+        # Priority 7: a defaulted column keeps its default unless a
         # value-shaping validator needs a generated value. Leaving a defaulted
         # column alone preserves a blank default (e.g. "" or false) that fails
         # presence/format/length/etc. on every bake, so this escape hatch is
         # decided before type routing.
         return noop_filler if @constraints.has_default && !@constraints.value_shaping
 
-        # Priority 7: enum attribute
+        # Priority 8: enum attribute
         return enum_filler if @constraints.enum_attribute
 
-        # Priority 8: type-based routing
+        # Priority 9: an Array-valued text column (`serialize :tags, type:
+        # Array`) reports type :text but holds an Array, so a scalar String
+        # would raise SerializationTypeMismatch on assignment. json/jsonb
+        # columns are excluded: the JsonFiller decides their own shape.
+        return array_filler if array_valued_text?
+
         type_based_filler
       end
 
@@ -147,6 +157,13 @@ module FactoryBakery
         !@constraints.column_backed
       end
 
+      # JSON-backed column types: the JsonFiller decides their shape (Hash or
+      # Array) from the normalized json_shape fact. Every other array-shaped
+      # attribute is a text column serialized with an Array coder, which needs
+      # the Array generator rather than a scalar String.
+      JSON_COLUMN_TYPES = %i[json jsonb].freeze
+      private_constant :JSON_COLUMN_TYPES
+
       def type_based_filler
         case @constraints.type
         when :string
@@ -170,6 +187,13 @@ module FactoryBakery
         else
           noop_filler
         end
+      end
+
+      # A `serialize :tags, type: Array` text column reports type :text but its
+      # normalized json shape is :array, so it needs the Array generator rather
+      # than a scalar String.
+      def array_valued_text?
+        @constraints.json_shape == :array && !JSON_COLUMN_TYPES.include?(@constraints.type)
       end
 
       def noop_filler
@@ -214,6 +238,21 @@ module FactoryBakery
 
       def acceptance_filler
         @acceptance_filler ||= AcceptanceFiller.new(model_class, attr_name)
+      end
+
+      # A guarded writer is left completely alone whenever the attribute can
+      # stay blank: a virtual attribute, a nullable column and a defaulted
+      # column all keep what `new` produced, so no setter runs and a column
+      # default survives. Only a NOT NULL column without a default needs the
+      # filler's empty String.
+      def guarded_writer_filler
+        return noop_filler if leavable_blank?
+
+        @guarded_writer_filler ||= GuardedWriterFiller.new(model_class, attr_name)
+      end
+
+      def leavable_blank?
+        !@constraints.column_backed || @constraints.nullable || @constraints.has_default
       end
 
       def confirmation_filler

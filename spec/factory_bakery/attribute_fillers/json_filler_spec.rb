@@ -72,6 +72,101 @@ RSpec.describe 'json/jsonb column filler (issue #39)' do
     end
   end
 
+  describe 'array-shaped json columns' do
+    it 'fills a json column whose default is an Array with an Array' do
+      model = define_model('ArrayDefaultPayload', blocks: { type: :json, default: [] }) do
+        validates :blocks, presence: true
+      end
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.blocks).to be_a(Array)
+      expect(record.blocks).not_to be_empty
+      expect(JSON.parse(JSON.generate(record.blocks))).to eq(record.blocks)
+      expect(record).to be_valid
+      expect(model.find(record.id).blocks).to eq(record.blocks)
+    end
+
+    it 'keeps the Array default of a json column no validator shapes' do
+      model = define_model('UntouchedArrayDefault', blocks: { type: :json, default: [] })
+
+      record = FactoryBakery.bake(model, fill_optional: true)
+
+      expect(record.blocks).to eq([])
+    end
+
+    it 'builds an Array of members for an inclusion set of Arrays' do
+      options = [%w[alpha beta], %w[gamma]]
+      model = define_model('IncludedArrayPayload', payload: :json) do
+        validates :payload, inclusion: { in: options }
+      end
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.payload).to be_a(Array)
+      expect(record.payload).not_to be_empty
+      expect(record.payload).to all(satisfy { |member| options.include?(member) })
+      expect(record).to be_valid
+    end
+
+    it 'builds an Array of members for a scalar inclusion set on an array-shaped column' do
+      model = define_model('ScalarIncludedArray', blocks: { type: :json, default: [] }) do
+        validates :blocks, inclusion: { in: %w[red green] }
+      end
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.blocks).to be_a(Array)
+      expect(record.blocks).not_to be_empty
+      expect(record.blocks).to all(be_in(%w[red green]))
+      expect(record).to be_valid
+    end
+
+    it 'keeps a plain json column a Hash' do
+      model = define_model('PlainJsonShapePayload', payload: :json) do
+        validates :payload, presence: true
+      end
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.payload).to be_a(Hash)
+      expect(record).to be_valid
+      expect(model.find(record.id).payload).to eq(record.payload)
+    end
+  end
+
+  describe 'text columns serialized with an Array coder' do
+    it 'fills them with an Array that survives a bake! round trip' do
+      model = define_model('SerializedArrayPayload', tags: :text) do
+        serialize :tags, type: Array
+        validates :tags, presence: true
+      end
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.tags).to be_a(Array)
+      expect(record.tags).to all(be_a(String))
+      expect(record).to be_valid
+      expect(model.find(record.id).tags).to eq(record.tags)
+    end
+
+    it 'routes them to the array filler instead of the string filler' do
+      model = define_model('SerializedArrayRouting', tags: :text) { serialize :tags, type: Array }
+
+      filler = FactoryBakery::AttributeFillers::FillerSelector.new(model, 'tags').call
+
+      expect(filler).to be_a(FactoryBakery::AttributeFillers::ArrayFiller)
+    end
+
+    it 'leaves a plain text column on the string filler' do
+      model = define_model('PlainTextRouting', body: :text)
+
+      filler = FactoryBakery::AttributeFillers::FillerSelector.new(model, 'body').call
+
+      expect(filler).to be_a(FactoryBakery::AttributeFillers::StringFiller)
+    end
+  end
+
   describe 'validators on json columns' do
     it 'picks a value from an inclusion array of Hashes' do
       options = [{ 'tier' => 'basic' }, { 'tier' => 'pro' }]

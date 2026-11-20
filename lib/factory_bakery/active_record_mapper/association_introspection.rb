@@ -17,7 +17,7 @@ module FactoryBakery
     # The result is memoized on the class (a bake asks several times);
     # reloading a class drops the cache with it. A frozen class is read
     # without caching, matching the constraints cache's own handling.
-    module AssociationIntrospection
+    module AssociationIntrospection # rubocop:disable Metrics/ModuleLength
       module_function
 
       # nil marks a class that is not association-introspectable at all,
@@ -169,11 +169,31 @@ module FactoryBakery
       def lazy_resolvers(klass, reflection)
         inverse = -> { AssociationRequirements.inverse(reflection) }
         {
-          target: -> { reflection.klass },
+          target: -> { resolve_target(klass, reflection) },
           inverse_name: -> { inverse.call&.name },
           inverse_kind: -> { inverse.call&.macro },
           presence_applicable: ->(record) { AssociationRequirements.presence_applicable?(klass, reflection, record) }
         }
+      end
+
+      # `reflection.klass` is the ordinary resolution. An application may map a
+      # stored class name to a class of its own (Discourse maps "ChatMessage" to
+      # Chat::Message), and a belongs_to whose declared class name has no
+      # constant (Chat::MessageSearchData belongs_to :chat_message) still has a
+      # target through that mapping, so the owner is asked before giving up.
+      def resolve_target(klass, reflection)
+        reflection.klass
+      rescue NameError
+        mapped_target(klass, reflection) || raise
+      end
+
+      def mapped_target(klass, reflection)
+        return nil unless klass.respond_to?(:polymorphic_class_for)
+
+        candidate = klass.polymorphic_class_for(reflection.class_name)
+        candidate.is_a?(Class) ? candidate : nil
+      rescue StandardError
+        nil
       end
     end
   end

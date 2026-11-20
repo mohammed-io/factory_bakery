@@ -44,6 +44,12 @@ module FactoryBakery
                 :type, :array_element_type, :db_limit, :nullable, :has_default, :default_value, :precision, :scale,
                 # Target/attribute shape flags.
                 :column_backed, :column_backed_target, :sti_discriminator,
+                # Shape of a JSON-backed attribute: :array when the attribute
+                # is expected to hold an Array (an Array column default, a
+                # serialized Array coder, an Array inclusion set), :hash
+                # otherwise. The mapper plugin derives it; the core only sees
+                # the symbol.
+                :json_shape,
                 # Length rules.
                 :min_length, :max_length, :exact_length,
                 # Format rules.
@@ -62,6 +68,9 @@ module FactoryBakery
                 :length_validated, :format_validated,
                 :numericality_validated, :numericality_only_integer,
                 :numericality_has_float_bound,
+                # True when the attribute's writer has side effects (a
+                # remote-URL downloader), so heuristics must leave it blank.
+                :guarded_writer,
                 # Bound views.
                 :numeric_bounds, :comparison_bounds
 
@@ -70,6 +79,7 @@ module FactoryBakery
       type: nil, array_element_type: nil, db_limit: nil, nullable: nil, has_default: false, default_value: nil,
       precision: nil, scale: nil,
       column_backed: false, column_backed_target: false, sti_discriminator: false,
+      json_shape: :hash,
       min_length: nil, max_length: nil, exact_length: nil,
       with_regexes: [].freeze, without_regexes: [].freeze,
       allowed_values: nil, forbidden_values: nil,
@@ -82,6 +92,7 @@ module FactoryBakery
       length_validated: false, format_validated: false,
       numericality_validated: false, numericality_only_integer: false,
       numericality_has_float_bound: false,
+      guarded_writer: false,
       numeric_bounds: Bounds.none, comparison_bounds: Bounds.none
     )
       @model_class = model_class
@@ -97,6 +108,7 @@ module FactoryBakery
       @column_backed = column_backed
       @column_backed_target = column_backed_target
       @sti_discriminator = sti_discriminator
+      @json_shape = json_shape
       @min_length = min_length
       @max_length = max_length
       @exact_length = exact_length
@@ -121,6 +133,7 @@ module FactoryBakery
       @numericality_validated = numericality_validated
       @numericality_only_integer = numericality_only_integer
       @numericality_has_float_bound = numericality_has_float_bound
+      @guarded_writer = guarded_writer
       @numeric_bounds = numeric_bounds
       @comparison_bounds = comparison_bounds
     end

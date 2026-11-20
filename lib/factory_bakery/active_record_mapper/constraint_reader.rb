@@ -52,6 +52,13 @@ module FactoryBakery
         'ActiveRecord::Validations::UniquenessValidator'
       ].freeze
 
+      # An attribute whose writer has side effects must never be handed a
+      # heuristic value: Mastodon's Remotable defines `avatar_remote_url=`,
+      # which downloads whatever URL it is assigned. The name pattern is
+      # recognized here, beside every other schema/validation fact, and the
+      # core routes it to a filler that leaves the attribute blank (ADR-0001).
+      REMOTE_URL_WRITER_PATTERN = /(?:\A|_)remote_url\z|\Aremote_\w*url\z/
+
       class << self
         def call(model_class, attr_name, record = nil)
           new(model_class, attr_name, record).read
@@ -83,9 +90,7 @@ module FactoryBakery
           default_value: column&.default,
           precision: column&.precision,
           scale: column&.scale,
-          column_backed: !column.nil?,
-          column_backed_target: @model_class.respond_to?(:columns_hash),
-          sti_discriminator: sti_discriminator?,
+          **shape_facts(column, rules),
           min_length: rules.min_length,
           max_length: rules.max_length,
           exact_length: rules.exact_length,
@@ -120,6 +125,21 @@ module FactoryBakery
       end
 
       private
+
+      # The target/attribute shape flags in one place: whether a column backs
+      # the attribute, whether the target can expose schema facts at all,
+      # whether the framework owns the attribute (STI), and which container
+      # shape a JSON-backed value must take. Every fact is derived here, so
+      # the core only ever sees plain values (ADR-0001).
+      def shape_facts(column, rules)
+        {
+          column_backed: !column.nil?,
+          column_backed_target: @model_class.respond_to?(:columns_hash),
+          sti_discriminator: sti_discriminator?,
+          json_shape: json_shape(column, rules.allowed_values),
+          guarded_writer: guarded_writer?
+        }
+      end
 
       # A small mutable accumulator folded over the attribute's validators in
       # declaration order. Order matters: each validator class overwrites the
@@ -315,6 +335,70 @@ module FactoryBakery
         when :boolean then :boolean
         else :string
         end
+      end
+
+      # A JSON-backed attribute may be expected to hold an Array rather than a
+      # Hash. Three class-level facts say so, and reading them here keeps the
+      # core on a plain symbol (ADR-0001):
+      #   * the column's default is an Array (`t.json :blocks, default: []`);
+      #   * the attribute is serialized with an Array coder
+      #     (`serialize :tags, type: Array`);
+      #   * an inclusion set whose members are Arrays constrains the whole
+      #     value to an Array.
+      def json_shape(column, allowed_values)
+        return :array if array_default?(column)
+        return :array if array_serialized_attribute?
+        return :array if array_allowed_values?(allowed_values)
+
+        :hash
+      end
+
+      # `column.default` keeps the raw SQL literal (the String "[]" for a
+      # json array), so the default is read the way the framework casts it:
+      # through the class's type-cast defaults, where it is a real Array.
+      def array_default?(column)
+        return false unless column
+
+        typecast_default(column).is_a?(Array)
+      end
+
+      def typecast_default(column)
+        return column.default unless @model_class.respond_to?(:column_defaults)
+
+        @model_class.column_defaults.fetch(column_name_for(@model_class, @attr_name), column.default)
+      end
+
+      def array_serialized_attribute?
+        return false unless @model_class.respond_to?(:attribute_types)
+
+        serialized_array?(attribute_type)
+      end
+
+      def attribute_type
+        types = @model_class.attribute_types
+        types[column_name_for(@model_class, @attr_name)] || types[@attr_name]
+      end
+
+      # Duck-typed on purpose: the framework's serialized type exposes the
+      # coder it round-trips through, and that coder knows which class it
+      # holds. No framework constant is named here.
+      def serialized_array?(type)
+        coder = type.respond_to?(:coder) ? type.coder : nil
+        coder.respond_to?(:object_class) && coder.object_class == Array
+      rescue StandardError
+        false
+      end
+
+      def array_allowed_values?(allowed_values)
+        return false unless allowed_values.is_a?(Array)
+
+        allowed_values.any? { |value| value.is_a?(Array) }
+      end
+
+      # An attribute whose writer has side effects must never be handed a
+      # heuristic value (see REMOTE_URL_WRITER_PATTERN).
+      def guarded_writer?
+        REMOTE_URL_WRITER_PATTERN.match?(@attr_name)
       end
 
       # [routing flag, values]: the flag mirrors enum membership detection,
