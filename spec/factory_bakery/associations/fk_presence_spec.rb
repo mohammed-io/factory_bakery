@@ -244,6 +244,36 @@ RSpec.describe 'raw-FK presence edges' do
       expect(child.owner.stat.owner).to equal(child.owner)
       expect(stat_model.count).to eq(0)
     end
+
+    # Saving the owner also autosaves its new optional belongs_to parent. That
+    # parent's own callback-created has_one must win over the gem's stat too
+    # (Discourse: saving a Topic autosaves its unsaved `deleted_by` User).
+    it 'keeps the callback stat of a new parent that the owner save autosaves' do
+      stat_model = define_model('FkDeepStat', user_id: :integer, label: :string) do
+        belongs_to :user, class_name: 'FkDeepUser', optional: false
+      end
+      stat_model.connection.add_index(stat_model.table_name, :user_id, unique: true)
+      define_model('FkDeepUser', name: :string) do
+        has_one :stat, class_name: 'FkDeepStat', foreign_key: :user_id, inverse_of: :user
+        # A direct insert, like Discourse's UserStat.create!(user_id: id): the
+        # has_one writer would quietly unlink an existing row instead.
+        after_create { FkDeepStat.create!(user_id: id, label: 'from callback') }
+      end
+      define_model('FkDeepOwner', name: :string, deleter_id: :integer) do
+        belongs_to :deleter, class_name: 'FkDeepUser', optional: true
+      end
+      child_model = define_model('FkDeepChild', owner_id: :integer) do
+        belongs_to :owner, class_name: 'FkDeepOwner', optional: true
+        validates :owner_id, presence: true
+      end
+
+      # Child > Owner > Deleter > Stat: deep enough that :all builds the stat.
+      child = FactoryBakery::Associations.with(mode: :all, max_depth: 5) { FactoryBakery.bake(child_model) }
+
+      deleter = child.owner.deleter
+      expect(deleter).to be_persisted
+      expect(stat_model.where(user_id: deleter.id).pluck(:label)).to eq(['from callback'])
+    end
   end
 
   describe 'strategy interplay' do

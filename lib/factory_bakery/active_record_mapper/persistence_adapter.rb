@@ -64,25 +64,42 @@ module FactoryBakery
       end
 
       # An automatic optional has_one child detached from its owner for a save.
-      DetachedChild = Data.define(:reflection, :child)
+      DetachedChild = Data.define(:owner, :reflection, :child)
 
       # Autosave inserts a new has_one child together with its owner, and an
       # owner callback that creates the same row would then collide with it.
       # The gem's automatic optional children are detached for the save. A row
       # the callback created wins; otherwise the child is reattached, unsaved,
-      # to the saved owner. Required and user-declared children are never touched.
+      # to its owner. Required and user-declared children are never touched.
+      # The save also autosaves the record's new parents and children (an
+      # unsaved optional `belongs_to :deleted_by` User, say), so every new
+      # record reachable through the loaded graph is covered, not only `record`.
       # Returns the children it dropped so the caller can unregister them; the
       # generated-record registry belongs to core, not to this adapter.
-      def save_detaching_children!(owner, automatic)
-        children = detachable_children(owner, automatic)
-        children.each { |detached| owner.association(detached.reflection.name).target = nil }
+      def save_detaching_children!(record, automatic)
+        children = unsaved_graph(record).flat_map { |owner| detachable_children(owner, automatic) }
+        children.each { |detached| detached.owner.association(detached.reflection.name).target = nil }
         begin
-          save!(owner)
+          save!(record)
         rescue StandardError
-          children.each { |detached| reattach(owner, detached) }
+          children.each { |detached| reattach(detached) }
           raise
         end
-        children.filter_map { |detached| settle_child(owner, detached) }
+        children.filter_map { |detached| settle_child(detached) }
+      end
+
+      # `record` plus every new record reachable from it through loaded
+      # associations: the records a save of `record` can autosave.
+      def unsaved_graph(record)
+        seen = Set.new.compare_by_identity
+        pending = [record]
+        until pending.empty?
+          node = pending.pop
+          next unless seen.add?(node)
+
+          pending.concat(cached_association_targets(node).select { |target| target.respond_to?(:new_record?) && target.new_record? })
+        end
+        seen.to_a
       end
 
       def detachable_children(owner, automatic)
@@ -92,7 +109,7 @@ module FactoryBakery
           child = owner.association(reflection.name).target
           next unless child&.new_record? && automatic.any? { |record| record.equal?(child) }
 
-          DetachedChild.new(reflection:, child:)
+          DetachedChild.new(owner:, reflection:, child:)
         end
       end
 
@@ -105,15 +122,17 @@ module FactoryBakery
       end
 
       # The dropped child when the owner's callback created the row, else nil.
-      def settle_child(owner, detached)
-        return detached.child if owner.association(detached.reflection.name).reload
+      # An owner the save did not reach is still new: nothing to look up.
+      def settle_child(detached)
+        owner = detached.owner
+        return detached.child if owner.persisted? && owner.association(detached.reflection.name).reload
 
-        reattach(owner, detached)
+        reattach(detached)
         nil
       end
 
-      def reattach(owner, detached)
-        owner.association(detached.reflection.name).target = detached.child
+      def reattach(detached)
+        detached.owner.association(detached.reflection.name).target = detached.child
       end
 
       def automatic_objects(generated)
