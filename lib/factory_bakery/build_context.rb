@@ -51,7 +51,9 @@ module FactoryBakery
     CONDITIONS_KEY = :factory_bakery_condition_results
     UNIQUE_VALUES_KEY = :factory_bakery_unique_values
     AUTOMATIC_PARENTS_KEY = :factory_bakery_automatic_parents
+    AUTOMATIC_BUILD_KEY = :factory_bakery_automatic_build
     AutomaticParent = Data.define(:owner, :entry, :parent, :records)
+    GeneratedRecord = Data.define(:path, :object, :automatic, :after_persist)
     # FK-column-validated edges need a persisted parent. Under `bake!` that
     # parent is inserted inside the root savepoint; under plain `bake` it is an
     # explicit, documented exception to the unsaved graph. This fiber-local
@@ -87,21 +89,28 @@ module FactoryBakery
       end
 
       def record_generated(object)
-        generated_records << [current.path, object, current.take_after_persist]
+        generated_records << GeneratedRecord.new(current.path, object, current.automatic, current.take_after_persist)
+      end
+
+      def automatic_build
+        previous = Fiber[AUTOMATIC_BUILD_KEY]
+        Fiber[AUTOMATIC_BUILD_KEY] = true
+        yield
+      ensure
+        Fiber[AUTOMATIC_BUILD_KEY] = previous
       end
 
       def finish_persistence!(mark, adapter)
         index = mark
         # Saving a deferred child can generate more owners with pending work.
         while (entry = generated_records[index])
-          path, object, work = entry
           index += 1
-          next unless work
-          next unless adapter.persisted?(object)
+          next unless entry.after_persist
+          next unless adapter.persisted?(entry.object)
 
           # An enclosing bake! can visit this entry again after a nested bake!.
-          entry[2] = nil
-          run_after_persist(path, work)
+          generated_records[index - 1] = entry.with(after_persist: nil)
+          run_after_persist(entry)
         end
       end
 
@@ -110,7 +119,7 @@ module FactoryBakery
       end
 
       def record_automatic_parent(owner, entry, parent, mark)
-        records = generated_records.drop(mark).map { |_path, object| object }
+        records = generated_records.drop(mark).select(&:automatic).map(&:object)
         return unless records.any? { |record| record.equal?(parent) }
 
         edge = AutomaticParent.new(owner:, entry:, parent:, records:)
@@ -126,8 +135,7 @@ module FactoryBakery
         return if from.equal?(to)
 
         Fiber[RECORDS_KEY] = generated_records.map do |entry|
-          path, object = entry
-          object.equal?(from) ? [path, to] : entry
+          entry.object.equal?(from) ? entry.with(object: to) : entry
         end
       end
 
@@ -141,7 +149,7 @@ module FactoryBakery
         records = generated_records
         return if records.length <= mark
 
-        discarded = Set.new.compare_by_identity.merge(records.drop(mark).map { |_path, object| object })
+        discarded = Set.new.compare_by_identity.merge(records.drop(mark).map(&:object))
         Fiber[RECORDS_KEY] = records.first(mark)
         discard_cached_records!(discarded)
       end
@@ -241,7 +249,7 @@ module FactoryBakery
       # object that the root `bake!` will verify later.
       def records_under(path_prefix)
         length = path_prefix.length
-        generated_records.select { |path, _object| path[0, length] == path_prefix }
+        generated_records.select { |entry| entry.path[0, length] == path_prefix }
       end
 
       # The most recently completed object of exactly `klass` that is not an
@@ -251,12 +259,12 @@ module FactoryBakery
       # being built again. An ancestor's recorded path is a prefix of the
       # current path, so reusing one would close a cycle; those are skipped.
       def completed_object_of(klass, exclude: [])
-        generated_records.reverse_each do |path, object|
-          next unless object.instance_of?(klass)
-          next if ancestor_path?(path)
-          next if exclude.any? { |excluded| excluded.equal?(object) }
+        generated_records.reverse_each do |entry|
+          next unless entry.object.instance_of?(klass)
+          next if ancestor_path?(entry.path)
+          next if exclude.any? { |excluded| excluded.equal?(entry.object) }
 
-          return object
+          return entry.object
         end
         nil
       end
@@ -270,14 +278,17 @@ module FactoryBakery
 
       def push(klass)
         previous = current
+        automatic = Fiber[AUTOMATIC_BUILD_KEY]
         top_level = previous.depth.zero?
         enforce_depth_limit(previous, klass)
 
         reset_per_bake_caches! if top_level
-        Fiber[STORAGE_KEY] = previous.append(klass)
+        Fiber[AUTOMATIC_BUILD_KEY] = nil
+        Fiber[STORAGE_KEY] = new(previous.path + [klass], automatic: automatic)
         yield
       ensure
         Fiber[STORAGE_KEY] = previous
+        Fiber[AUTOMATIC_BUILD_KEY] = automatic
         reset_per_bake_caches! if top_level
       end
 
@@ -294,10 +305,10 @@ module FactoryBakery
 
       private
 
-      def run_after_persist(path, work)
+      def run_after_persist(entry)
         previous = current
-        Fiber[STORAGE_KEY] = new(path)
-        work.each(&:call)
+        Fiber[STORAGE_KEY] = new(entry.path)
+        entry.after_persist.each { |work| work.call(entry.object) }
       ensure
         Fiber[STORAGE_KEY] = previous
       end
@@ -329,7 +340,7 @@ module FactoryBakery
     # keep using `taken_names`.
     attr_accessor :explicit_names
 
-    attr_reader :path
+    attr_reader :path, :automatic
 
     def defer_until_persisted(&block)
       (@after_persist ||= []) << block
@@ -341,8 +352,9 @@ module FactoryBakery
       work
     end
 
-    def initialize(path)
+    def initialize(path, automatic: false)
       @path = path.freeze
+      @automatic = automatic
     end
 
     def depth
@@ -355,8 +367,5 @@ module FactoryBakery
       self.class.generated_records
     end
 
-    def append(klass)
-      self.class.new(@path + [klass])
-    end
   end
 end

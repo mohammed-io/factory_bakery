@@ -129,6 +129,23 @@ RSpec.describe 'FactoryBakery associations :all mode' do
       expect(profile.pluck(:owner_id)).to eq([owner.id])
     end
 
+    it 'leaves the owner usable after a deferred child save aborts' do
+      profile = define_model('AllAbortedProfile', owner_id: :integer, bio: :string) do
+        belongs_to :owner, class_name: 'AllAbortedOwner', optional: false
+        before_create { throw :abort if bio != 'manual' }
+      end
+      owner_model = define_model('AllAbortedOwner', name: :string) do
+        has_one :profile, class_name: 'AllAbortedProfile', inverse_of: :owner
+      end
+
+      owner = FactoryBakery.bake!(owner_model)
+
+      expect(owner.profile).to be_nil
+      expect(profile.count).to eq(0)
+      expect(owner.create_profile!(bio: 'manual')).to be_persisted
+      expect(owner.reload.profile.bio).to eq('manual')
+    end
+
     it 'finds a callback-created profile for a nested owner that cached an empty association' do
       profile_model = define_model('AllNestedProfile', bio: :string, owner_id: :integer) do
         belongs_to :owner, class_name: 'AllNestedOwner', optional: false

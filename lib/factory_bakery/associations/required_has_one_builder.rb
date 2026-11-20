@@ -62,7 +62,7 @@ module FactoryBakery
             strategy: nil
           )
 
-          object.public_send("#{entry.name}=", TargetBuilder.bake_child(object, declaration, entry))
+          object.public_send("#{entry.name}=", TargetBuilder.bake_child(object, declaration, entry, automatic: true))
         end
       end
     end

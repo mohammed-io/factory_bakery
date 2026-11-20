@@ -94,6 +94,51 @@ RSpec.describe 'raw-FK presence edges' do
       expect(profile.count).to eq(1)
     end
 
+    it 'preserves a generated inverse required by owner validation before save' do
+      account, profile, view = models
+      account.reflect_on_association(:profile).options[:autosave] = false
+      account.validate { errors.add(:profile, :blank) unless profile }
+      profile.class_eval do
+        def account=(owner)
+          super
+          owner.association(:profile).target = self
+          owner.association(:profile).loaded!
+        end
+      end
+
+      record = FactoryBakery.bake!(view).reload
+
+      expect(record.profile_id).to eq(account.sole.id)
+      expect(profile.count).to eq(1)
+    end
+
+    it 'persists deferred children on the callback-created parent that is returned' do
+      account, profile, view = models
+      badge = define_model('FkCallbackBadge', profile_id: :integer) do
+        belongs_to :profile, class_name: 'FkCallbackProfile', optional: false
+      end
+      profile.has_one :badge, class_name: 'FkCallbackBadge', foreign_key: :profile_id, inverse_of: :profile
+      add_profile_callback(account)
+
+      record = FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake!(view, fill_optional: true) }
+
+      expect(record.profile.badge).to be_persisted
+      expect(badge.pluck(:profile_id)).to eq([record.profile_id])
+    end
+
+    it 'does not adopt a same-class row with a different key through a scoped inverse' do
+      account, profile, view = models
+      account.has_one :profile, -> { unscope(where: :account_id).where(bio: 'other').order(:account_id) },
+                      class_name: 'FkCallbackProfile', inverse_of: :account
+      profile.insert_all!([{ account_id: 100, bio: 'other' }])
+      FactoryBakery.define(profile) { bio { 'generated' } }
+
+      record = FactoryBakery.bake!(view).reload
+
+      expect(record.profile_id).to eq(account.sole.id)
+      expect(record.profile.bio).to eq('generated')
+    end
+
     it 'rolls the owner and its callback-created parent back when saving the root fails' do
       account, profile, view = models
       add_profile_callback(account)

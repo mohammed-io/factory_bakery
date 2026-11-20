@@ -6,6 +6,8 @@
 
 ### Smoke regression fixes
 
+- Hardening of recent `:all` fixes, each with a regression spec: the persistence verifier exempts only records the gem built automatically, so a declaration-built record under a replaced automatic parent still raises `IncompletePersistenceError`; the typed-alias filter drops only optional, unscoped, non-FK-presence typed writers that compete with a selected polymorphic edge; a read-only parent adopts a row through the association's scope instead of the class's first row; deferred has_one work runs against the persisted owner and generated records are named (`BuildContext::GeneratedRecord`) instead of positional tuples, so a replacement keeps its queued work; a callback-created shared-PK parent is adopted only when its key equals the generated parent's; the error-directed rebuild acts only on "missing" errors (`:blank` / `:required` or their plain-string messages), not on invalid or taken values; the JSON fallback for short text columns emits a random value instead of one fixed literal.
+
 - Preserve the original column name when an ActiveRecord attribute has no alias, so JSON-cast index detection applies to both ordinary column names and aliases. This covers Discourse's `notifications.data` expression and partial indexes.
 - In `:all`, skip automatic optional `belongs_to` associations with missing foreign-key columns before assigning them. Required associations and explicit declarations continue to report failures.
 - The Mastodon smoke definitions let `FeaturedTag` resolve its own tag by name and let `AccountConversation` derive `last_status` from a persisted status ID.

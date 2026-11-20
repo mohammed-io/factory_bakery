@@ -53,6 +53,21 @@ RSpec.describe 'error-directed optional belongs_to in the verified fallback' do
     end
   end
 
+  it 'builds the blamed parent when a custom validator adds a plain-string blank message' do
+    without_required_belongs_to_default do
+      topic = define_model('ErrDirStringTopic', title: :string)
+      post = define_model('ErrDirStringPost', body: :string, topic_id: { type: :integer, null: false }) do
+        belongs_to :topic, class_name: 'ErrDirStringTopic', optional: true
+      end
+      post.validate { errors.add(:topic, "can't be blank") if topic.nil? }
+
+      record = FactoryBakery.bake!(post)
+
+      expect(record.topic).to be_persisted
+      expect(topic.count).to eq(1)
+    end
+  end
+
   it 'still leaves an optional belongs_to alone when no validation demands it' do
     without_required_belongs_to_default do
       _topic, = define_model('ErrDirQuietTopic', title: :string)
@@ -98,6 +113,20 @@ RSpec.describe 'error-directed optional belongs_to in the verified fallback' do
       expect(record.topic).to be_persisted
       expect([topic.count, bang.count]).to eq([1, 1])
     end
+  end
+
+  it 'does not insert a parent when the foreign key error is invalid' do
+    topic = define_model('ErrDirInvalidTopic', title: :string)
+    post = define_model('ErrDirInvalidPost', body: :string, topic_id: :integer) do
+      belongs_to :topic, class_name: 'ErrDirInvalidTopic', optional: true
+      validate { errors.add(:topic_id, :invalid) if body.blank? }
+    end
+
+    record = FactoryBakery.bake(post)
+
+    expect(record).to be_valid
+    expect(record.topic).to be_nil
+    expect(topic.count).to eq(0)
   end
 
   it 'does not build a parent for a nested bake the probe did not blame' do

@@ -46,12 +46,12 @@ module FactoryBakery
 
         # Adopting a row discards the entire fresh build, including writes
         # made by nested declarations or FK-presence edges.
-        def build(klass, entry)
+        def build(owner, entry, transaction_class: owner.class)
           return yield unless required?(entry) || BuildContext.persisting?
 
-          adapter = FactoryBakery::MapperRegistry.persistence_adapter(klass)
+          adapter = FactoryBakery::MapperRegistry.persistence_adapter(transaction_class)
           mark = BuildContext.generated_records.length
-          adapter.transaction(klass) { settle_fresh(yield, entry, mark) }
+          adapter.transaction(transaction_class) { settle_fresh(yield, owner, entry, mark) }
         rescue AdoptedParent => e
           BuildContext.trim_generated_records!(mark)
           e.row.reload
@@ -63,17 +63,17 @@ module FactoryBakery
         # read-only new parent so the root save! never autosaves one; plain
         # `bake` only settles read-only parents on FK-presence edges, where
         # the id is needed.
-        def settle(parent, entry)
-          return adopt(parent) if read_only_new?(parent, entry)
+        def settle(parent, owner, entry)
+          return adopt(parent, owner, entry) if read_only_new?(parent, entry)
 
           persist_fk!(parent, entry)
         end
 
         private
 
-        def settle_fresh(parent, entry, mark)
+        def settle_fresh(parent, owner, entry, mark)
           if read_only_new?(parent, entry)
-            settled = adopt(parent)
+            settled = adopt(parent, owner, entry)
             raise AdoptedParent, settled unless parent.equal?(settled)
 
             return parent
@@ -82,7 +82,7 @@ module FactoryBakery
           persist_fk!(parent, entry) do |adapter|
             next unless adapter.respond_to?(:callback_created_parent)
 
-            generated = BuildContext.generated_records.drop(mark).map { |_path, record| record }
+            generated = BuildContext.generated_records.drop(mark).map(&:object)
             adapter.callback_created_parent(parent, generated)
           end
         end
@@ -128,22 +128,15 @@ module FactoryBakery
         # A read-only parent is never saved: an existing row of exactly that
         # class is adopted so the FK points somewhere real, and an empty table
         # leaves the parent unsaved rather than raising here.
-        def adopt(parent)
-          row = persisted_row(parent)
+        def adopt(parent, owner, entry)
+          adapter = FactoryBakery::MapperRegistry.persistence_adapter(parent)
+          row = adapter.read_only_parent(parent, owner, entry) if adapter.respond_to?(:read_only_parent)
           return parent unless row
 
           BuildContext.replace_generated!(parent, row)
           row
         end
 
-        def persisted_row(parent)
-          klass = parent.class
-          return nil unless klass.respond_to?(:all) && klass.respond_to?(:primary_key)
-
-          klass.reorder(klass.primary_key).first
-        rescue StandardError
-          nil
-        end
       end
     end
   end

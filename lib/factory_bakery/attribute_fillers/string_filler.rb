@@ -104,8 +104,10 @@ module FactoryBakery
         limit = [lengths.exact || lengths.maximum, @db_limit].compact.min
         return value if limit.nil? || value.length <= limit
 
-        shortest = JSON.generate('a' => 'a')
-        shortest.length > limit ? nil : shortest
+        return nil if limit < 9
+
+        key = generate_padding(1)
+        JSON.generate(key => generate_padding(limit - 8))
       end
 
       def pick_from_allowed(context)

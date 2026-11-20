@@ -209,7 +209,7 @@ module FactoryBakery
 
         # The path recorded by core when the freshly built object completed.
         def build_path_for(object)
-          BuildContext.generated_records.reverse_each.find { |_, recorded| recorded.equal?(object) }&.first
+          BuildContext.generated_records.reverse_each.find { |entry| entry.object.equal?(object) }&.path
         end
 
         def ancestor?(record_path, current_path)

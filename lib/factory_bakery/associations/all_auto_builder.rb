@@ -73,7 +73,6 @@ module FactoryBakery
         # loaded? probe.
         def skip?(object, entry, declared)
           return true if declared.include?(entry.name)
-          return true unless foreign_keys_exist?(entry)
           return true if object.association(entry.name.to_sym).loaded?
           return true if BelongsToBuilder.suppressed_edge?(object.class, entry.name)
           return true if skip_unverified_inverse?(object, entry)
@@ -133,22 +132,22 @@ module FactoryBakery
           )
 
           return build_required_child(object, entry, declaration) unless optional?(object, entry)
-          return defer_has_one(object, entry, declaration) if entry.kind == :has_one && BuildContext.persisting?
+          return defer_has_one(entry, declaration) if entry.kind == :has_one && BuildContext.persisting?
 
           build_optional_child(object, entry, declaration)
         end
 
         # Let the owner's save callbacks populate this edge first. The save
         # may also have cached nil before a callback inserted a row directly.
-        def defer_has_one(object, entry, declaration)
+        def defer_has_one(entry, declaration)
           context = BuildContext.current
           fill_mode = FillOptional.nested_in_rebuild?(context.depth) ? false : FillOptional.current
           options = Associations::SCOPE_KEYS.to_h { |name| [name, Associations.public_send(name)] }
-          context.defer_until_persisted do
-            next if object.association(entry.name.to_sym).target
+          context.defer_until_persisted do |persisted_owner|
+            next if persisted_owner.association(entry.name.to_sym).target
 
             Associations.with(**options) do
-              FillOptional.with(fill_mode) { build_optional_child(object, entry, declaration, refresh: true) }
+              FillOptional.with(fill_mode) { build_optional_child(persisted_owner, entry, declaration, refresh: true) }
             end
           end
         end
@@ -164,9 +163,9 @@ module FactoryBakery
 
         def build_required_child(object, entry, declaration)
           if entry.kind == :has_many
-            TargetBuilder.build_collection(object, declaration, entry)
+            TargetBuilder.build_collection(object, declaration, entry, automatic: true)
           else
-            object.public_send("#{entry.name}=", TargetBuilder.bake_child(object, declaration, entry))
+            object.public_send("#{entry.name}=", TargetBuilder.bake_child(object, declaration, entry, automatic: true))
           end
         end
 
@@ -198,11 +197,11 @@ module FactoryBakery
 
         def build_and_validate(object, entry, declaration)
           if entry.kind == :has_many
-            TargetBuilder.build_collection(object, declaration, entry)
+            TargetBuilder.build_collection(object, declaration, entry, automatic: true)
             children = object.public_send(entry.name).to_a
             raise FactoryBakery::FallbackBuilder::DiscardAttempt if children.any? { |child| discardable?(child) }
           else
-            child = TargetBuilder.bake_child(object, declaration, entry)
+            child = TargetBuilder.bake_child(object, declaration, entry, automatic: true)
             raise FactoryBakery::FallbackBuilder::DiscardAttempt if discardable?(child)
 
             object.public_send("#{entry.name}=", child)

@@ -66,16 +66,30 @@ module FactoryBakery
 
         def entries_to_build(introspection, context)
           belongs_to = introspection.select { |entry| id_keyed_belongs_to?(entry) }
-          belongs_to = without_polymorphic_aliases(belongs_to) if Associations.mode == :all
           entries = mode_entries(belongs_to, context)
+          entries = without_competing_writers(entries) if Associations.mode == :all
           (entries + error_directed(belongs_to, entries)).map { |entry| fk_blamed(entry) }
         end
 
-        # Typed readers of the same polymorphic FK do not represent separate
-        # parents. Writing them would overwrite the chosen activity's ID.
-        def without_polymorphic_aliases(entries)
+        # A selected polymorphic edge owns the FK/type pair. An optional
+        # unscoped typed writer would either duplicate that target or overwrite
+        # its ID without updating the type. Required/scoped typed edges have
+        # their own contract, and an unselected polymorphic edge owns no key.
+        def without_competing_writers(entries)
           polymorphic_keys = entries.select(&:polymorphic).map { |entry| entry.foreign_keys.sort }
-          entries.reject { |entry| !entry.polymorphic && polymorphic_keys.include?(entry.foreign_keys.sort) }
+          entries.reject do |entry|
+            !entry.polymorphic && !entry.scope && !entry.fk_presence &&
+              !presence_applies?(entry) &&
+              polymorphic_keys.include?(entry.foreign_keys.sort)
+          end
+        end
+
+        # A conditional validator may not be evaluable here (no record yet);
+        # treat it as applying so the typed edge is kept, not dropped.
+        def presence_applies?(entry)
+          entry.presence_applicable.call(BuildContext.current_record)
+        rescue StandardError
+          true
         end
 
         def mode_entries(belongs_to, context)
@@ -326,7 +340,9 @@ module FactoryBakery
         end
 
         def bake_fresh(target_class, entry, reuse)
-          fresh = FkParentPersistence.build(target_class, entry) { FactoryBakery.bake(target_class) }
+          fresh = FkParentPersistence.build(BuildContext.current_record, entry, transaction_class: target_class) do
+            BuildContext.automatic_build { FactoryBakery.bake(target_class) }
+          end
           ReuseResolver.remember(target_class, {}, entry, fresh) if reuse
           fresh
         end
@@ -338,7 +354,7 @@ module FactoryBakery
         # reuse_non_unique strategy.
         def resolve_reuse(_klass, target_class, entry)
           existing = ReuseResolver.existing(target_class, {}, entry)
-          FkParentPersistence.settle(existing, entry) if existing
+          FkParentPersistence.settle(existing, BuildContext.current_record, entry) if existing
         end
 
         def ensure_acyclic!(path, edge)

@@ -27,6 +27,18 @@ module FactoryBakery
         record.save! if record.respond_to?(:save!)
       end
 
+      def read_only_parent(parent, owner, entry)
+        klass = parent.class
+        relation = klass.all
+        reflection = ReflectionCache.all(owner.class).find { |edge| edge.name.to_s == entry.name }
+        return unless reflection
+        return if reflection.scope && !reflection.scope.arity.zero?
+
+        relation = reflection.scope_for(relation, owner) if reflection.scope
+        row = relation.reorder(klass.primary_key).first
+        row if row.instance_of?(klass)
+      end
+
       # A shared primary key gives the callback row and the candidate the same
       # identity. Save the new owner first so its callback can claim that key.
       def callback_created_parent(parent, generated)
@@ -44,10 +56,10 @@ module FactoryBakery
         inverse = owner.association(reflection.inverse_of.name)
         inverse.reset if inverse.target.equal?(parent)
         save!(owner)
-        replacement = inverse.reload&.target
-        return replacement if replacement.instance_of?(parent.class)
-
         parent.public_send("#{reflection.name}=", owner)
+        replacement = inverse.reload&.target
+        return replacement if replacement.instance_of?(parent.class) && replacement.id == parent.id
+
         nil
       end
 

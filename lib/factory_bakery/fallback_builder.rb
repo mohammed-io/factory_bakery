@@ -66,7 +66,7 @@ module FactoryBakery
         adapter.transaction(model_klass) do
           attempt = build_object(model_klass, definition, overrides, traits, @mode)
           probe = fallback_probe(*attempt)
-          errors = error_attributes(attempt.first) if probe == :invalid
+          errors = missing_attributes(attempt.first) if probe == :invalid
           if probe == :invalid
             BuildContext.trim_generated_records!(mark)
             raise DiscardAttempt
@@ -145,7 +145,7 @@ module FactoryBakery
       return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
       BuildContext.trim_generated_records!(mark)
-      errors = error_attributes(object)
+      errors = missing_attributes(object)
       verify_rebuild!(rebuild(model_klass, definition, overrides, traits, adapter, errors))
     end
 
@@ -238,6 +238,26 @@ module FactoryBakery
       object.valid?
     rescue StandardError
       false
+    end
+
+    def missing_attributes(object)
+      return [] unless object.errors.respond_to?(:details)
+
+      object.errors.details.filter_map do |name, errors|
+        name if errors.any? { |error| missing_error?(error[:error]) }
+      end
+    end
+
+    # Only "missing" errors direct the rebuild: an invalid or taken value is
+    # not fixed by building the parent. Custom validators often add the
+    # message as a String instead of the :blank / :required symbol.
+    MISSING_MESSAGES = ["can't be blank", 'must exist'].freeze
+    private_constant :MISSING_MESSAGES
+
+    def missing_error?(error)
+      return %i[blank required].include?(error) if error.is_a?(Symbol)
+
+      MISSING_MESSAGES.include?(error.to_s)
     end
 
     # The attribute names an errors object carries, as strings: one that

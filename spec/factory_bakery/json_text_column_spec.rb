@@ -67,6 +67,20 @@ RSpec.describe 'JSON stored in a text column (index-cast)' do
     expect { JSON.parse(record.data) }.not_to raise_error
   end
 
+  it 'generates distinct JSON objects at the minimum object length' do
+    model = define_model('JsonCastShort', data: { type: :string, limit: 9, null: false }) do
+      validates :data, uniqueness: true
+    end
+    stub_json_cast(model, %w[data])
+    model.create!(data: '{"a":"a"}')
+
+    record = FactoryBakery.bake!(model)
+
+    expect(record.data.length).to eq(9)
+    expect(JSON.parse(record.data)).to be_a(Hash)
+    expect(model.distinct.count(:data)).to eq(2)
+  end
+
   it 'generates JSON for both a cast column and its attribute alias' do
     model = define_model('JsonCastAliasedNote', data: { type: :string, null: false }) do
       alias_attribute :payload, :data

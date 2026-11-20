@@ -19,9 +19,9 @@ module FactoryBakery
       found = parent_entry
       return unless found
 
-      path, parent = found
+      parent = found.object
       association = adapter.association_name_for(parent, candidates)
-      owner = class_name(path[-2])
+      owner = class_name(found.path[-2])
       raise ReadOnlyTargetError, "#{owner}##{association || 'association'} -> #{message(parent)}"
     end
 
@@ -33,8 +33,9 @@ module FactoryBakery
     # already persisted (an FK-presence parent adopted from a database view, for
     # example) needs no write, so it is left alone.
     def parent_entry
-      entries.find do |entry_path, record|
-        !record.equal?(root) && entry_path.length > 1 && read_only?(record) && !persisted?(record)
+      entries.find do |entry|
+        record = entry.object
+        !record.equal?(root) && entry.path.length > 1 && read_only?(record) && !persisted?(record)
       end
     end
 
@@ -43,7 +44,7 @@ module FactoryBakery
     end
 
     def candidates
-      @candidates ||= [root, *entries.map { |_path, record| record }].uniq
+      @candidates ||= [root, *entries.map(&:object)].uniq
     end
 
     def read_only?(record)

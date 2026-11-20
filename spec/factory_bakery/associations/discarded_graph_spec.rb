@@ -116,6 +116,53 @@ RSpec.describe 'FactoryBakery discarded association graphs' do
     expect(event.count).to eq(0)
   end
 
+  it 'still verifies a declared descendant of a displaced automatic parent' do
+    define_model('DiscardNestedProfile', bio: :string)
+    sender = define_model('DiscardNestedSender', profile_id: :integer) do
+      belongs_to :profile, class_name: 'DiscardNestedProfile', optional: true, autosave: false
+    end
+    existing = sender.create!
+    event = define_model('DiscardNestedEvent', sender_id: :integer) do
+      belongs_to :sender, class_name: 'DiscardNestedSender', optional: false
+    end
+    event.before_validation { self.sender_id = existing.id }
+    FactoryBakery.define(sender) { association :profile }
+
+    expect { FactoryBakery.bake!(event) }
+      .to raise_error(FactoryBakery::IncompletePersistenceError, /DiscardNestedProfile/)
+    expect(event.count).to eq(0)
+  end
+
+  it 'builds an authoritative typed edge sharing an unused polymorphic foreign key' do
+    define_model('DiscardTypedTarget', name: :string)
+    event = define_model('DiscardTypedEvent', subject_id: :integer, subject_type: :string) do
+      belongs_to :subject, polymorphic: true, optional: true
+      belongs_to :typed_target, -> { where(name: 'selected') }, class_name: 'DiscardTypedTarget',
+                                                             foreign_key: :subject_id, optional: false
+    end
+    FactoryBakery.define(DiscardTypedTarget) { name { 'selected' } }
+
+    record = FactoryBakery.bake!(event).reload
+
+    expect(record.typed_target).to be_persisted
+    expect(record.subject_type).to be_nil
+  end
+
+  it 'adopts a read-only parent through the belongs_to scope' do
+    target = define_model('DiscardScopedView', region: :string) do
+      define_method(:readonly?) { true }
+    end
+    target.insert_all!([{ region: 'west' }, { region: 'east' }])
+    owner = define_model('DiscardScopedOwner', view_id: :integer) do
+      belongs_to :view, -> { where(region: 'east') },
+                 class_name: 'DiscardScopedView', optional: false
+    end
+
+    record = FactoryBakery.bake!(owner).reload
+
+    expect(record.view).to eq(target.find_by!(region: 'east'))
+  end
+
   it 'discards an invalid optional child and its nested bakes' do
     writer = define_model('DiscardChildWriter', name: :string)
     detail = define_model('DiscardChildDetail', name: :string)

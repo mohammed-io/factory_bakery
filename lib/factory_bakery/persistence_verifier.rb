@@ -19,11 +19,11 @@ module FactoryBakery
     end
 
     def call
-      unsaved = @entries.reject { |_path, record| @adapter.persisted?(record) }
+      unsaved = @entries.map(&:object).reject { |record| @adapter.persisted?(record) }
       return if unsaved.empty?
 
       superseded = superseded_records(unsaved)
-      unsaved.reject! { |_path, record| superseded.include?(record) }
+      unsaved.reject! { |record| superseded.include?(record) }
       return if unsaved.empty?
 
       raise IncompletePersistenceError, message_for(unsaved)
@@ -37,7 +37,7 @@ module FactoryBakery
     def superseded_records(unsaved)
       return [] unless @adapter.respond_to?(:automatic_parent_discarded?)
 
-      unsaved_records = Set.new.compare_by_identity.merge(unsaved.map { |_path, record| record })
+      unsaved_records = Set.new.compare_by_identity.merge(unsaved)
       candidates = superseded_candidates(unsaved_records)
       return candidates if candidates.empty?
 
@@ -54,7 +54,7 @@ module FactoryBakery
     end
 
     def reachable_records(candidates)
-      pending = [@root, *@entries.map { |_path, record| record }.reject { |record| candidates.include?(record) }]
+      pending = [@root, *@entries.map(&:object).reject { |record| candidates.include?(record) }]
       seen = Set.new.compare_by_identity
       until pending.empty?
         record = pending.pop
@@ -66,9 +66,9 @@ module FactoryBakery
     end
 
     def message_for(unsaved)
-      objects = [@root, *@entries.map { |_path, record| record }].uniq
+      objects = [@root, *@entries.map(&:object)].uniq
 
-      details = unsaved.map do |_path, record|
+      details = unsaved.map do |record|
         name = record.class.name || record.class.to_s
         association = @adapter.association_name_for(record, objects)
         association ? "#{name} (assigned to #{association})" : name

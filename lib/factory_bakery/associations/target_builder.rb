@@ -27,32 +27,32 @@ module FactoryBakery
           if reuse
             resolved = BakeryBuilder.resolve(klass).first
             existing = ReuseResolver.existing(resolved, declaration.overrides, entry)
-            return FkParentPersistence.settle(existing, entry) if existing
+            return FkParentPersistence.settle(existing, object, entry) if existing
           end
 
-          fresh = FkParentPersistence.build(object.class, entry) do
+          fresh = FkParentPersistence.build(object, entry) do
             FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
           end
           ReuseResolver.remember(resolved, declaration.overrides, entry, fresh) if reuse
           fresh
         end
 
-        def bake_child(object, declaration, entry)
-          FactoryBakery.bake(
-            target_klass(object, declaration, entry),
-            *declaration.traits,
-            **child_overrides(object, entry).merge(declaration.overrides)
-          )
+        def bake_child(object, declaration, entry, automatic: false)
+          klass = target_klass(object, declaration, entry)
+          overrides = child_overrides(object, entry).merge(declaration.overrides)
+          return FactoryBakery.bake(klass, *declaration.traits, **overrides) unless automatic
+
+          BuildContext.automatic_build { FactoryBakery.bake(klass, *declaration.traits, **overrides) }
         end
 
-        def build_collection(object, declaration, entry)
+        def build_collection(object, declaration, entry, automatic: false)
           count = declaration.child_count || 1
           if count.zero?
             empty_collection(object, entry)
             return
           end
 
-          children = Array.new(count) { bake_child(object, declaration, entry) }
+          children = Array.new(count) { bake_child(object, declaration, entry, automatic: automatic) }
           # concat is the public collection writer. It fires before_add/after_add
           # callbacks and sets the verified inverse on each child.
           object.public_send(entry.name).concat(children)
