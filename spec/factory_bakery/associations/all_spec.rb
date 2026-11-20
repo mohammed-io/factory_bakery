@@ -88,6 +88,52 @@ RSpec.describe 'FactoryBakery associations :all mode' do
 
       expect(user.profile).to be_a(profile_model)
       expect(user.profile.user).to equal(user)
+      expect(user.profile).to be_new_record
+      expect(profile_model.count).to eq(0)
+
+      saved_user = FactoryBakery.bake!(user_model)
+
+      expect(saved_user.profile).to be_persisted
+      expect(profile_model.pluck(:user_id)).to eq([saved_user.id])
+    end
+
+    it 'keeps the profile created by the owner callback under bake!' do
+      profile = define_model('AllCallbackProfile', bio: :string, owner_id: :integer) do
+        belongs_to :owner, class_name: 'AllCallbackOwner', optional: false
+      end
+      profile.connection.add_index(profile.table_name, :owner_id, unique: true)
+      owner_model = define_model('AllCallbackOwner', name: :string) do
+        has_one :profile, class_name: 'AllCallbackProfile', inverse_of: :owner
+        after_create { create_profile!(bio: 'from callback') }
+      end
+
+      owner = FactoryBakery.bake!(owner_model)
+
+      expect(owner.profile.bio).to eq('from callback')
+      expect(profile.pluck(:owner_id)).to eq([owner.id])
+    end
+
+    it 'finds a callback-created profile for a nested owner that cached an empty association' do
+      profile_model = define_model('AllNestedProfile', bio: :string, owner_id: :integer) do
+        belongs_to :owner, class_name: 'AllNestedOwner', optional: false
+      end
+      profile_model.connection.add_index(profile_model.table_name, :owner_id, unique: true)
+      define_model('AllNestedOwner', name: :string) do
+        has_one :profile, class_name: 'AllNestedProfile', inverse_of: :owner
+        after_create do
+          raise 'profile must be empty before the callback inserts it' if profile
+
+          AllNestedProfile.create!(owner_id: id, bio: 'direct insert')
+        end
+      end
+      post_model = define_model('AllNestedPost', owner_id: :integer) do
+        belongs_to :owner, class_name: 'AllNestedOwner', optional: false
+      end
+
+      post = FactoryBakery.bake!(post_model)
+
+      expect(post.owner.profile.bio).to eq('direct insert')
+      expect(profile_model.pluck(:owner_id)).to eq([post.owner_id])
     end
 
     it 'builds has_many children using default_count' do

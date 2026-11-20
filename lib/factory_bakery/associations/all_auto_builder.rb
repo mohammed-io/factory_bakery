@@ -132,9 +132,25 @@ module FactoryBakery
             block: nil
           )
 
-          return build_optional_child(object, entry, declaration) if optional?(object, entry)
+          return build_required_child(object, entry, declaration) unless optional?(object, entry)
+          return defer_has_one(object, entry, declaration) if entry.kind == :has_one && BuildContext.persisting?
 
-          build_required_child(object, entry, declaration)
+          build_optional_child(object, entry, declaration)
+        end
+
+        # Let the owner's save callbacks populate this edge first. The save
+        # may also have cached nil before a callback inserted a row directly.
+        def defer_has_one(object, entry, declaration)
+          context = BuildContext.current
+          fill_mode = FillOptional.nested_in_rebuild?(context.depth) ? false : FillOptional.current
+          options = Associations::SCOPE_KEYS.to_h { |name| [name, Associations.public_send(name)] }
+          context.defer_until_persisted do
+            next if object.association(entry.name.to_sym).target
+
+            Associations.with(**options) do
+              FillOptional.with(fill_mode) { build_optional_child(object, entry, declaration, refresh: true) }
+            end
+          end
         end
 
         def optional?(object, entry)
@@ -158,18 +174,23 @@ module FactoryBakery
         # child that cannot be baked (or is invalid) must not fail the whole
         # bake. Build it inside a savepoint; on any failure roll the child's
         # writes and generated records back and leave the edge empty/nil.
-        def build_optional_child(object, entry, declaration)
+        def build_optional_child(object, entry, declaration, refresh: false)
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(object.class)
           mark = BuildContext.generated_records.length
+          build = lambda do
+            next if refresh && object.association(entry.name.to_sym).reload
+
+            build_and_validate(object, entry, declaration)
+          end
           begin
             if adapter.transactional?
-              adapter.transaction(object.class) { build_and_validate(object, entry, declaration) }
+              adapter.transaction(object.class, &build)
             else
-              build_and_validate(object, entry, declaration)
+              build.call
             end
           rescue StandardError
             BuildContext.trim_generated_records!(mark)
-            discard_child(object, entry)
+            discard_child(object, entry, refresh)
           end
         end
 
@@ -204,7 +225,9 @@ module FactoryBakery
           GraphValidity.invalid?(child)
         end
 
-        def discard_child(object, entry)
+        def discard_child(object, entry, refresh)
+          return object.association(entry.name.to_sym).reset if refresh
+
           if entry.kind == :has_many
             association = object.association(entry.name.to_sym)
             association.target = []

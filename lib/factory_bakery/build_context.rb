@@ -78,13 +78,29 @@ module FactoryBakery
         (Fiber[BUILDING_KEY] || []).any? { |building| building.equal?(object) }
       end
 
-      # Every generated object, paired with the build path it was generated at.
+      # Each generated object carries its build path and any work deferred
+      # until it is persisted. Trimming a failed attempt drops that work too.
       def generated_records
         Fiber[RECORDS_KEY] ||= []
       end
 
       def record_generated(object)
-        generated_records << [current.path, object]
+        generated_records << [current.path, object, current.take_after_persist]
+      end
+
+      def finish_persistence!(mark, adapter)
+        index = mark
+        # Saving a deferred child can generate more owners with pending work.
+        while (entry = generated_records[index])
+          path, object, work = entry
+          index += 1
+          next unless work
+          next unless adapter.persisted?(object)
+
+          # An enclosing bake! can visit this entry again after a nested bake!.
+          entry[2] = nil
+          run_after_persist(path, work)
+        end
       end
 
       # Swaps an object the bake built for the object that ends up in the
@@ -95,8 +111,9 @@ module FactoryBakery
       def replace_generated!(from, to)
         return if from.equal?(to)
 
-        Fiber[RECORDS_KEY] = generated_records.map do |path, object|
-          object.equal?(from) ? [path, to] : [path, object]
+        Fiber[RECORDS_KEY] = generated_records.map do |entry|
+          path, object = entry
+          object.equal?(from) ? [path, to] : entry
         end
       end
 
@@ -257,6 +274,14 @@ module FactoryBakery
 
       private
 
+      def run_after_persist(path, work)
+        previous = current
+        Fiber[STORAGE_KEY] = new(path)
+        work.each(&:call)
+      ensure
+        Fiber[STORAGE_KEY] = previous
+      end
+
       def enforce_depth_limit(previous, klass)
         limit = FactoryBakery.max_bake_depth
         next_depth = previous.depth + 1
@@ -285,6 +310,16 @@ module FactoryBakery
     attr_accessor :explicit_names
 
     attr_reader :path
+
+    def defer_until_persisted(&block)
+      (@after_persist ||= []) << block
+    end
+
+    def take_after_persist
+      work = @after_persist
+      @after_persist = nil
+      work
+    end
 
     def initialize(path)
       @path = path.freeze

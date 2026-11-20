@@ -137,12 +137,14 @@ module FactoryBakery
             object = nil
             adapter.transaction(model_klass) do
               object = BuildContext.push(model_klass) do
+                mark = BuildContext.generated_records.length
                 record = build_with_fallback(model_klass, definition, overrides, traits, mode)
                 # Check before any save: a read-only target cannot be persisted,
                 # and a read-only parent generated anywhere in the graph fails
                 # the whole bake! inside this savepoint.
                 ensure_writable!(record, adapter)
                 adapter.save!(record)
+                BuildContext.finish_persistence!(mark, adapter)
                 verify_persistence!(record, adapter)
                 record
               end
