@@ -10,6 +10,11 @@ module FactoryBakery
 
     attr_reader :heuristic_attribute_names
 
+    # Names filled only because optional filling was asked for: not required
+    # for a valid record, not declared and not overridden. The verified
+    # fallback reads it to tell a fill it may undo from one the caller decided.
+    attr_reader :optional_candidates
+
     # Signals for the verified fallback: an optional column was left to
     # heuristics, and leaving it unset could plausibly matter.
     def optional_candidates?
@@ -363,8 +368,7 @@ module FactoryBakery
     end
 
     def heuristic_values(skip, resolver)
-      fillable, @optional_candidates = partition_candidates(skip)
-      fillable.each { |attribute_name| resolver.value_for(attribute_name) }
+      partition_candidates(skip).each { |attribute_name| resolver.value_for(attribute_name) }
       resolver.values
     end
 
@@ -376,19 +380,21 @@ module FactoryBakery
     #
     # Partitioning happens while the record is bound, so a condition-aware
     # rule is read for this bake rather than from the class-level cache. The
-    # optional half doubles as the signal for the verified fallback: when it
-    # is empty, a rebuild with everything filled cannot change the result.
+    # optional half doubles as the signal for the verified fallback (when it
+    # is empty, a rebuild with everything filled cannot change the result) and
+    # as the set of fills that may be undone when app validation rejects one,
+    # so it is recorded in every mode.
     def partition_candidates(skip)
       fillable = candidate_attribute_names.reject { |name| skip.include?(name) }
-      return [fillable, []] if FillOptional.full?(@fill_optional)
-
-      required, optional = fillable.partition { |name| fill_required?(name) }
+      _, optional = fillable.partition { |name| RequiredAttribute.call(constraints_for(name)) }
+      @optional_candidates = optional
       @verification_needed = needs_verification?(optional)
-      [required, optional]
-    end
+      return fillable if FillOptional.full?(@fill_optional)
 
-    def fill_required?(name)
-      FillOptional.includes?(@fill_optional, name) || RequiredAttribute.call(constraints_for(name))
+      # A name on the opt-in list was asked for explicitly, so it is filled
+      # here but is not an optional fill the fallback may undo.
+      @optional_candidates = optional.reject { |name| FillOptional.includes?(@fill_optional, name) }
+      fillable - @optional_candidates
     end
 
     # Only verify when leaving an optional column unset can plausibly matter:

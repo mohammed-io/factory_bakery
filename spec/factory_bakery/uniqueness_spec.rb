@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'factory_bakery/associations'
 
 RSpec.describe 'uniqueness enforcement (issue #33)' do
   include DefineConstantMacros
@@ -179,6 +180,85 @@ RSpec.describe 'uniqueness enforcement (issue #33)' do
 
       expect(record.code).to eq('Token')
       expect(record).to be_persisted
+    end
+  end
+
+  # Two records built in the same top-level bake are invisible to the
+  # database's own uniqueness check, so the enforcer also consults a registry
+  # of the values it accepted earlier in this bake.
+  describe 'uniqueness across unsaved siblings in one bake graph' do
+    before do
+      FactoryBakery.reset_plugins!
+      FactoryBakery.register_plugin(FactoryBakery::Associations::Plugin)
+      FactoryBakery::Associations.reset_configuration!
+    end
+
+    after do
+      FactoryBakery.reset_plugins!
+      FactoryBakery::Associations.reset_configuration!
+    end
+
+    # Two required belongs_to edges pointing at the same class: the parents are
+    # built as separate nested bakes and both are unsaved until the root save.
+    def define_transfer_graph(user_name, user_columns = { secure_identifier: :string }, &user_block)
+      user = define_model(user_name, user_columns, &user_block)
+      transfer = define_model("#{user_name}Transfer", sender_id: :integer, receiver_id: :integer) do
+        belongs_to :sender, class_name: user_name.to_s, optional: false
+        belongs_to :receiver, class_name: user_name.to_s, optional: false
+      end
+      [user, transfer]
+    end
+
+    it 'gives two parents of the same class different uniqueness-validated values' do
+      user, transfer = define_transfer_graph('GraphUniqueUser') do
+        validates :secure_identifier, uniqueness: true
+      end
+      ActiveRecord::Base.connection.add_index(user.table_name, :secure_identifier, unique: true)
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha')
+
+      pairs = Array.new(50) do
+        record = FactoryBakery.bake!(transfer)
+        [record.sender.secure_identifier, record.receiver.secure_identifier]
+      end
+
+      expect(pairs.select { |pair| pair.first == pair.last }).to be_empty
+      expect(transfer.count).to eq(50)
+      expect(user.count).to eq(100)
+    end
+
+    it 'keeps a column protected only by a database unique index unique across siblings' do
+      user, transfer = define_transfer_graph('GraphIndexedUser', code: { type: :string, null: false })
+      ActiveRecord::Base.connection.add_index(user.table_name, :code, unique: true)
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha')
+
+      record = FactoryBakery.bake!(transfer)
+
+      expect(record.sender.code).to eq('alpha')
+      expect(record.receiver.code).not_to eq('alpha')
+      expect([record.sender, record.receiver]).to all(be_persisted)
+    end
+
+    it 'normalizes case for a case-insensitive uniqueness validator' do
+      _user, transfer = define_transfer_graph('GraphCaseUser', code: :string) do
+        validates :code, uniqueness: { case_sensitive: false }
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('Token', 'token', 'fresh')
+
+      record = FactoryBakery.bake!(transfer)
+
+      expect(record.sender.code).to eq('Token')
+      expect(record.receiver.code).to eq('fresh')
+    end
+
+    it 'never suffixes a value past its length cap' do
+      model = define_model('GraphCappedCode', code: :string) do
+        validates :code, uniqueness: true, length: { maximum: 12 }
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha')
+      FactoryBakery.bake!(model)
+
+      expect { FactoryBakery.bake!(model) }
+        .to raise_error(FactoryBakery::Error, /GraphCappedCode#code/)
     end
   end
 end

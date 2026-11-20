@@ -340,6 +340,8 @@ FactoryBakery.bake(User, fill_optional: [:bio, :website])        # opt in just t
 
 The per-call setting applies to nested bakes made from declaration blocks too. Declarations, traits and call-site overrides still take precedence over heuristics in every mode.
 
+A column filled only because you opted in is verified as well: when a custom validator or a `validate` block rejects the generated value, that fill is put back to the column's default (or `nil`) if that is what makes the record valid. A required column keeps its value, and a fill that neither the generated value nor the default can fix is left as generated.
+
 | Metadata | Example | Result |
 | --- | --- | --- |
 | Column type | `title: :string`, `count: :integer`, `published_at: :datetime` | A type-appropriate fake value (strings come from [FFaker](https://github.com/ffaker/ffaker)) |
@@ -354,6 +356,7 @@ The per-call setting applies to nested bakes made from declaration blocks too. D
 | `presence`, `absence` | `presence: true`, `absence: true` | A non-blank value, or `nil` |
 | `enum` | `enum status: { pending: 0, done: 1 }` | One of the defined enum keys |
 | Column default | `default: 'draft'` | Left to the database; the database default is kept unless it is blank and presence-validated |
+| Single-column unique index | `add_index :users, :code, unique: true` | Treated as a uniqueness constraint: the value is regenerated on a collision, in the database and across the unsaved records of one bake (see [Uniqueness across a bake graph](#uniqueness-across-a-bake-graph)) |
 | Primary key | `id` | Skipped |
 | `belongs_to` foreign keys and polymorphic pairs | `account_id`, `commentable_type` / `commentable_id` | Left `nil`; a made-up row or class name would dangle |
 | STI inheritance column | `type` | Left to Rails (the subclass's name, or `nil` on the base) |
@@ -400,6 +403,12 @@ Notes:
 - **Bounded by design.** Unbounded quantifiers (`*`, `+`, `{n,}`) repeat at most 8 times beyond their minimum unless a length hint asks for more; depth, work per value and value length (256 characters, or the requested minimum if larger) are capped. A regex that cannot be satisfied (`/\Afoo(?=bar)\z/`) or exceeds a bound gives the exhaustion error quickly rather than hanging.
 - **Seeded randomness.** The generator uses Ruby's global random number generator, so `srand` makes baked values repeatable.
 - **Out of reach.** Patterns no string can match, and patterns Ruby itself accepts but `regexp_parser` cannot parse, produce no candidate; supply the value with an override or a factory declaration.
+
+### Uniqueness across a bake graph
+
+A uniqueness-validated column, and any column protected by a single-column unique index, is checked against the database and regenerated on a collision. That check cannot see the records of the same bake that are still unsaved — the two parents of different edges, for instance — so the enforcer also remembers every value it accepted during the current top-level bake: a sibling built later regenerates instead of reusing it, and the root `save!` no longer fails on the second `INSERT` (`PG::UniqueViolation`, `ActiveRecord::RecordNotUnique`).
+
+Regeneration normally produces a fresh value. When a filler keeps returning the same short word — a bare `FFaker::Lorem.word` is all a uniqueness-validated string column gets — the attempt budget would run out, so after two collisions the candidate gets an entropy suffix (`"alpha-3f9a0c1e"`), unless the column declares a `format`, an `inclusion` list, an `enum`, a numericality rule or an exact length, or a length cap has no room for it. A value space that is genuinely exhausted still raises `FactoryBakery::Error` naming the model and attribute. A `uniqueness: { case_sensitive: false }` column folds case in that check, so `"Token"` and `"token"` collide between siblings the way the database sees them.
 
 ## Associations
 

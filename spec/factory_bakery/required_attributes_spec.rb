@@ -258,4 +258,76 @@ RSpec.describe 'required-only baking (issue #51)' do
       expect(record.optional).to be_nil
     end
   end
+
+  # A column guarded only by app validation can receive a value the
+  # heuristics cannot know is wrong. An optional fill that carries an error is
+  # put back to its column default when that makes the record valid; a required
+  # column keeps its value.
+  describe 'optional fills that app validation rejects' do
+    it 'puts an optional fill back to nil when a validate block rejects it' do
+      model = define_model('OptInCustomValidated', name: :string, languages: :string) do
+        validates :name, presence: true
+        validate { errors.add(:languages, :invalid) if languages.present? && languages != 'en' }
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('ruby')
+
+      record = FactoryBakery.bake(model, fill_optional: true)
+
+      expect(record.languages).to be_nil
+      expect(record.name).to be_present
+      expect(record).to be_valid
+    end
+
+    it 'puts an optional fill back when a custom EachValidator rejects it' do
+      validator = Class.new(ActiveModel::EachValidator) do
+        def validate_each(record, attribute, value)
+          return if value.nil?
+
+          record.errors.add(attribute, :invalid) unless value == 'en'
+        end
+      end
+      stub_const('LanguageValidator', validator)
+      model = define_model('OptInEachValidated', name: :string, languages: :string) do
+        validates :name, presence: true
+        validates :languages, language: true
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('ruby')
+
+      record = FactoryBakery.bake(model, fill_optional: true)
+
+      expect(record.languages).to be_nil
+      expect(record.name).to be_present
+      expect(record).to be_valid
+    end
+
+    it 'puts an optional fill back to its column default when the column has one' do
+      model = define_model('OptInDefaulted', name: :string, languages: { type: :string, default: 'en' }) do
+        validates :name, presence: true
+        # The length rule is what makes the heuristics fill a defaulted column
+        # (issue #41); the validate block is what rejects the fill.
+        validates :languages, length: { maximum: 20 }
+        validate { errors.add(:languages, :invalid) if languages.present? && languages != 'en' }
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('ruby')
+
+      record = FactoryBakery.bake(model, fill_optional: true)
+
+      expect(record.languages).to eq('en')
+      expect(record).to be_valid
+    end
+
+    it 'keeps the generated value when neither it nor the default is accepted' do
+      model = define_model('OptInUnfixable', name: :string, languages: { type: :string, default: 'fr' }) do
+        validates :name, presence: true
+        validates :languages, length: { maximum: 20 }
+        validate { errors.add(:languages, :invalid) if languages.present? && languages != 'en' }
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('ruby')
+
+      record = FactoryBakery.bake(model, fill_optional: true)
+
+      expect(record.languages).to eq('ruby')
+      expect(record).not_to be_valid
+    end
+  end
 end

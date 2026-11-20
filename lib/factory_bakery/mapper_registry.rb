@@ -40,6 +40,9 @@ module FactoryBakery
   #       check?
   #   uniqueness_check(record, attr_name, value) => bool
   #       Is the value taken? (Only called when uniqueness_validated?.)
+  #   uniqueness_case_insensitive?(klass, attr_name) => bool
+  #       Does the attribute's uniqueness check fold case? Mappers without the
+  #       notion may omit it (the registry answers false).
   #   validator_descriptions(klass, attr_name) => [String]
   #       Human-readable descriptions for exhaustion errors.
   #   persistence_adapter(klass_or_record) => adapter or nil
@@ -293,6 +296,16 @@ module FactoryBakery
 
       def uniqueness_validated?(klass, attr_name)
         mapper_for(klass)&.uniqueness_validated?(klass, attr_name) || false
+      end
+
+      # Whether the attribute's uniqueness check folds case. Mappers without
+      # the notion answer false; the core normalizes its per-bake collision
+      # registry with it so two unsaved siblings cannot differ only by case.
+      def uniqueness_case_insensitive?(klass, attr_name)
+        mapper = mapper_for(klass)
+        return false unless mapper.respond_to?(:uniqueness_case_insensitive?)
+
+        mapper.uniqueness_case_insensitive?(klass, attr_name)
       end
 
       def uniqueness_check(record, attr_name, value)

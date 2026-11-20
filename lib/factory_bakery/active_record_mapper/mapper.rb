@@ -179,13 +179,27 @@ module FactoryBakery
 
       # Uniqueness is delegated to the model's own uniqueness validator, so
       # scoping, case sensitivity, conditions, enum mapping and STI finder
-      # resolution behave exactly as they do during a real save.
+      # resolution behave exactly as they do during a real save. A database
+      # that rejects a duplicate through a single-column unique index instead
+      # of a validator is just as binding, so such a column is flagged too and
+      # the core keeps it unique across the unsaved siblings of one bake.
       def uniqueness_validated?(klass, attr_name)
         return false unless active_record_class?(klass)
         return false unless klass.respond_to?(:validators_on)
 
-        klass.validators_on(attr_name).any? do |validator|
-          validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
+        uniqueness_validator?(klass, attr_name) ||
+          unique_index_columns(klass).include?(attr_name.to_s)
+      end
+
+      # A `case_sensitive: false` uniqueness validator treats "Token" and
+      # "token" as one value. The core normalizes the values in its per-bake
+      # collision registry with this, so two unsaved siblings collide the way
+      # the database would.
+      def uniqueness_case_insensitive?(klass, attr_name)
+        return false unless klass.respond_to?(:validators_on)
+
+        uniqueness_validators_for(klass, attr_name).any? do |validator|
+          validator.options[:case_sensitive] == false
         end
       end
 
@@ -362,6 +376,37 @@ module FactoryBakery
         klass.validators_on(attr_name).select do |validator|
           validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
         end
+      end
+
+      def uniqueness_validator?(klass, attr_name)
+        klass.validators_on(attr_name).any? do |validator|
+          validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
+        end
+      end
+
+      # Columns a single-column UNIQUE index protects, memoized beside the
+      # other class-level facts: the enforcer asks once per attribute per
+      # record. A composite index constrains a combination, never one column,
+      # so its members are not flagged (the rule the Sequel mapper applies).
+      def unique_index_columns(klass)
+        class_memo(klass, :@factory_bakery_unique_index_columns) do
+          compute_unique_index_columns(klass).freeze
+        end
+      end
+
+      def compute_unique_index_columns(klass)
+        unique_indexes(klass).flat_map(&:columns).map(&:to_s).uniq
+      rescue StandardError
+        # A class whose table is not there (or an adapter that cannot describe
+        # it) simply has no discoverable unique index.
+        []
+      end
+
+      def unique_indexes(klass)
+        return [] unless klass.respond_to?(:connection) && klass.respond_to?(:table_name)
+
+        klass.connection.indexes(klass.table_name)
+             .select { |index| index.unique && index.columns.length == 1 }
       end
 
       def build_probe(record, attr_name, value)
