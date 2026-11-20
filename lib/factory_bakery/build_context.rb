@@ -56,10 +56,26 @@ module FactoryBakery
     # flag tells the associations plugin which contract is active without
     # coupling it to factory_bakery's public methods.
     PERSIST_PARENTS_KEY = :factory_bakery_persist_fk_parents
+    # Objects whose own build has not returned yet (the owner a child is being
+    # built for, and every owner above it). Replaced, never mutated, so nested
+    # bakes and child fibers cannot corrupt it.
+    BUILDING_KEY = :factory_bakery_objects_in_progress
 
     class << self
       def current
         Fiber[STORAGE_KEY] ||= new([].freeze)
+      end
+
+      def building(object)
+        previous = Fiber[BUILDING_KEY] || [].freeze
+        Fiber[BUILDING_KEY] = (previous + [object]).freeze
+        yield
+      ensure
+        Fiber[BUILDING_KEY] = previous
+      end
+
+      def in_progress?(object)
+        (Fiber[BUILDING_KEY] || []).any? { |building| building.equal?(object) }
       end
 
       # Every generated object, paired with the build path it was generated at.

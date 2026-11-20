@@ -57,9 +57,23 @@ module FactoryBakery
         def persist_fk!(parent, entry)
           return parent unless required?(entry) && new_record?(parent)
 
+          refuse_broken_parents!(parent)
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(parent)
           adapter.save!(parent)
           parent
+        end
+
+        # Saving would let autosave skip an invalid unsaved parent and insert
+        # this one with a nil foreign key (a NOT NULL violation, or a dangling
+        # row). Fail with the real cause instead, so an optional edge is
+        # discarded and a required one names what needs a definition.
+        def refuse_broken_parents!(parent)
+          broken = GraphValidity.first_invalid_parent(parent)
+          return unless broken
+
+          raise FactoryBakery::Error,
+                "#{parent.class} cannot be inserted: its required #{broken.class} is invalid " \
+                "(#{Array(broken.errors.full_messages).first(3).join('; ')})"
         end
 
         def new_record?(parent)

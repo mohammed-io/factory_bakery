@@ -262,6 +262,26 @@ RSpec.describe 'raw-FK presence edges' do
       expect(owner_model.count).to eq(1)
       expect(child.owner_id).to eq(child.owner.id)
     end
+
+    # The FK-presence parent is valid itself, but its own required parent is
+    # not; inserting it would let autosave skip that grandparent and write a
+    # nil foreign key. The gem names the broken grandparent instead.
+    it 'refuses to insert a parent whose required grandparent is invalid' do
+      define_model('FkBrokenGrand', name: :string) do
+        validate { errors.add(:base, 'needs app knowledge') }
+      end
+      define_model('FkBrokenParent', grand_id: :integer) do
+        belongs_to :grand, class_name: 'FkBrokenGrand', optional: false
+      end
+      child_model = define_model('FkBrokenChild', parent_id: :integer) do
+        belongs_to :parent, class_name: 'FkBrokenParent', optional: true
+        validates :parent_id, presence: true
+      end
+
+      expect { FactoryBakery.bake(child_model) }
+        .to raise_error(FactoryBakery::Error, /FkBrokenParent cannot be inserted: its required FkBrokenGrand/)
+      expect(Object.const_get('FkBrokenParent').where(grand_id: nil).count).to eq(0)
+    end
   end
 
   describe 'precedence and boundaries' do

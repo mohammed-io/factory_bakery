@@ -2,33 +2,46 @@
 
 module FactoryBakery
   module Associations
-    # Decides whether a best-effort :all child can be kept. A record's own
-    # `valid?` is not enough: a required belongs_to is satisfied by any parent
-    # object, valid or not, and when the graph is inserted the framework's
-    # autosave quietly skips an invalid unsaved parent and writes the child
-    # with a nil foreign key. So a kept child must be valid and so must every
-    # unsaved parent it requires, transitively.
+    # A required belongs_to is satisfied by any parent object, valid or not.
+    # When the graph is inserted, the framework's autosave quietly skips an
+    # invalid unsaved parent and writes the child with a nil foreign key. So
+    # validity here means: the record is valid and so is every unsaved parent
+    # it requires, transitively.
+    #
+    # A parent whose own build has not returned yet (the owner a child is
+    # being built for, or any owner above it) is never judged: it is
+    # incomplete by definition, and validating it early would run its
+    # callbacks before it is filled (Discourse's User loads `primary_email` in
+    # `before_validation`, which then reads as already decided).
     #
     # The required edges come from the mapper's association introspection;
     # reading an edge is the model's public reader.
     module GraphValidity
       class << self
+        # Can a best-effort :all child be kept?
         def invalid?(record)
-          invalid_from?(record, {}.compare_by_identity)
+          !first_invalid(record, {}.compare_by_identity).nil?
+        end
+
+        # The first unsaved required parent (transitively) that is invalid,
+        # for a record about to be inserted; nil when all are valid.
+        def first_invalid_parent(record)
+          seen = { record => true }.compare_by_identity
+          unsaved_required_parents(record).lazy.filter_map { |parent| first_invalid(parent, seen) }.first
         end
 
         private
 
-        def invalid_from?(record, seen)
-          return false if seen.key?(record)
+        def first_invalid(record, seen)
+          return nil if seen.key?(record)
 
           seen[record] = true
-          return false unless record.respond_to?(:valid?)
-          return true unless record.valid?
+          return nil unless record.respond_to?(:valid?)
+          return record unless record.valid?
 
-          unsaved_required_parents(record).any? { |parent| invalid_from?(parent, seen) }
+          unsaved_required_parents(record).lazy.filter_map { |parent| first_invalid(parent, seen) }.first
         rescue StandardError
-          true
+          record
         end
 
         def unsaved_required_parents(record)
@@ -38,7 +51,11 @@ module FactoryBakery
           introspection
             .select { |entry| entry.kind == :belongs_to && entry.required }
             .filter_map { |entry| record.public_send(entry.name) }
-            .select { |parent| parent.respond_to?(:new_record?) && parent.new_record? }
+            .select { |parent| judgeable?(parent) }
+        end
+
+        def judgeable?(parent)
+          parent.respond_to?(:new_record?) && parent.new_record? && !BuildContext.in_progress?(parent)
         end
       end
     end

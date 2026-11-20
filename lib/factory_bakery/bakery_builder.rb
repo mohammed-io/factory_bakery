@@ -122,8 +122,10 @@ module FactoryBakery
       evaluate_declarations(traits)
 
       object = instantiate
-      apply_values(object, resolved_values(overrides, object), explicit_names(overrides))
-      run_after_instantiate(object)
+      BuildContext.building(object) do
+        apply_values(object, resolved_values(overrides, object), explicit_names(overrides))
+        run_after_instantiate(object)
+      end
       object
     ensure
       @build_is_in_progress = false
