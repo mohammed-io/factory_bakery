@@ -26,6 +26,8 @@ module FactoryBakery
             next if suppressed?(entry, taken)
 
             key, value = build_automatic_value(klass, entry, values.values)
+            next if value.nil? && optional_edge?(entry)
+
             values[key] = value
           end
         end
@@ -140,12 +142,9 @@ module FactoryBakery
         # invalid; a required edge keeps the old behaviour of surfacing the
         # failure.
         def build_parent(klass, entry, siblings = [])
-          completed = completed_parent(klass, entry, siblings)
-          return completed if completed
+          return build_optional_parent(klass, entry, siblings) if optional_edge?(entry)
 
-          return build_optional_parent(klass, entry) if optional_edge?(entry)
-
-          build_required_parent(klass, entry)
+          completed_parent(klass, entry, siblings) || build_required_parent(klass, entry)
         end
 
         def completed_parent(klass, entry, siblings)
@@ -203,19 +202,18 @@ module FactoryBakery
           raise_unresolved!(klass, entry, discovered, failures)
         end
 
-        def build_optional_parent(klass, entry)
-          adapter = FactoryBakery::MapperRegistry.persistence_adapter(klass)
+        def build_optional_parent(klass, entry, siblings)
           mark = BuildContext.generated_records.length
-          begin
-            if adapter.transactional?
-              adapter.transaction(klass) { optional_candidate(klass, entry) }
-            else
-              optional_candidate(klass, entry)
-            end
-          rescue StandardError
-            BuildContext.trim_generated_records!(mark)
-            nil
-          end
+          completed = completed_parent(klass, entry, siblings)
+          return completed if completed
+
+          adapter = FactoryBakery::MapperRegistry.persistence_adapter(klass)
+          return optional_candidate(klass, entry) unless adapter.transactional?
+
+          adapter.transaction(klass) { optional_candidate(klass, entry) }
+        rescue StandardError
+          BuildContext.trim_generated_records!(mark)
+          nil
         end
 
         def optional_candidate(klass, entry)

@@ -83,7 +83,11 @@ module FactoryBakery
       private
 
       def confirmation_attribute?
-        attr_name.end_with?('_confirmation')
+        return false unless attr_name.end_with?('_confirmation')
+        return true unless @constraints.column_backed
+
+        source = attr_name.delete_suffix('_confirmation')
+        ConstraintSet.for(model_class, source).confirmation_validated
       end
 
       def acceptance_attribute?

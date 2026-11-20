@@ -28,6 +28,26 @@ RSpec.describe 'FactoryBakery associations reflection-walk hardening' do
   end
 
   describe 'baking a partially-loaded class' do
+    it 'persists an owner with an unresolved optional belongs_to in all mode' do
+      owner_model = define_model('HardeningOptionalOwner', ghost_id: :integer) do
+        belongs_to :ghost, class_name: 'HardeningMissingGhost', optional: true
+      end
+      FactoryBakery::Associations.mode = :all
+
+      owner = FactoryBakery.bake!(owner_model)
+
+      expect(owner.reload.ghost_id).to be_nil
+    end
+
+    it 'reports an unresolved belongs_to backed by a non-null foreign key' do
+      owner_model = define_model('HardeningRequiredOwner', ghost_id: { type: :integer, null: false }) do
+        belongs_to :ghost, class_name: 'HardeningMissingGhost', optional: true
+      end
+
+      expect { FactoryBakery.bake!(owner_model) }
+        .to raise_error(FactoryBakery::Error, /ghost.*could not be resolved/)
+    end
+
     it 'succeeds when the broken edge is never referenced' do
       owner_model = define_partially_loaded_owner('W6HardeningOwner')
 

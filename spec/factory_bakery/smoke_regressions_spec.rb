@@ -14,6 +14,19 @@ RSpec.describe 'smoke regressions' do
 
   after { FactoryBakery.fill_optional = false }
 
+  it 'preserves a required boolean default on a column ending in _confirmation' do
+    board = define_model('ConfirmationDefaultBoard',
+                         require_confirmation: { type: :boolean, null: false, default: true })
+
+    expect(FactoryBakery.bake!(board).reload.require_confirmation).to be(true)
+  end
+
+  it 'generates a value for a required confirmation-suffixed column without a source attribute' do
+    board = define_model('ConfirmationRequiredBoard', require_confirmation: { type: :boolean, null: false })
+
+    expect(FactoryBakery.bake!(board).reload.require_confirmation).to be_in([true, false])
+  end
+
   describe 'a lazily defined acceptance attribute' do
     # Mastodon's User validates an `agreement` virtual attribute but never
     # defines the accessor: ActiveModel::Validations::AcceptanceValidator

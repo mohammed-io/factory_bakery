@@ -6,6 +6,9 @@
 
 ### Smoke regression fixes
 
+- Ordinary database columns ending in `_confirmation` follow their schema unless the source attribute has a confirmation validator. This preserves defaults such as `Boards::Board#require_confirmation` when baking a board or a record that belongs to one.
+- Automatic optional `belongs_to` builds in `:all` skip unresolved targets without calling the association writer. Required and explicitly declared associations still report resolution errors.
+
 - In `:all` mode, `bake!` waits until the owner is saved before generating an optional `has_one` child. A child created by the owner's save callbacks takes precedence, avoiding a duplicate insert for associations such as Discourse's `User#user_profile`.
 - Under `:all`, automatic builds skip typed aliases of a polymorphic foreign key (Mastodon's `Notification` readers that share `activity_id`). Adopting an existing read-only parent rolls back the discarded build and its descendants. When a callback clears an automatic optional parent (Mastodon's `User#sanitize_role`) or replaces an automatic parent with a persisted row, `bake!` ignores the discarded records that the retained graph no longer references, so `IncompletePersistenceError` is no longer raised for them. User-declared records and records still referenced by the kept graph still raise.
 - A validator-declared virtual attribute whose writer ActiveModel's `AcceptanceValidator` defines lazily (Mastodon's `User#agreement`) is now discovered and filled. The mapper treats an acceptance-validated name as settable even before the validator's first run defines the accessor, so `FactoryBakery.bake(User)` no longer returns a record whose service agreement is `nil`. Added `spec/factory_bakery/smoke_regressions_spec.rb`.
