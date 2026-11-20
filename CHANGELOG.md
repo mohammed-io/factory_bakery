@@ -15,6 +15,14 @@
 - A `has_many` / `has_one` with no verified inverse whose child has a required `belongs_to` back to the owner is skipped in `:all`, instead of failing with "Owner must exist" on the unsaved owner.
 - Added `spec/factory_bakery/associations/bounded_graph_spec.rb` covering each case; README documents the bounded `:all` behavior.
 
+### Graph-aware uniqueness and verified optional fills
+
+- Uniqueness is now enforced across the unsaved records of one bake graph, not just against the database. A uniqueness-validated column — or one protected by a single-column unique index, which the ActiveRecord mapper now reports like Sequel's does — is registered per top-level bake as the enforcer accepts a value, so two records built in the same bake (two parents of different edges, for example) can no longer share a value and fail the root `save!` with `PG::UniqueViolation` / `ActiveRecord::RecordNotUnique`. The registry is fiber-local, reset at the top-level boundary and replaced rather than mutated, like the other per-bake maps.
+- A filler that keeps returning the same short word (a bare `FFaker::Lorem.word` is all a uniqueness-validated string column gets) can exhaust the ten-attempt regeneration budget. From the third collision the candidate gets an entropy suffix (`"alpha-3f9a0c1e"`) when the column is a free-form string whose length cap has room for it; a declared `format`, `inclusion` list, `enum`, numericality rule or exact length is left alone, and a genuinely exhausted value space still raises `FactoryBakery::Error`.
+- A `uniqueness: { case_sensitive: false }` column folds case in that in-graph check, through the new `MapperRegistry.uniqueness_case_insensitive?` read API, so `"Token"` and `"token"` collide between siblings the way the database sees them.
+- An optional fill that app validation rejects no longer breaks a bake. With `fill_optional: true` (or a list) a column guarded only by a custom validator or a `validate` block could receive a value the heuristics cannot know is wrong; after building, every optional fill that carries a validation error is put back to its column default (or `nil`) and kept only when that reduces the error count. Required columns keep their value, and a fill that neither the value nor the default can fix is left as generated. A required-only lean record that is already valid is never probed.
+- Added specs: `spec/factory_bakery/uniqueness_spec.rb` covers two same-class parents across fifty `bake!` runs, unique-index-only columns, case-insensitive normalization and the length-cap guard; `spec/factory_bakery/required_attributes_spec.rb` covers the `validate` block, `EachValidator`, column-default and unfixable cases. README documents both behaviours.
+
 ### Review fixes
 
 - Fixed small `in:` integer ranges producing only even values (and raising for `in: 3..3`): with no parity rule every integer now matches.

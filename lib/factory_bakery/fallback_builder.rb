@@ -9,7 +9,14 @@ module FactoryBakery
   # scoped on, so nested parents built by declarations use the same rule and
   # never run a second fallback. Declaration blocks may therefore run twice
   # when the fallback triggers.
-  class FallbackBuilder
+  #
+  # A record built with optional fills is verified against them too. A column
+  # guarded only by a custom validator (or a `validate` block) can receive a
+  # value the heuristics cannot know is wrong, so an optional fill that carries
+  # a validation error is put back to its column default (or nil) when that
+  # makes the record valid. A required-only lean record that is already valid
+  # is never probed.
+  class FallbackBuilder # rubocop:disable Metrics/ClassLength
     # Raised inside an attempt's savepoint to discard that attempt. The
     # adapter's transaction rolls back on any exception and re-raises it; the
     # core catches its own signal, so it never names a framework rollback
@@ -26,30 +33,10 @@ module FactoryBakery
         return build_without_savepoint(model_klass, definition, overrides, traits)
       end
 
-      mark = BuildContext.generated_records.length
-      kept = nil
-      discarded = false
-      begin
-        adapter.transaction(model_klass) do
-          candidate, builder = build_object(model_klass, definition, overrides, traits, @mode)
-          if fallback_needed?(candidate, builder)
-            BuildContext.trim_generated_records!(mark)
-            discarded = true
-            raise DiscardAttempt
-          end
-          kept = candidate
-        end
-      rescue DiscardAttempt
-        # The savepoint already rolled the lean attempt's writes back.
-      end
-      return kept unless discarded
+      attempt, probe = attempt_in_savepoint(model_klass, definition, overrides, traits, adapter)
+      return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
-      FillOptional.with(true) do
-        adapter.transaction(model_klass) do
-          rebuilt, = build_object(model_klass, definition, overrides, traits, true)
-          rebuilt
-        end
-      end
+      rebuild(model_klass, definition, overrides, traits, adapter)
     end
 
     def build_object(model_klass, definition, overrides, traits, mode)
@@ -64,9 +51,44 @@ module FactoryBakery
 
     private
 
+    # The lean attempt in its own savepoint, with the probe that decides
+    # whether it is kept. A :invalid probe means the attempt was discarded and
+    # its writes rolled back; the attempt is still returned because its builder
+    # is the one that knows which fills were optional.
+    def attempt_in_savepoint(model_klass, definition, overrides, traits, adapter)
+      mark = BuildContext.generated_records.length
+      attempt = nil
+      probe = nil
+      begin
+        adapter.transaction(model_klass) do
+          attempt = build_object(model_klass, definition, overrides, traits, @mode)
+          probe = fallback_probe(*attempt)
+          if probe == :invalid
+            BuildContext.trim_generated_records!(mark)
+            raise DiscardAttempt
+          end
+        end
+      rescue DiscardAttempt
+        # The savepoint already rolled the lean attempt's writes back.
+      end
+      [attempt, probe]
+    end
+
+    # The rebuild, with the opt-in scoped on. It answers a lean record that was
+    # already probed and found invalid, so it is returned as built, exactly as
+    # before.
+    def rebuild(model_klass, definition, overrides, traits, adapter)
+      FillOptional.with(true) do
+        adapter.transaction(model_klass) do
+          build_object(model_klass, definition, overrides, traits, true).first
+        end
+      end
+    end
+
     # A savepoint is only useful when a fallback can happen: with the opt-in
-    # fully on, `fallback_needed?` is always false and there is nothing to
-    # roll back. Non-transactional targets keep their plain build-and-save path.
+    # fully on, `fallback_probe` never asks for a rebuild and there is nothing
+    # to roll back. Non-transactional targets keep their plain build-and-save
+    # path.
     def savepoint_available?(adapter, model_klass)
       adapter.transactional? && !FillOptional.full?(@mode) && fallback_possible?(model_klass)
     end
@@ -90,25 +112,102 @@ module FactoryBakery
     def build_without_savepoint(model_klass, definition, overrides, traits)
       mark = BuildContext.generated_records.length
       object, builder = build_object(model_klass, definition, overrides, traits, @mode)
-      return object unless fallback_needed?(object, builder)
+      attempt = [object, builder]
+      probe = fallback_probe(object, builder)
+      return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
       BuildContext.trim_generated_records!(mark)
       FillOptional.with(true) { build_object(model_klass, definition, overrides, traits, true).first }
     end
 
-    def fallback_needed?(object, builder)
-      return false if FillOptional.full?(@mode)
-      return false unless builder.verification_needed?
-      return false unless builder.optional_candidates?
-      return false unless object.respond_to?(:valid?)
+    # :invalid when the lean record must be rebuilt, :valid when the probe
+    # certified it, nil when no probe was needed. A nil probe is what lets the
+    # optional-fill verification below run its own `valid?` without repeating
+    # one the caller already paid for.
+    def fallback_probe(object, builder)
+      return nil if FillOptional.full?(@mode)
+      return nil unless builder.verification_needed?
+      return nil unless builder.optional_candidates?
+      return nil unless object.respond_to?(:valid?)
 
       # A validator that raises on the lean record (for example one that reads
       # an optional column we left nil) cannot certify it either, so the
       # fuller rebuild is the better answer. Never let the probe itself break
       # a bake that previously worked.
-      !object.valid?
+      valid?(object) ? :valid : :invalid
+    end
+
+    # Undo optional fills that app validation rejects: an optional column
+    # carries a generated value, a custom validator adds an error to it, and
+    # the record the caller gets back would be invalid. Each such fill is put
+    # back to its column default and kept only when that reduces the errors.
+    def verify_optional_fills!(attempt, probe)
+      object, builder = attempt
+      return object unless builder.verification_needed?
+      return object unless builder.optional_candidates?
+      return object if probe == :valid
+      return object if valid?(object)
+
+      (builder.optional_candidates & error_attributes(object)).each do |name|
+        reset_optional_fill(object, name)
+      end
+      object
+    end
+
+    # Restore the generated value when the default does not help (or the
+    # revalidation itself raises), so a reset is never a regression.
+    def reset_optional_fill(object, name)
+      setter = "#{name}="
+      return unless object.respond_to?(setter)
+
+      generated = object.public_send(name) if object.respond_to?(name)
+      errors_before = object.errors.size
+      assign(object, name, column_default(object, name))
+      return if valid?(object) && object.errors.size < errors_before
+
+      assign(object, name, generated)
+      valid?(object)
+    end
+
+    # A record with no `valid?` is taken as valid: there is nothing to verify
+    # against. A validator that raises cannot certify a record either, so it
+    # counts as invalid -- and the probe never breaks a bake.
+    def valid?(object)
+      return true unless object.respond_to?(:valid?)
+
+      object.valid?
     rescue StandardError
-      true
+      false
+    end
+
+    # The attribute names an errors object carries, as strings: one that
+    # exposes `attribute_names` (or `details`) is read through those, and a
+    # Hash-like errors object through `keys`.
+    def error_attributes(object)
+      errors = object.errors
+      names = if errors.respond_to?(:attribute_names)
+                errors.attribute_names
+              elsif errors.respond_to?(:details)
+                errors.details.keys
+              elsif errors.respond_to?(:keys)
+                errors.keys
+              end
+      Array(names).map(&:to_s)
+    end
+
+    def column_default(object, name)
+      constraints = MapperRegistry.constraints_for(object.class, name)
+      constraints.has_default ? constraints.default_value : nil
+    end
+
+    def assign(object, name, value)
+      setter = "#{name}="
+      return unless object.respond_to?(setter)
+
+      # Conditions read live attributes, so a cached result from before the
+      # reset no longer describes the record.
+      BuildContext.invalidate_condition_results!
+      object.public_send(setter, value)
     end
   end
 end

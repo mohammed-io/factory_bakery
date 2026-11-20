@@ -35,12 +35,21 @@ module FactoryBakery
   # times while a bake partitions, routes and verifies attributes; evaluating
   # a user-supplied condition that often was observable. It is cleared at the
   # top-level boundary and never mutated in place.
+  #
+  # A sixth fiber-local map is the uniqueness enforcer's per-top-level-bake
+  # registry: every value it accepted, keyed by table identity, attribute and
+  # normalized value. Two unsaved records built in the same graph (two parents
+  # of different edges, say) are invisible to the database's own uniqueness
+  # check, so the enforcer treats a value already in this map as a collision.
+  # It is created and cleared at the top-level boundary and replaced rather
+  # than mutated, like the maps above.
   class BuildContext # rubocop:disable Metrics/ClassLength
     STORAGE_KEY = :factory_bakery_build_context
     RECORDS_KEY = :factory_bakery_generated_records
     GRAPH_CACHE_KEY = :factory_bakery_graph_cache
     RECORD_KEY = :factory_bakery_current_record
     CONDITIONS_KEY = :factory_bakery_condition_results
+    UNIQUE_VALUES_KEY = :factory_bakery_unique_values
     # FK-column-validated edges need a persisted parent. Under `bake!` that
     # parent is inserted inside the root savepoint; under plain `bake` it is an
     # explicit, documented exception to the unsaved graph. This fiber-local
@@ -157,6 +166,24 @@ module FactoryBakery
         Fiber[CONDITIONS_KEY] = {}
       end
 
+      # True when a uniqueness value generated earlier in this same bake
+      # already took the key. The key is [table identity, attribute, normalized
+      # value]; the enforcer owns its shape. The map is read-only here and
+      # replaced on write, so an inherited child fiber can never change its
+      # parent's registry.
+      def unique_value_taken?(key)
+        unique_values.key?(key)
+      end
+
+      def record_unique_value(key)
+        # Replace rather than mutate, for the same reason as the graph cache.
+        Fiber[UNIQUE_VALUES_KEY] = unique_values.merge(key => true)
+      end
+
+      def unique_values
+        Fiber[UNIQUE_VALUES_KEY] ||= {}
+      end
+
       # Records generated at or below `path_prefix`. This scopes a nested
       # `bake!` to its own subtree instead of failing on a sibling's unsaved
       # object that the root `bake!` will verify later.
@@ -207,6 +234,7 @@ module FactoryBakery
         Fiber[RECORDS_KEY] = []
         Fiber[GRAPH_CACHE_KEY] = {}
         Fiber[CONDITIONS_KEY] = {}
+        Fiber[UNIQUE_VALUES_KEY] = {}
       end
       private :reset_per_bake_caches!
 
