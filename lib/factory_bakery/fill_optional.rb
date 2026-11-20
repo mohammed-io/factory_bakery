@@ -12,6 +12,8 @@ module FactoryBakery
   module FillOptional
     SCOPE_KEY = :factory_bakery_fill_optional
 
+    REBUILD_DEPTH_KEY = :factory_bakery_rebuild_depth
+
     class << self
       def global
         @global ||= false
@@ -22,6 +24,29 @@ module FactoryBakery
       def current
         scoped = Fiber[SCOPE_KEY]
         scoped.nil? ? global : scoped
+      end
+
+      # The verified fallback fills every optional column of the one record it
+      # rebuilds. A nested bake (a parent built by a declaration or an
+      # association) is a separate record with its own verified fallback, so
+      # the rebuild's opt-in must stop at the record being rebuilt: deeper
+      # bakes stay lean instead of turning their own parents into fuller
+      # records that may fail their validation. `depth` is the build-path
+      # length of the record being rebuilt.
+      def with_rebuild(depth, &block)
+        previous = Fiber[REBUILD_DEPTH_KEY]
+        Fiber[REBUILD_DEPTH_KEY] = depth
+        with(true, &block)
+      ensure
+        Fiber[REBUILD_DEPTH_KEY] = previous
+      end
+
+      # True for a bake at `depth` that is nested inside a rebuild, i.e. not
+      # the record the rebuild is filling. The rebuild's own build never goes
+      # through `FactoryBakery.bake`, so every call that sees this is nested.
+      def nested_in_rebuild?(depth)
+        floor = Fiber[REBUILD_DEPTH_KEY]
+        !floor.nil? && depth >= floor
       end
 
       def with(value)
@@ -44,6 +69,7 @@ module FactoryBakery
       def reset!
         @global = false
         Fiber[SCOPE_KEY] = nil
+        Fiber[REBUILD_DEPTH_KEY] = nil
       end
     end
   end
