@@ -154,6 +154,30 @@ module FactoryBakery
         discard_cached_records!(discarded)
       end
 
+      # Drops one generated object and the records generated while building
+      # it, for an automatic child that the graph no longer uses (an owner
+      # callback created the row instead). A record is registered when its
+      # build completes, so its descendants are the contiguous entries just
+      # before it whose path extends its own. Paths name classes, not objects,
+      # so a prefix match over the whole registry would also drop unrelated
+      # records of the same classes.
+      def discard_generated!(object)
+        records = generated_records
+        index = records.index { |record| record.object.equal?(object) }
+        return unless index
+
+        start = index
+        start -= 1 while start.positive? && extends_path?(records[start - 1].path, records[index].path)
+        discarded = Set.new.compare_by_identity.merge(records[start..index].map(&:object))
+        Fiber[RECORDS_KEY] = records.reject { |record| discarded.include?(record.object) }
+        discard_cached_records!(discarded)
+      end
+
+      def extends_path?(candidate, path)
+        candidate.length > path.length && candidate[0, path.length] == path
+      end
+      private :extends_path?
+
       def discard_cached_records!(discarded)
         Fiber[AUTOMATIC_PARENTS_KEY] = automatic_parents.reject { |edge| discarded.include?(edge.parent) }
         Fiber[GRAPH_CACHE_KEY] = graph_cache.reject { |_key, (_path, object)| discarded.include?(object) }

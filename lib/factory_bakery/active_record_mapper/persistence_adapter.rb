@@ -41,26 +41,83 @@ module FactoryBakery
 
       # A shared primary key gives the callback row and the candidate the same
       # identity. Save the new owner first so its callback can claim that key.
-      def callback_created_parent(parent, generated)
+      def callback_created_parent(parent, generated, &on_discard)
         ReflectionCache.all(parent.class).lazy.filter_map do |reflection|
           next unless shared_primary_key_owner?(parent, reflection)
 
           owner = parent.association(reflection.name).target
-          next unless owner&.new_record? && generated.any? { |record| record.equal?(owner) }
+          next unless owner&.new_record? && generated.any? { |record| record.object.equal?(owner) }
 
-          save_owner_and_find_parent(owner, parent, reflection)
+          save_owner_and_find_parent(owner, parent, reflection, automatic_objects(generated), &on_discard)
         end.first
       end
 
-      def save_owner_and_find_parent(owner, parent, reflection)
+      def save_owner_and_find_parent(owner, parent, reflection, automatic, &on_discard)
         inverse = owner.association(reflection.inverse_of.name)
         inverse.reset if inverse.target.equal?(parent)
-        save!(owner)
+        save_detaching_children!(owner, automatic).each { |child| on_discard&.call(child) }
         parent.public_send("#{reflection.name}=", owner)
         replacement = inverse.reload&.target
         return replacement if replacement.instance_of?(parent.class) && replacement.id == parent.id
 
         nil
+      end
+
+      # An automatic optional has_one child detached from its owner for a save.
+      DetachedChild = Data.define(:reflection, :child)
+
+      # Autosave inserts a new has_one child together with its owner, and an
+      # owner callback that creates the same row would then collide with it.
+      # The gem's automatic optional children are detached for the save. A row
+      # the callback created wins; otherwise the child is reattached, unsaved,
+      # to the saved owner. Required and user-declared children are never touched.
+      # Returns the children it dropped so the caller can unregister them; the
+      # generated-record registry belongs to core, not to this adapter.
+      def save_detaching_children!(owner, automatic)
+        children = detachable_children(owner, automatic)
+        children.each { |detached| owner.association(detached.reflection.name).target = nil }
+        begin
+          save!(owner)
+        rescue StandardError
+          children.each { |detached| reattach(owner, detached) }
+          raise
+        end
+        children.filter_map { |detached| settle_child(owner, detached) }
+      end
+
+      def detachable_children(owner, automatic)
+        ReflectionCache.all(owner.class).filter_map do |reflection|
+          next unless reflection.macro == :has_one && optional_edge?(owner, reflection)
+
+          child = owner.association(reflection.name).target
+          next unless child&.new_record? && automatic.any? { |record| record.equal?(child) }
+
+          DetachedChild.new(reflection:, child:)
+        end
+      end
+
+      # An edge whose presence cannot be decided is treated as required, so it
+      # is never detached: a detached required child would fail the owner's save.
+      def optional_edge?(owner, reflection)
+        !AssociationRequirements.presence_applicable?(owner.class, reflection, owner)
+      rescue StandardError
+        false
+      end
+
+      # The dropped child when the owner's callback created the row, else nil.
+      def settle_child(owner, detached)
+        return detached.child if owner.association(detached.reflection.name).reload
+
+        reattach(owner, detached)
+        nil
+      end
+
+      def reattach(owner, detached)
+        owner.association(detached.reflection.name).target = detached.child
+      end
+
+      def automatic_objects(generated)
+        generated.select(&:automatic).map(&:object)
       end
 
       def shared_primary_key_owner?(parent, reflection)

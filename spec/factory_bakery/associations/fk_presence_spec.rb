@@ -209,6 +209,43 @@ RSpec.describe 'raw-FK presence edges' do
     end
   end
 
+  describe 'optional has_one children of an owner the gem saves' do
+    # The owner is saved to give the FK-presence child a real id. Its optional
+    # has_one stat is built automatically under plain bake, so autosave must not
+    # insert it alongside the owner's own callback row.
+    def define_stat_graph(prefix, callback:)
+      stat_model = define_model("#{prefix}Stat", owner_id: :integer, label: :string) do
+        belongs_to :owner, class_name: "#{prefix}Owner", optional: false
+      end
+      stat_model.connection.add_index(stat_model.table_name, :owner_id, unique: true)
+      owner_model, child_model = define_fk_edge(prefix)
+      owner_model.has_one :stat, class_name: "#{prefix}Stat", inverse_of: :owner
+      owner_model.after_create { create_stat!(label: 'from callback') } if callback
+      [owner_model, child_model, stat_model]
+    end
+
+    it 'keeps only the stat created by the owner callback under plain bake' do
+      _owner_model, child_model, stat_model = define_stat_graph('FkStatCallback', callback: true)
+
+      child = FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(child_model) }
+
+      expect(child.owner).to be_persisted
+      expect(child.owner.stat.label).to eq('from callback')
+      expect(stat_model.pluck(:owner_id)).to eq([child.owner.id])
+    end
+
+    it 'assigns the automatically built stat to the saved owner when no callback creates one' do
+      _owner_model, child_model, stat_model = define_stat_graph('FkStatPlain', callback: false)
+
+      child = FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(child_model) }
+
+      expect(child.owner).to be_persisted
+      expect(child.owner.stat).to be_a(stat_model)
+      expect(child.owner.stat.owner).to equal(child.owner)
+      expect(stat_model.count).to eq(0)
+    end
+  end
+
   describe 'strategy interplay' do
     it 'reuses an existing row instead of creating another one under bake!' do
       owner_model, child_model = define_fk_edge('FkReuseHit')

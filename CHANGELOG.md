@@ -34,6 +34,7 @@
 - A `has_many` / `has_one` whose foreign key is not a column of the target table (a dead association left behind after a migration) is skipped in `:all` and by the required has_one builder, instead of failing on an unknown attribute.
 - Under `:all`, an optional child whose class is read-only (a database view such as Discourse's `UserIp`) is discarded instead of failing the bake when it is saved.
 - The verified fallback's rebuild now builds an optional `belongs_to` that the lean probe's errors blamed (by association name or foreign key), because a custom validator may require it even though no discovered constraint does (Discourse's `PostValidator` adding "Topic can't be blank"). A parent blamed by its foreign key is inserted before validation so the key is set. Bakes nested inside the rebuild run without the blamed names.
+- Under `:all`, a plain `bake` that saves an FK-presence owner (to give a raw-FK child a real id) no longer collides with the owner's own callback. The optional `has_one` child the gem built for that owner is detached for the save, so autosave does not insert it: when the callback created the row, that row is kept and the generated child is dropped; otherwise the child is reattached, unsaved, to the saved owner. Discourse's `User` with its `user_stats` row (`user_stats_pkey`) is the case this fixes.
 
 ### Association fixes
 

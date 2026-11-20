@@ -82,8 +82,9 @@ module FactoryBakery
           persist_fk!(parent, entry) do |adapter|
             next unless adapter.respond_to?(:callback_created_parent)
 
-            generated = BuildContext.generated_records.drop(mark).map(&:object)
-            adapter.callback_created_parent(parent, generated)
+            adapter.callback_created_parent(parent, BuildContext.generated_records.drop(mark)) do |child|
+              BuildContext.discard_generated!(child)
+            end
           end
         end
 
@@ -104,8 +105,19 @@ module FactoryBakery
             return replacement
           end
 
-          adapter.save!(parent)
+          save_parent!(adapter, parent)
           parent
+        end
+
+        # The gem saves this owner to give an FK-presence edge a real id. Its
+        # automatic optional has_one children must not ride along in that save:
+        # the owner's own callback may create the same row. The adapter detaches
+        # them for the save and settles each one afterwards.
+        def save_parent!(adapter, parent)
+          return adapter.save!(parent) unless adapter.respond_to?(:save_detaching_children!)
+
+          automatic = BuildContext.generated_records.select(&:automatic).map(&:object)
+          adapter.save_detaching_children!(parent, automatic).each { |child| BuildContext.discard_generated!(child) }
         end
 
         # Saving would let autosave skip an invalid unsaved parent and insert
