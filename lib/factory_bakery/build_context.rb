@@ -165,6 +165,29 @@ module FactoryBakery
         generated_records.select { |path, _object| path[0, length] == path_prefix }
       end
 
+      # The most recently completed object of exactly `klass` that is not an
+      # ancestor still being built. Within one top-level bake the graph is
+      # shared: a parent class built once (for example the user behind two
+      # different belongs_to edges) is handed to every later edge instead of
+      # being built again. An ancestor's recorded path is a prefix of the
+      # current path, so reusing one would close a cycle; those are skipped.
+      def completed_object_of(klass)
+        generated_records.reverse_each do |path, object|
+          next unless object.instance_of?(klass)
+          next if ancestor_path?(path)
+
+          return object
+        end
+        nil
+      end
+
+      def ancestor_path?(record_path)
+        current_path = current.path
+        record_path.length < current_path.length &&
+          current_path[0, record_path.length] == record_path
+      end
+      private :ancestor_path?
+
       def push(klass)
         previous = current
         top_level = previous.depth.zero?

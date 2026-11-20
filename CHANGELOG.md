@@ -6,6 +6,15 @@
 - Under `bake!` a read-only `belongs_to` parent is never autosaved on any edge, not only on raw-FK presence ones: an association-presence edge (`belongs_to :x, optional: false`) now adopts an existing row of the read-only class so the root `save!` does not write it, and an empty table fails the bake with `ReadOnlyTargetError` instead of `ActiveRecord::ReadOnlyRecord`. Plain `bake` still returns the populated, unsaved parent with no database read.
 - A `strategy: :reuse` miss on a raw-FK presence edge under plain `bake` now falls back to the ordinary fresh build and insert — the same documented exception to the unsaved graph `:fresh` makes — instead of raising `FactoryBakery::Error`. The `TargetBuilder` and auto-builder paths now assign whatever `FkParentPersistence.settle` returns, and the README's strategy and read-only sections describe both behaviors.
 
+### Associations: bounded `:all` graphs
+
+- `:all` now shares the dependency graph: within one top-level bake an auto-built `belongs_to` reuses a completed object of exactly the target class (so `comment.user` and `comment.post.user` are the same record). Sharing is skipped for scoped edges, for an owner foreign key with a `uniqueness` validator, for a raw-FK-presence edge (which needs its own persisted parent), and for explicit `association` declarations.
+- Optional edges in `:all` are best-effort: an optional `belongs_to`, and any `has_one` / `has_many` that `RequiredHasOneBuilder` would not treat as required, is built in a savepoint. If the child raises or is invalid, its writes and generated records are rolled back and the edge stays nil or the collection stays empty. Required edges still raise.
+- `CyclicAssociationError` is now raised only for required edges. An optional edge that would repeat its reflection path, or point at a class already being built (an optional self-reference such as `Status#quoted_status`), is skipped and left nil.
+- `:all` skips HABTM plumbing: `has_and_belongs_to_many` edges and their anonymous `HABTM_...` middle reflections are never auto-built. Baking a join class directly now fills its real join-table columns, so `FactoryBakery.bake!(Post::HABTM_Tags)` sets both foreign keys.
+- A `has_many` / `has_one` with no verified inverse whose child has a required `belongs_to` back to the owner is skipped in `:all`, instead of failing with "Owner must exist" on the unsaved owner.
+- Added `spec/factory_bakery/associations/bounded_graph_spec.rb` covering each case; README documents the bounded `:all` behavior.
+
 ### Review fixes
 
 - Fixed small `in:` integer ranges producing only even values (and raising for `in: 3..3`): with no parity rule every integer now matches.
