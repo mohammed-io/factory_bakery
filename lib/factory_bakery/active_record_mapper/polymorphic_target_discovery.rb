@@ -71,7 +71,7 @@ module FactoryBakery
             next [] unless validator.is_a?(::ActiveModel::Validations::InclusionValidator)
 
             Array(validator.options[:in]).filter_map do |name|
-              candidate = constantize(name)
+              candidate = constantize(name, klass)
               candidate if candidate.is_a?(Class)
             end
           end.uniq
@@ -87,7 +87,7 @@ module FactoryBakery
             ReflectionCache.all(owner).filter_map do |reflection|
               next unless inverse_edge?(reflection, association_name)
 
-              declared = constantize(reflection.class_name)
+              declared = constantize(reflection.class_name, owner)
               owner if declared && compatible?(klass, declared)
             end
           end.uniq
@@ -133,9 +133,16 @@ module FactoryBakery
           false
         end
 
-        def constantize(name)
-          Object.const_get(name.to_s)
-        rescue NameError, TypeError
+        # Class names arrive as strings from inclusion validators and from
+        # reflections; the class that owns the edge decides how they resolve.
+        # An app override of `polymorphic_class_for` (Discourse maps
+        # "ChatMessage" to Chat::Message) wins, and const_get stays the
+        # fallback. A name nothing resolves reads as "no candidate", which is
+        # how this method behaved before.
+        def constantize(name, owner = nil)
+          mapped = owner.polymorphic_class_for(name.to_s) if owner.respond_to?(:polymorphic_class_for)
+          mapped || Object.const_get(name.to_s)
+        rescue StandardError
           nil
         end
 
