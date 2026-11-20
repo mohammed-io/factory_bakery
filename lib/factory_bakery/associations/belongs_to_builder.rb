@@ -25,13 +25,16 @@ module FactoryBakery
           entries_to_build(introspection, context).each_with_object({}) do |entry, values|
             next if suppressed?(entry, taken)
 
-            key, value = build_value(klass, entry)
+            key, value = build_value(klass, entry, values.values)
             values[key] = value
           end
         end
 
-        def build_value(klass, entry)
-          parent = build_parent(klass, entry)
+        # `siblings` are the parents already chosen for this same owner. Two
+        # edges of one record (Transfer#sender / #receiver) never share an
+        # object: apps routinely require them to differ.
+        def build_value(klass, entry, siblings)
+          parent = build_parent(klass, entry, siblings)
           return [entry.name, parent] unless column_fk?(klass, entry)
 
           persist_column_fk!(parent) if parent
@@ -83,8 +86,8 @@ module FactoryBakery
         # would violate the constraint). An optional edge is built in a
         # savepoint and discarded, nil, when its child raises or is invalid;
         # a required edge keeps the old behaviour of surfacing the failure.
-        def build_parent(klass, entry)
-          completed = completed_parent(klass, entry)
+        def build_parent(klass, entry, siblings = [])
+          completed = completed_parent(klass, entry, siblings)
           return completed if completed
 
           return build_optional_parent(klass, entry) if optional_edge?(entry)
@@ -92,13 +95,13 @@ module FactoryBakery
           build_required_parent(klass, entry)
         end
 
-        def completed_parent(klass, entry)
+        def completed_parent(klass, entry, siblings)
           return nil if entry.polymorphic
           return nil unless ReuseResolver.strategy_for(nil) == :fresh
           return nil if entry.scope
           return nil if uniqueness_validated_fk?(klass, entry)
 
-          shareable(BuildContext.completed_object_of(entry.resolve_target), entry)
+          shareable(BuildContext.completed_object_of(entry.resolve_target, exclude: siblings), entry)
         end
 
         # A raw-FK-presence edge needs a real id on the owner, so only an

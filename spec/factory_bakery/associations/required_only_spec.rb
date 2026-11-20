@@ -131,8 +131,7 @@ RSpec.describe 'FactoryBakery associations :required_only mode' do
       order = FactoryBakery.bake(order_model)
 
       expect([order.buyer.class, order.seller.class]).to eq([person_model, person_model])
-      # In-graph identity: the second edge reuses the completed Person.
-      expect(order.buyer).to equal(order.seller)
+      expect(order.buyer).not_to equal(order.seller)
     end
 
     it 'rolls back the whole auto-built chain when the root save fails' do

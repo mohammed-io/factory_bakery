@@ -198,10 +198,11 @@ module FactoryBakery
       # different belongs_to edges) is handed to every later edge instead of
       # being built again. An ancestor's recorded path is a prefix of the
       # current path, so reusing one would close a cycle; those are skipped.
-      def completed_object_of(klass)
+      def completed_object_of(klass, exclude: [])
         generated_records.reverse_each do |path, object|
           next unless object.instance_of?(klass)
           next if ancestor_path?(path)
+          next if exclude.any? { |excluded| excluded.equal?(object) }
 
           return object
         end

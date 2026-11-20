@@ -71,16 +71,33 @@ RSpec.describe 'FactoryBakery associations :all bounded graph' do
 
     it 'shares an already persisted parent across raw-FK-presence edges' do
       user_model = define_model('BoundFKShareUser', name: :string)
-      order_model = define_model('BoundFKShareOrder', user_id: :integer, reviewer_id: :integer) do
+      define_model('BoundFKShareShop', user_id: :integer) do
         belongs_to :user, class_name: 'BoundFKShareUser', optional: false
-        belongs_to :reviewer, class_name: 'BoundFKShareUser', optional: false
-        validates :user_id, :reviewer_id, presence: true
+        validates :user_id, presence: true
+      end
+      order_model = define_model('BoundFKShareOrder', shop_id: :integer, user_id: :integer) do
+        belongs_to :shop, class_name: 'BoundFKShareShop', optional: false
+        belongs_to :user, class_name: 'BoundFKShareUser', optional: false
+        validates :shop_id, :user_id, presence: true
       end
 
       order = FactoryBakery.bake!(order_model)
 
-      expect(order.reviewer_id).to eq(order.user_id)
+      expect(order.user_id).to eq(order.shop.user_id)
       expect(user_model.count).to eq(1)
+    end
+
+    it 'never shares one object between two edges of the same owner' do
+      user_model = define_model('BoundPairUser', name: :string)
+      transfer_model = define_model('BoundPairTransfer', sender_id: :integer, receiver_id: :integer) do
+        belongs_to :sender, class_name: 'BoundPairUser', optional: false
+        belongs_to :receiver, class_name: 'BoundPairUser', optional: false
+      end
+
+      transfer = FactoryBakery.bake!(transfer_model)
+
+      expect(transfer.sender).not_to equal(transfer.receiver)
+      expect(user_model.count).to eq(2)
     end
   end
 
