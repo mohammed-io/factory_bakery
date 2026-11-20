@@ -62,6 +62,19 @@ module FactoryBakery
         generated_records << [current.path, object]
       end
 
+      # Swaps an object the bake built for the object that ends up in the
+      # graph. An FK-presence parent that cannot be written (a read-only
+      # model) is replaced by the existing row it adopted, so `bake!`
+      # verifies and guards the assigned record rather than the unsaved one
+      # it was built from. Replaced, not mutated, like the trim below.
+      def replace_generated!(from, to)
+        return if from.equal?(to)
+
+        Fiber[RECORDS_KEY] = generated_records.map do |path, object|
+          object.equal?(from) ? [path, to] : [path, object]
+        end
+      end
+
       # Discards records from a build whose result is thrown away (a failed
       # first attempt before the verified fallback rebuild), along with the
       # strategy :reuse cache entries pointing at them: the rebuild must not

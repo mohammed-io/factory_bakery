@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'active_support/notifications'
 require 'factory_bakery/associations'
 
 # Public-API behavior for issue #55: read-only targets (models whose readonly?
@@ -135,5 +136,89 @@ RSpec.describe 'read-only bake targets' do
 
     expect(child.count).to eq(0)
     expect(parent.count).to eq(0)
+  end
+
+  # Issue: a raw-FK presence edge (`validates :view_id, presence: true`) whose
+  # auto-built parent is read-only used to call `save!` on the view and let a
+  # raw ActiveRecord::ReadOnlyRecord escape. The parent is never written: an
+  # existing row of the view is adopted, and an empty view leaves the parent
+  # unsaved.
+  describe 'read-only parents on raw-FK presence edges' do
+    def define_view_and_child(prefix)
+      view = define_model("#{prefix}View", name: :string) do
+        define_method(:readonly?) { true }
+      end
+      child = define_model("#{prefix}Child", name: :string, view_id: :integer) do
+        belongs_to :view, class_name: "#{prefix}View", optional: true
+        validates :view_id, presence: true
+      end
+      [view, child]
+    end
+
+    def insert_view_row(view, name)
+      view.insert_all([{ name: name }])
+      view.first
+    end
+
+    def inserts_in
+      count = 0
+      subscriber = ActiveSupport::Notifications.subscribe('sql.active_record') do |_name, _start, _finish, _id, payload|
+        count += 1 if payload[:sql].match?(/\AINSERT/i)
+      end
+      yield
+      count
+    ensure
+      ActiveSupport::Notifications.unsubscribe(subscriber)
+    end
+
+    it 'bake adopts the existing view row and inserts nothing' do
+      view, child = define_view_and_child('ViewFkHit')
+      existing = insert_view_row(view, 'existing')
+
+      writes = inserts_in { @baked = FactoryBakery.bake(child) }
+
+      expect(@baked.view).to eq(existing)
+      expect(@baked.view).to be_persisted
+      expect(@baked.view_id).to eq(existing.id)
+      expect(writes).to eq(0)
+      expect(view.count).to eq(1)
+    end
+
+    it 'bake leaves the parent unsaved when the view table is empty' do
+      view, child = define_view_and_child('ViewFkEmpty')
+
+      baked = nil
+      writes = inserts_in { baked = FactoryBakery.bake(child) }
+
+      expect(baked.view).to be_a(view)
+      expect(baked.view).to be_new_record
+      expect(writes).to eq(0)
+      expect(view.count).to eq(0)
+      expect(child.count).to eq(0)
+    end
+
+    it 'bake! raises ReadOnlyTargetError instead of letting ReadOnlyRecord escape' do
+      view, child = define_view_and_child('ViewFkBangEmpty')
+
+      # A raw ActiveRecord::ReadOnlyRecord here would fail this expectation.
+      expect { FactoryBakery.bake!(child) }
+        .to raise_error(FactoryBakery::ReadOnlyTargetError,
+                        /ViewFkBangEmptyChild#view -> ViewFkBangEmptyView is read-only/)
+
+      expect(child.count).to eq(0)
+      expect(view.count).to eq(0)
+    end
+
+    it 'bake! adopts the existing view row and saves the child' do
+      view, child = define_view_and_child('ViewFkBangHit')
+      existing = insert_view_row(view, 'existing')
+
+      baked = FactoryBakery.bake!(child)
+
+      expect(baked.view).to eq(existing)
+      expect(baked.view_id).to eq(existing.id)
+      expect(view.count).to eq(1)
+      expect(child.count).to eq(1)
+    end
   end
 end

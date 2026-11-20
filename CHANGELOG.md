@@ -1,5 +1,10 @@
 ## [Unreleased]
 
+### Association fixes
+
+- A read-only parent on a raw-FK presence edge (a model whose `readonly?` is true, e.g. a database view) is never saved: the plugin adopts an existing row of exactly that class so the FK points at a real record, and inserts nothing into the read-only table. When the view has no row, `bake` returns the child with the unsaved parent and `bake!` raises `ReadOnlyTargetError` instead of letting a raw `ActiveRecord::ReadOnlyRecord` escape. The generated-record registry follows the adopted row, so `bake!`'s persistence check and read-only guard inspect the object actually assigned to the owner; a read-only record that is already persisted is left alone because `bake!` never writes it.
+- A `strategy: :reuse` miss on a raw-FK presence edge under plain `bake` now falls back to the ordinary fresh build and insert — the same documented exception to the unsaved graph `:fresh` makes — instead of raising `FactoryBakery::Error`. The `TargetBuilder` and auto-builder paths now assign whatever `FkParentPersistence.persist!` returns, and the README's strategy and read-only sections describe both behaviors.
+
 ### Review fixes
 
 - Fixed small `in:` integer ranges producing only even values (and raising for `in: 3..3`): with no parity rule every integer now matches.

@@ -234,6 +234,8 @@ Instance is read-only (readonly? is true, e.g. a database view); use FactoryBake
 
 The check reads the **instance**, so a single record marked read-only after loading is caught as well as a model whose every instance is read-only. It runs after the graph is built but before the root save, inside `bake!`'s savepoint: any parent row the graph inserted earlier is rolled back and the database is unchanged. When a read-only record is a required parent, the error names the chain, for example `InstanceModerationNote#instance -> Instance is read-only (...)`.
 
+A read-only parent on a [raw-FK presence edge](#raw-fk-presence-edges) is never written. The plugin looks for an existing row of that class and adopts it, so `bake` and `bake!` point the FK at a real row and insert nothing into the read-only table. When the table is empty, `bake` returns the child with the unsaved parent (no exception, no INSERT) and `bake!` raises `ReadOnlyTargetError` as above; an already-persisted read-only record in the graph is left alone because `bake!` never writes it.
+
 To store the data, create the underlying rows yourself and use `bake` for the in-memory object. A `persist_with` hook that writes through another model is a possible future option; it is not supported yet.
 
 ## Definition loading
@@ -509,7 +511,7 @@ When such an edge **is** required (a presence validator on the association name,
 | --- | --- |
 | `bake!` | Creates the parent **inside the root savepoint** and sets the FK from its id. The insert rolls back atomically with the rest of the graph if anything fails. NOT NULL + real FK constraints are satisfiable end-to-end. |
 | `bake` (`:fresh`, the default) | Creates the parent and **inserts a row outside the unsaved contract**. This is the documented exception to "`bake` never writes": the raw column cannot be satisfied any other way. The root record itself stays unsaved. |
-| `bake` with `:reuse` | An existing database row is reused without writing. On a miss the plugin raises `FactoryBakery::Error` naming the edge and suggesting `bake!`, a declaration, or an explicit FK/assignment — the reuse strategy promises not to insert on a miss. |
+| `bake` with `:reuse` | An existing database row is reused without writing. On a miss the parent is built and inserted exactly as with `:fresh` — the documented exception to "`bake` never writes". |
 | `bake!` with `:reuse` | An existing row is reused; on a miss a fresh parent is created inside the savepoint. |
 
 Association-presence edges (`validates :user, presence: true`, `optional: false`) are unaffected: their parent stays unsaved under `bake` with zero INSERTs. Polymorphic edges keep their existing behavior (a raw FK signal never auto-builds them). Cycle detection, `max_bake_depth`, back-edge suppression, declarations and overrides all apply to the persisted-parent path as they do anywhere else; an explicit `user:` or `user_id:` at the call site suppresses it entirely.
@@ -548,7 +550,7 @@ end
 | --- | --- |
 | In the same bake | A completed matching object is shared before the database is queried — e.g. `order.user` and `order.shop.user` are the same record. Ancestors still being built are never shared. |
 | In the database | Exact STI class + association scope + scalar column overrides from the declaration, oldest row by primary key (deterministic). |
-| On a miss | Falls through to an ordinary fresh build: unsaved under `bake`, inserted under `bake!` via autosave. [Raw-FK presence edges](#raw-fk-presence-edges) are the exception: they raise under `bake` and are created inside the savepoint under `bake!`. |
+| On a miss | Falls through to an ordinary fresh build: unsaved under `bake`, inserted under `bake!` via autosave. [Raw-FK presence edges](#raw-fk-presence-edges) follow the same path, so they insert their parent under `bake` too. |
 
 ```ruby
 FactoryBakery.define(Post) do

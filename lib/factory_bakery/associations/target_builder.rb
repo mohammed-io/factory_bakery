@@ -18,7 +18,7 @@ module FactoryBakery
       class << self
         # A belongs_to target has no owner-side create scope to mirror. With
         # :reuse an existing object (in this graph or in the database) wins; a
-        # miss falls through to the ordinary fresh bake.
+        # miss falls through to the ordinary fresh bake, exactly as :fresh does.
         def bake(object, declaration, entry)
           klass = target_klass(object, declaration, entry)
           reuse = ReuseResolver.strategy_for(declaration) == :reuse
@@ -26,12 +26,11 @@ module FactoryBakery
             resolved = BakeryBuilder.resolve(klass).first
             existing = ReuseResolver.existing(resolved, declaration.overrides, entry)
             return FkParentPersistence.persist!(existing, entry) if existing
-
-            FkParentPersistence.raise_on_reuse_miss!(object.class, entry)
           end
 
-          fresh = FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
-          FkParentPersistence.persist!(fresh, entry)
+          fresh = FkParentPersistence.persist!(
+            FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides), entry
+          )
           ReuseResolver.remember(resolved, declaration.overrides, entry, fresh) if reuse
           fresh
         end

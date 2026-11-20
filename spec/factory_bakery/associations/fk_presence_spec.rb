@@ -160,17 +160,29 @@ RSpec.describe 'raw-FK presence edges' do
       expect(owner_model.count).to eq(1)
     end
 
-    it 'raises a clear error naming the edge on a reuse miss under bake' do
+    it 'falls back to a fresh, persisted parent on a reuse miss under bake' do
       owner_model, child_model = define_fk_edge('FkReuseMiss')
 
-      expect do
-        FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(child_model) }
-      end.to raise_error(FactoryBakery::Error) { |error|
-        expect(error.message).to include('FkReuseMissChild#owner')
-        expect(error.message).to match(/bake!/)
-        expect(error.message).to match(/declar/)
-      }
-      expect(owner_model.count).to eq(0)
+      writes = inserts_in do
+        @baked = FactoryBakery::Associations.with(strategy: :reuse) { FactoryBakery.bake(child_model) }
+      end
+
+      expect(@baked.owner).to be_persisted
+      expect(@baked.owner_id).to eq(@baked.owner.id)
+      expect(writes).to eq(1)
+      expect(owner_model.count).to eq(1)
+      expect(child_model.count).to eq(0)
+    end
+
+    it 'falls back to a fresh, persisted parent for a declared edge on a reuse miss under bake' do
+      owner_model, child_model = define_fk_edge('FkDeclReuseMiss')
+      FactoryBakery.define(child_model) { association :owner, strategy: :reuse }
+
+      child = FactoryBakery.bake(child_model)
+
+      expect(child.owner).to be_persisted
+      expect(child.owner_id).to eq(child.owner.id)
+      expect(owner_model.count).to eq(1)
     end
 
     it 'creates the parent inside the savepoint on a reuse miss under bake!' do

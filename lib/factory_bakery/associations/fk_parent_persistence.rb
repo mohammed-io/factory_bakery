@@ -11,8 +11,15 @@ module FactoryBakery
     # Under `bake!` the insert happens while the root savepoint is open, so it
     # rolls back atomically with every other row the bake wrote. Under plain
     # `bake` it is a documented exception to the unsaved contract: the row is
-    # inserted outside any transaction. A `:reuse` miss under `bake` raises
-    # instead, because that strategy promises not to write on a miss.
+    # inserted outside any transaction. A `:reuse` miss builds the parent
+    # exactly like `:fresh` does under the same mode.
+    #
+    # A read-only parent (a model whose `readonly?` is true, e.g. a database
+    # view) can never be inserted. The edge adopts an existing row of exactly
+    # that class when the table has one; otherwise the parent stays unsaved and
+    # no write is attempted. Under `bake!` the read-only guard then fails the
+    # bake with `ReadOnlyTargetError`; under `bake` the caller gets the
+    # populated, unsaved parent.
     #
     # Association-presence edges are deliberately untouched: an unsaved parent
     # satisfies `validates :user, presence: true`, so they stay database-free
@@ -23,29 +30,39 @@ module FactoryBakery
           !entry.nil? && entry.fk_presence && !entry.polymorphic
         end
 
-        # Called after a `:reuse` lookup misses. Under `bake` a fresh build
-        # would have to be inserted to give the FK a value, which the reuse
-        # contract does not allow; fail with the edge and the two ways out.
-        def raise_on_reuse_miss!(source_class, entry)
-          return unless required?(entry)
-          return if BuildContext.persisting?
-
-          column = entry.foreign_keys.first
-          raise FactoryBakery::Error,
-                "#{source_class}##{entry.name} validates foreign key #{column.inspect}, " \
-                'but strategy: :reuse found no row to reuse under `bake`. ' \
-                'Use `bake!` to create the parent atomically, declare the edge ' \
-                "(e.g. association :#{entry.name}, strategy: :fresh), or pass " \
-                "#{entry.name}: / #{column}: explicitly."
-        end
-
+        # Returns the parent that should be assigned to the owner: the object
+        # it was given, or the existing row a read-only parent adopts.
         def persist!(parent, entry)
           return parent unless required?(entry)
           return parent unless parent.respond_to?(:new_record?) && parent.new_record?
 
+          return adopt(parent) if FactoryBakery::MapperRegistry.read_only?(parent)
+
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(parent)
           adapter.save!(parent)
           parent
+        end
+
+        private
+
+        # A read-only parent is never saved: an existing row of exactly that
+        # class is adopted so the FK points somewhere real, and an empty table
+        # leaves the parent unsaved rather than raising here.
+        def adopt(parent)
+          row = persisted_row(parent)
+          return parent unless row
+
+          BuildContext.replace_generated!(parent, row)
+          row
+        end
+
+        def persisted_row(parent)
+          klass = parent.class
+          return nil unless klass.respond_to?(:all) && klass.respond_to?(:primary_key)
+
+          klass.reorder(klass.primary_key).first
+        rescue StandardError
+          nil
         end
       end
     end

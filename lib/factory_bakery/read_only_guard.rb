@@ -29,10 +29,17 @@ module FactoryBakery
 
     attr_reader :root, :adapter, :entries
 
+    # Only records `bake!` would write are guarded. A read-only row that is
+    # already persisted (an FK-presence parent adopted from a database view, for
+    # example) needs no write, so it is left alone.
     def parent_entry
       entries.find do |entry_path, record|
-        !record.equal?(root) && entry_path.length > 1 && read_only?(record)
+        !record.equal?(root) && entry_path.length > 1 && read_only?(record) && !persisted?(record)
       end
+    end
+
+    def persisted?(record)
+      adapter.persisted?(record)
     end
 
     def candidates
