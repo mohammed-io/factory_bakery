@@ -137,8 +137,21 @@ module FactoryBakery
           column_backed_target: @model_class.respond_to?(:columns_hash),
           sti_discriminator: sti_discriminator?,
           json_shape: json_shape(column, rules.allowed_values),
+          json_text: json_text?(column),
           guarded_writer: guarded_writer?
         }
+      end
+
+      # A text column an index casts to json/jsonb must hold a JSON document
+      # (see JsonCast). Only plain text columns qualify: a real json/jsonb
+      # column already routes to the JSON filler, and an Array-serialized
+      # attribute needs the Array generator, so neither reaches the string
+      # filler's JSON fallback.
+      def json_text?(column)
+        return false if column.nil?
+        return false unless %i[string text].include?(column.type)
+
+        MapperRegistry.json_text?(@model_class, @attr_name)
       end
 
       # A small mutable accumulator folded over the attribute's validators in

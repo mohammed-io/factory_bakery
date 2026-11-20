@@ -33,10 +33,10 @@ module FactoryBakery
         return build_without_savepoint(model_klass, definition, overrides, traits)
       end
 
-      attempt, probe = attempt_in_savepoint(model_klass, definition, overrides, traits, adapter)
+      attempt, probe, errors = attempt_in_savepoint(model_klass, definition, overrides, traits, adapter)
       return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
-      verify_rebuild!(rebuild(model_klass, definition, overrides, traits, adapter))
+      verify_rebuild!(rebuild(model_klass, definition, overrides, traits, adapter, errors))
     end
 
     def build_object(model_klass, definition, overrides, traits, mode)
@@ -54,15 +54,19 @@ module FactoryBakery
     # The lean attempt in its own savepoint, with the probe that decides
     # whether it is kept. A :invalid probe means the attempt was discarded and
     # its writes rolled back; the attempt is still returned because its builder
-    # is the one that knows which fills were optional.
+    # is the one that knows which fills were optional. The error names the
+    # probe saw are returned with it, read while the lean record still carried
+    # them.
     def attempt_in_savepoint(model_klass, definition, overrides, traits, adapter)
       mark = BuildContext.generated_records.length
       attempt = nil
       probe = nil
+      errors = []
       begin
         adapter.transaction(model_klass) do
           attempt = build_object(model_klass, definition, overrides, traits, @mode)
           probe = fallback_probe(*attempt)
+          errors = error_attributes(attempt.first) if probe == :invalid
           if probe == :invalid
             BuildContext.trim_generated_records!(mark)
             raise DiscardAttempt
@@ -71,7 +75,7 @@ module FactoryBakery
       rescue DiscardAttempt
         # The savepoint already rolled the lean attempt's writes back.
       end
-      [attempt, probe]
+      [attempt, probe, errors]
     end
 
     # The rebuild, with the opt-in scoped on. It answers a lean record that was
@@ -81,12 +85,31 @@ module FactoryBakery
     # the rebuild cannot turn a nested parent into a fuller record that fails its
     # own validation. The rebuilt record is verified by the caller, which puts
     # back any virtual optional fill a custom validation rejects.
-    def rebuild(model_klass, definition, overrides, traits, adapter)
-      FillOptional.with_rebuild(BuildContext.current.depth) do
-        adapter.transaction(model_klass) do
+    #
+    # The lean probe's error names travel with the rebuild (fiber-local, like
+    # the depth): an optional belongs_to those errors blamed is built like a
+    # required edge, because a custom validator demands it even though no
+    # discovered constraint does (Discourse's `PostValidator`). `probe_errors`
+    # are the names read while the lean record still carried them, because
+    # `valid?` clears `errors` on its next run.
+    def rebuild(model_klass, definition, overrides, traits, adapter, probe_errors)
+      with_rebuild_errors(probe_errors) do
+        transaction(adapter, model_klass) do
           build_object(model_klass, definition, overrides, traits, true)
         end
       end
+    end
+
+    def with_rebuild_errors(names, &block)
+      FillOptional.with_rebuild(BuildContext.current.depth, error_attributes: names, &block)
+    end
+
+    # A mapper whose targets open no transactions has no savepoint to rebuild
+    # in; the plain build is the same thing without one.
+    def transaction(adapter, model_klass, &block)
+      return block.call unless adapter.transactional?
+
+      adapter.transaction(model_klass, &block)
     end
 
     # A savepoint is only useful when a fallback can happen: with the opt-in
@@ -114,6 +137,7 @@ module FactoryBakery
     end
 
     def build_without_savepoint(model_klass, definition, overrides, traits)
+      adapter = MapperRegistry.persistence_adapter(model_klass)
       mark = BuildContext.generated_records.length
       object, builder = build_object(model_klass, definition, overrides, traits, @mode)
       attempt = [object, builder]
@@ -121,11 +145,8 @@ module FactoryBakery
       return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
       BuildContext.trim_generated_records!(mark)
-      verify_rebuild!(
-        FillOptional.with_rebuild(BuildContext.current.depth) do
-          build_object(model_klass, definition, overrides, traits, true)
-        end
-      )
+      errors = error_attributes(object)
+      verify_rebuild!(rebuild(model_klass, definition, overrides, traits, adapter, errors))
     end
 
     # :invalid when the lean record must be rebuilt, :valid when the probe

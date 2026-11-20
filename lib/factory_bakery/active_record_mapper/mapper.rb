@@ -170,6 +170,27 @@ module FactoryBakery
         AssociationIntrospection.for(klass)
       end
 
+      # Whether the target's table has `attr_name` as a column. Callers use it
+      # to skip an edge whose foreign key the target cannot store (Discourse's
+      # `Topic has_many :user_profiles`, whose table has no `topic_id`).
+      # Targets without a schema keep the optimistic answer, so nothing is
+      # skipped on a mapper that cannot tell.
+      def column?(klass, attr_name)
+        return true unless klass.respond_to?(:columns_hash)
+
+        klass.columns_hash.key?(attr_name.to_s)
+      end
+
+      # Whether a text attribute is cast to json/jsonb by a table index. The
+      # SQL is read from the indexes (JsonCast); the value side emits a JSON
+      # document for such a column. An alias name resolves to its column.
+      def json_text?(klass, attr_name)
+        column = attr_name.to_s
+        column = klass.attribute_aliases[column] if klass.respond_to?(:attribute_aliases)
+
+        json_text_columns(klass).include?(column.to_s)
+      end
+
       # Ordered candidate classes for a polymorphic belongs_to, plus the
       # discovery sources tried. The framework reads live in the helper, so
       # the plugin never sees a reflection or a Rails constant (ADR-0001).
@@ -466,12 +487,45 @@ module FactoryBakery
         all_unique_indexes(klass).select { |index| index.columns.length == 1 }
       end
 
-      def all_unique_indexes(klass)
+      # A column the database casts to json/jsonb inside a table index. An
+      # expression index is the usual reason: PostgreSQL evaluates it on every
+      # insert, so a `varchar` column can be forced to hold JSON (Discourse's
+      # `notifications.data`). The SQL shapes are matched by the pure JsonCast
+      # helper; the reads (index lists, column names) stay in the mapper.
+      def json_text_columns(klass)
+        class_memo(klass, :@factory_bakery_json_text_columns) do
+          compute_json_text_columns(klass).freeze
+        end
+      end
+
+      def compute_json_text_columns(klass)
+        JsonCast.columns_in(*json_cast_statements(klass)).freeze
+      end
+
+      # Every index on the table contributes its expression SQL and its
+      # partial-index predicate; both can hold a cast the insert must satisfy.
+      def json_cast_statements(klass)
+        all_indexes(klass).flat_map do |index|
+          [expression_sql(index.columns), index.respond_to?(:where) ? index.where : nil].compact
+        end
+      end
+
+      # An expression index reports its columns as one SQL String; a plain
+      # column index reports an Array of column names, which never casts.
+      def expression_sql(columns)
+        columns if columns.is_a?(String)
+      end
+
+      def all_indexes(klass)
         return [] unless klass.respond_to?(:connection) && klass.respond_to?(:table_name)
 
-        klass.connection.indexes(klass.table_name).select(&:unique)
+        klass.connection.indexes(klass.table_name)
       rescue StandardError
         []
+      end
+
+      def all_unique_indexes(klass)
+        all_indexes(klass).select(&:unique)
       end
 
       def build_probe(record, attr_name, value)

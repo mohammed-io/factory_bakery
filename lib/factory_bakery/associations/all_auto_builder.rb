@@ -35,8 +35,22 @@ module FactoryBakery
 
           return false if entry.through
           return false if habtm_join?(entry)
+          return false unless foreign_keys_exist?(entry)
 
           true
+        end
+
+        # A declared association whose foreign key the target cannot store is
+        # dead: Discourse's `Topic has_many :user_profiles`, whose table has no
+        # `topic_id`. Building it would write an unknown attribute
+        # (ActiveModel::MissingAttributeError). The column facts come from the
+        # mapper, so the core never reads a schema itself.
+        def foreign_keys_exist?(entry)
+          target = entry.resolve_target
+
+          entry.foreign_keys.all? { |key| FactoryBakery::MapperRegistry.column?(target, key) }
+        rescue StandardError
+          false
         end
 
         # Rails' HABTM middle reflection (Post::HABTM_Tags) can reach the
@@ -52,8 +66,14 @@ module FactoryBakery
           false
         end
 
+        # A has_many/has_one is skipped before its association proxy is touched
+        # when its foreign key is not a column of the target class: reading the
+        # proxy of such an edge raises "no such column" (Discourse's
+        # `Topic has_many :user_profiles`), so the check belongs ahead of the
+        # loaded? probe.
         def skip?(object, entry, declared)
           return true if declared.include?(entry.name)
+          return true unless foreign_keys_exist?(entry)
           return true if object.association(entry.name.to_sym).loaded?
           return true if BelongsToBuilder.suppressed_edge?(object.class, entry.name)
           return true if skip_unverified_inverse?(object, entry)
@@ -157,13 +177,27 @@ module FactoryBakery
           if entry.kind == :has_many
             TargetBuilder.build_collection(object, declaration, entry)
             children = object.public_send(entry.name).to_a
-            raise FactoryBakery::FallbackBuilder::DiscardAttempt if children.any? { |child| invalid_child?(child) }
+            raise FactoryBakery::FallbackBuilder::DiscardAttempt if children.any? { |child| discardable?(child) }
           else
             child = TargetBuilder.bake_child(object, declaration, entry)
-            raise FactoryBakery::FallbackBuilder::DiscardAttempt if invalid_child?(child)
+            raise FactoryBakery::FallbackBuilder::DiscardAttempt if discardable?(child)
 
             object.public_send("#{entry.name}=", child)
           end
+        end
+
+        # An optional child that cannot be written (Mastodon's `User has_many
+        # :ips`, whose target `UserIp` is a database view) is discarded like an
+        # invalid child: :all builds optional edges on a best-effort basis, and
+        # the edge stays empty instead of failing the whole bake with
+        # ReadOnlyTargetError. Required edges keep their behaviour.
+        def discardable?(child)
+          invalid_child?(child) || read_only_child?(child)
+        end
+
+        def read_only_child?(child)
+          adapter = FactoryBakery::MapperRegistry.persistence_adapter(child)
+          FactoryBakery::MapperRegistry.read_only?(child) && !adapter.persisted?(child)
         end
 
         def invalid_child?(child)

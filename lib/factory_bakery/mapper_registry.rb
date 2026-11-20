@@ -334,6 +334,27 @@ module FactoryBakery
       # records are caught too. The adapters own the framework-specific read.
       def read_only?(record) = persistence_adapter(record).read_only?(record)
 
+      # Whether the target's table exposes `attribute` as a column. Mappers
+      # without the notion answer true, so a core caller never loses a build
+      # over a column it cannot rule out.
+      def column?(klass, attr_name)
+        mapper = mapper_for(klass)
+        return true unless mapper.respond_to?(:column?)
+
+        mapper.column?(klass, attr_name.to_s)
+      end
+
+      # Whether a text attribute must hold a JSON document: the target's own
+      # type is text, but a table index casts it to json/jsonb (PostgreSQL
+      # expression indexes). The value side reads this fact to emit parseable
+      # JSON. Mappers without the notion answer false.
+      def json_text?(klass, attr_name)
+        mapper = mapper_for(klass)
+        return false unless mapper.respond_to?(:json_text?)
+
+        mapper.json_text?(klass, attr_name.to_s)
+      end
+
       # Builds an instance of the target. The block is the ordinary
       # construction and is always tried first; a mapper that knows how to
       # recover from a raising constructor answers with its own fallbacks.

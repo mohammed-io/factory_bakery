@@ -2,6 +2,7 @@
 
 require 'ffaker'
 require 'date'
+require 'json'
 require 'time'
 require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/plugin_registry'
@@ -103,10 +104,12 @@ module FactoryBakery
 
     def bake(target, *traits, fill_optional: nil, **overrides)
       mode = resolve_fill_optional(fill_optional)
-      FillOptional.with(mode) do
-        model_klass, definition = BakeryBuilder.resolve(target)
-        BuildContext.push(model_klass) do
-          build_with_fallback(model_klass, definition, overrides, traits, mode)
+      FillOptional.for_bake_at(BuildContext.current.depth) do
+        FillOptional.with(mode) do
+          model_klass, definition = BakeryBuilder.resolve(target)
+          BuildContext.push(model_klass) do
+            build_with_fallback(model_klass, definition, overrides, traits, mode)
+          end
         end
       end
     end
@@ -124,26 +127,28 @@ module FactoryBakery
       # FK-column-validated edges insert their parent while the graph is being
       # built, so the flag must cover graph building too, not just the save.
       BuildContext.with_persistence do
-        FillOptional.with(mode) do
-          model_klass, definition = BakeryBuilder.resolve(target)
-          adapter = MapperRegistry.persistence_adapter(model_klass)
+        FillOptional.for_bake_at(BuildContext.current.depth) do
+          FillOptional.with(mode) do
+            model_klass, definition = BakeryBuilder.resolve(target)
+            adapter = MapperRegistry.persistence_adapter(model_klass)
 
-          return bake_untransactional(target, adapter, overrides, traits, mode) unless adapter.transactional?
+            return bake_untransactional(target, adapter, overrides, traits, mode) unless adapter.transactional?
 
-          object = nil
-          adapter.transaction(model_klass) do
-            object = BuildContext.push(model_klass) do
-              record = build_with_fallback(model_klass, definition, overrides, traits, mode)
-              # Check before any save: a read-only target cannot be persisted,
-              # and a read-only parent generated anywhere in the graph fails
-              # the whole bake! inside this savepoint.
-              ensure_writable!(record, adapter)
-              adapter.save!(record)
-              verify_persistence!(record, adapter)
-              record
+            object = nil
+            adapter.transaction(model_klass) do
+              object = BuildContext.push(model_klass) do
+                record = build_with_fallback(model_klass, definition, overrides, traits, mode)
+                # Check before any save: a read-only target cannot be persisted,
+                # and a read-only parent generated anywhere in the graph fails
+                # the whole bake! inside this savepoint.
+                ensure_writable!(record, adapter)
+                adapter.save!(record)
+                verify_persistence!(record, adapter)
+                record
+              end
             end
+            object
           end
-          object
         end
       end
     end

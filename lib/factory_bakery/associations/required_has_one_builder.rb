@@ -35,8 +35,20 @@ module FactoryBakery
           return false unless entry.kind == :has_one && !entry.through
           return false if taken.include?(entry.name)
           return false if object.association(entry.name.to_sym).loaded?
+          return false unless foreign_keys_exist?(entry)
 
           entry.presence_applicable.call(object)
+        end
+
+        # A has_one whose foreign key the target cannot store is dead
+        # (Discourse's `Topic has_many :user_profiles`): building it would
+        # write an unknown attribute. The column facts come from the mapper.
+        def foreign_keys_exist?(entry)
+          target = entry.resolve_target
+
+          entry.foreign_keys.all? { |key| FactoryBakery::MapperRegistry.column?(target, key) }
+        rescue StandardError
+          false
         end
 
         def build_child(object, entry)

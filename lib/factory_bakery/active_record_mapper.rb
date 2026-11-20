@@ -23,6 +23,7 @@ if defined?(::ActiveRecord::Base)
   require_relative 'active_record_mapper/natural_key'
   require_relative 'active_record_mapper/constraint_reader'
   require_relative 'active_record_mapper/counter_cache_detector'
+  require_relative 'active_record_mapper/json_cast'
   require_relative 'active_record_mapper/association_introspection'
   require_relative 'active_record_mapper/polymorphic_target_discovery'
   require_relative 'active_record_mapper/construction'

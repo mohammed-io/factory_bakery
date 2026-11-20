@@ -39,6 +39,7 @@ module FactoryBakery
         @exact_length = @constraints.exact_length
         @with_regexes = @constraints.with_regexes
         @without_regexes = @constraints.without_regexes
+        @json_text = @constraints.json_text
       end
 
       def call(context = nil)
@@ -48,21 +49,25 @@ module FactoryBakery
         # 2. Inclusion validator - pick from allowed set
         return pick_from_allowed(context) if allowed_values?
 
-        # 3. Generate and verify a value that satisfies every constraint
+        # 3. A text column an index casts to json/jsonb must hold a JSON
+        # document, not a plain string. It still has to satisfy the declared
+        # constraints (a presence or format rule, the column's length limit),
+        # so it runs through the ordinary verification and retry budget.
+        return generate_compliant_value(context, method(:json_candidate)) if @json_text
+
+        # 4. Generate and verify a value that satisfies every constraint
         generate_compliant_value(context)
       end
 
       private
 
-      def pick_from_allowed(context)
-        value = pick_from(@constraints.allowed_values, context)
-        value.to_s
-      end
-
       # Generate up to MAX_ATTEMPTS candidates and return the first one that
       # satisfies every constraint. A candidate is never returned unverified:
       # exhaustion raises instead of leaking a value the target would reject.
-      def generate_compliant_value(context)
+      # `candidate` is the per-attempt value builder; a JSON-cast text column
+      # passes its document generator, so it keeps the ordinary verification
+      # and retry budget.
+      def generate_compliant_value(context, candidate = method(:build_candidate))
         deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SYNTHESIS_TIME_LIMIT
         lengths = resolve_lengths(context)
         value = nil
@@ -74,12 +79,38 @@ module FactoryBakery
                       past_deadline?(deadline)
           raise format_exhaustion_error(value) if exhausted
 
-          value = build_candidate(lengths, context)
+          value = candidate.call(lengths, context)
           synthesis_attempts += 1
           return value if compliant?(value, context, lengths)
 
           attempts += 1
         end
+      end
+
+      # One JSON candidate: a document built from fresh words, so a retry after
+      # a collision produces a new value just like the ordinary generator.
+      def json_candidate(lengths, context)
+        words = [json_word(context), json_word(context)]
+        adjust_json_length(JSON.generate(words.first => words.last), lengths)
+      end
+
+      def json_word(context)
+        allowed_values? ? pick_from_allowed(context) : FFaker::Lorem.word
+      end
+
+      # The words shrink until the document fits the cap; the JSON syntax is
+      # never truncated. The shortest document is `{"a":"a"}` (9 characters).
+      def adjust_json_length(value, lengths)
+        limit = [lengths.exact || lengths.maximum, @db_limit].compact.min
+        return value if limit.nil? || value.length <= limit
+
+        shortest = JSON.generate('a' => 'a')
+        shortest.length > limit ? nil : shortest
+      end
+
+      def pick_from_allowed(context)
+        value = pick_from(@constraints.allowed_values, context)
+        value.to_s
       end
 
       # Resolve every dynamic length option once per bake. A Symbol bound asks
@@ -272,20 +303,22 @@ module FactoryBakery
       end
 
       def format_exhaustion_error(value)
-        name = "#{@model_class}##{@attr_name}"
-
         FactoryBakery::Error.new(
-          "could not generate a format-compliant value for #{name} " \
-          "(#{format_constraints_description}): #{value.inspect} failed after " \
-          "#{MAX_ATTEMPTS} attempts. Pass an explicit value with an override " \
-          'or relax the constraints.'
+          "could not generate a #{@json_text ? 'JSON' : 'format-compliant'} value for " \
+          "#{@model_class}##{@attr_name} (#{format_constraints_description}): " \
+          "#{value.inspect} failed after #{MAX_ATTEMPTS} attempts. " \
+          'Pass an explicit value with an override or relax the constraints.'
         )
       end
 
       def format_constraints_description
         parts = []
-        parts << "with: #{@with_regexes.map(&:inspect).join(', ')}" if @with_regexes.any?
-        parts << "without: #{@without_regexes.map(&:inspect).join(', ')}" if @without_regexes.any?
+        if @json_text
+          parts << 'json document cast by a table index'
+        else
+          parts << "with: #{@with_regexes.map(&:inspect).join(', ')}" if @with_regexes.any?
+          parts << "without: #{@without_regexes.map(&:inspect).join(', ')}" if @without_regexes.any?
+        end
         parts << "length constraints: #{length_options.inspect}" unless length_options.empty?
         parts.join('; ')
       end

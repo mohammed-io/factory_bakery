@@ -55,10 +55,43 @@ module FactoryBakery
 
         def entries_to_build(introspection, context)
           belongs_to = introspection.select { |entry| id_keyed_belongs_to?(entry) }
-          required = belongs_to.select(&:required)
-          return required unless Associations.mode == :all && !Associations.past_depth?(context)
+          entries = mode_entries(belongs_to, context)
+          (entries + error_directed(belongs_to, entries)).map { |entry| fk_blamed(entry) }
+        end
+
+        def mode_entries(belongs_to, context)
+          return belongs_to.select(&:required) unless Associations.mode == :all && !Associations.past_depth?(context)
 
           belongs_to.select { |entry| !entry.polymorphic || entry.required }
+        end
+
+        # A verified-fallback rebuild knows which attributes the lean probe
+        # blamed. An optional belongs_to among them is built like a required
+        # edge: a custom validator (Discourse's `PostValidator` adding
+        # "Topic can't be blank" on an optional association) demands it even
+        # though no discovered constraint does. The names are scoped to the
+        # one record being rebuilt (FillOptional), so a nested bake is
+        # unaffected.
+        def error_directed(belongs_to, already)
+          names = FactoryBakery::FillOptional.rebuild_error_attributes
+          return [] if names.empty?
+
+          belongs_to.reject { |entry| already.include?(entry) }.select do |entry|
+            [entry.name, *entry.foreign_keys].any? { |name| names.include?(name.to_s) }
+          end
+        end
+
+        # A validator that blamed the foreign key column reads the id, which an
+        # unsaved parent does not have until autosave runs after validation.
+        # Such an edge (whether the rebuild added it or was building it anyway)
+        # is treated as an FK-presence edge, so its parent is inserted first
+        # exactly like one guarded by `validates :x_id, presence: true`.
+        def fk_blamed(entry)
+          names = FactoryBakery::FillOptional.rebuild_error_attributes
+          return entry if entry.fk_presence
+          return entry unless entry.foreign_keys.any? { |key| names.include?(key.to_s) }
+
+          entry.dup.tap { |fk_edge| fk_edge.fk_presence = true }
         end
 
         # Natural keys are handled after instantiation by NaturalKeyBuilder,

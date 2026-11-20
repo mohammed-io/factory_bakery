@@ -71,6 +71,9 @@ module FactoryBakery
                 # True when the attribute's writer has side effects (a
                 # remote-URL downloader), so heuristics must leave it blank.
                 :guarded_writer,
+                # True when the target's column is plain text but a table index
+                # casts it to json/jsonb, so the value must be a JSON document.
+                :json_text,
                 # Bound views.
                 :numeric_bounds, :comparison_bounds
 
@@ -93,6 +96,7 @@ module FactoryBakery
       numericality_validated: false, numericality_only_integer: false,
       numericality_has_float_bound: false,
       guarded_writer: false,
+      json_text: false,
       numeric_bounds: Bounds.none, comparison_bounds: Bounds.none
     )
       @model_class = model_class
@@ -134,6 +138,7 @@ module FactoryBakery
       @numericality_only_integer = numericality_only_integer
       @numericality_has_float_bound = numericality_has_float_bound
       @guarded_writer = guarded_writer
+      @json_text = json_text
       @numeric_bounds = numeric_bounds
       @comparison_bounds = comparison_bounds
     end
