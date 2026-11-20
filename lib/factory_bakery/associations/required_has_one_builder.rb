@@ -4,13 +4,17 @@ module FactoryBakery
   module Associations
     # Auto-builds a direct has_one whose presence validator applies to the
     # populated owner in :required_only. In :all, AllAutoBuilder already builds
-    # every has_one, so this builder stays out of its way. The child is baked
-    # through TargetBuilder, which applies the association's create scope and
-    # verified inverse before the child's own heuristics run.
+    # every has_one within max_depth, so this builder only takes over past it:
+    # a record there gets no optional children, but a required has_one is
+    # still part of a valid record (Discourse's User#primary_email), and Rails'
+    # belongs_to autosave silently skips an invalid parent, inserting the child
+    # with a nil foreign key. The child is baked through TargetBuilder, which
+    # applies the association's create scope and verified inverse before the
+    # child's own heuristics run.
     module RequiredHasOneBuilder
       class << self
         def build(object, context)
-          return unless Associations.mode == :required_only
+          return unless Associations.mode == :required_only || Associations.past_depth?(context)
 
           introspection = FactoryBakery::MapperRegistry.association_introspection(object.class)
           return unless introspection

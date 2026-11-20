@@ -135,6 +135,26 @@ RSpec.describe 'FactoryBakery associations required has_one (issue #53)' do
     end
   end
 
+  describe 'in :all past max_depth' do
+    # :all builds every child within max_depth. A deeper owner gets no
+    # optional children, but its required has_one must still be built, or the
+    # owner is invalid and Rails' belongs_to autosave silently skips it.
+    it 'still builds the required has_one of a nested owner' do
+      owner_model, profile_model = define_required_pair('ReqHoDeep')
+      holder_model = define_model('ReqHoDeepHolder', owner_id: :integer) do
+        belongs_to :owner, class_name: 'ReqHoDeepOwner', optional: false
+      end
+      FactoryBakery::Associations.mode = :all
+      FactoryBakery::Associations.max_depth = 1
+
+      holder = FactoryBakery.bake!(holder_model)
+
+      expect(holder.owner.profile).to be_a(profile_model)
+      expect([holder.owner, holder.owner.profile]).to all(be_persisted)
+      expect(owner_model.count).to eq(1)
+    end
+  end
+
   describe 'persistence' do
     it 'persists the owner and child together under bake!' do
       owner_model, profile_model = define_required_pair('ReqHoBang')
