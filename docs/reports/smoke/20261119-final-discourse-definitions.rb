@@ -87,22 +87,25 @@ FactoryBakery.define(UserStatus) do
   ends_at { nil }
 end
 
-# JsonFiller emits a Hash; these app validators iterate the JSON value as an
-# Array of hashes (chat/message.rb:127-133, completion_prompt.rb:61-66).
+# The blocks normalizer expects an array; duplicate detection needs a channel and author.
 FactoryBakery.define(Chat::Message) do
-  blocks { [] }
+  blocks { nil }
+  message { "FactoryBakery chat message #{SecureRandom.hex(6)}" }
+  user { Discourse.system_user }
+  last_editor { Discourse.system_user }
+  chat_channel { FactoryBakery.bake!(Chat::Channel) }
+  in_reply_to { nil }
+  thread { nil }
 end
-FactoryBakery.define(Chat::NullMessage) do
-  blocks { [] }
-end
+
 FactoryBakery.define(CompletionPrompt) do
   messages { [] }
 end
 
-# The app maps the legacy "ChatMessage" polymorphic name to Chat::Message
-# (plugins/chat/app/models/chat/message.rb:137); the gem's discovery does not.
+# The chat_message reflection names a missing ChatMessage class; use the FK directly.
 FactoryBakery.define(Chat::MessageSearchData) do
-  association :chat_message, factory: Chat::Message
+  chat_message_id { FactoryBakery.bake!(Chat::Message).id }
+  search_data { "'smoke':1" }
 end
 
 # Group name trust level / format rules (app/models/group.rb).
@@ -120,10 +123,248 @@ FactoryBakery.define(WebHook) do
 end
 
 FactoryBakery.define(WatchedWordGroup) do
-  watched_words { [] }
+  action { 1 }
+  # watched_words_validation errors when the group has no watched word rows.
+  association :watched_words do |_owner|
+    [FactoryBakery.bake!(WatchedWord, watched_word_group_id: nil)]
+  end
 end
 
 FactoryBakery.define(FormTemplate) do
-  template { "---\n{}\n" }
+  # FormTemplateYamlValidator (lib/validators/form_template_yaml_validator.rb)
+  # wants an Array of hashes, each with a unique non-reserved `id` and a type
+  # from ALLOWED_TYPES.
+  template do
+    [{ "id" => "fb_field", "type" => "input", "label" => "Smoke" }].to_yaml
+  end
 end
 
+# DiscourseMcp.registry is filled by CorePrimitives.register! in
+# config/initializers/020-discourse-mcp.rb; McpGroupScope#scope_is_registered
+# only accepts one of the registered required scopes.
+FactoryBakery.define(McpGroupScope) do
+  scope { DiscourseMcp.registry.scopes.first }
+end
+
+# McpOauthClient#redirect_uris_are_absolute: https anywhere, http only on
+# localhost/loopback.
+FactoryBakery.define(McpOauthClient) do
+  redirect_uris { ["https://example.com/oauth/callback"] }
+end
+
+# DiscourseChatIntegration::Provider.provider_names comes from the provider
+# classes the plugin registers; "discord" is always among them.
+FactoryBakery.define(DiscourseChatIntegration::Channel) do
+  key { nil } # PluginModel assigns the channel prefix before saving.
+  type_name { 'JSON' }
+  plugin_name { DiscourseChatIntegration::PluginModel::PLUGIN_NAME }
+  provider { 'discord' }
+  # Channel#data_valid? requires data keys to match the provider's
+  # CHANNEL_PARAMETERS exactly (discord: name + webhook_url).
+  data { { 'name' => "fb_#{SecureRandom.hex(4)}", 'webhook_url' => "https://discord.com/api/webhooks/#{SecureRandom.hex(8)}" } }
+end
+
+# channel_valid? requires a stored channel ID inside the rule's JSON value.
+FactoryBakery.define(DiscourseChatIntegration::Rule) do
+  key { nil }
+  type_name { 'JSON' }
+  plugin_name { DiscourseChatIntegration::PluginModel::PLUGIN_NAME }
+  channel_id { FactoryBakery.bake!(DiscourseChatIntegration::Channel).id }
+  type { 'normal' }
+  filter { 'watch' }
+  # "normal" rules may not set category_id/group_id (category_valid?/
+  # group_valid?). Assigning nil keeps both out of the value hash.
+  category_id { nil }
+  group_id { nil }
+  tags { nil }
+end
+
+FactoryBakery.define(AdminDashboardReport) do
+  # multi_row_cards_must_be_full_width: a multi-row card must span both columns.
+  rows { 1 }
+  cols { 1 }
+  # source_must_be_registered resolves the provider at save time, once the
+  # app's admin dashboard registry has its providers.
+  source { 'core_report' }
+end
+
+FactoryBakery.define(UserNotificationSchedule) do
+  # has_valid_times: start must be <= end and within 0..1410 / 0..1440.
+  day_0_start_time { 480 }
+  day_0_end_time { 1020 }
+  day_1_start_time { 480 }
+  day_1_end_time { 1020 }
+  day_2_start_time { 480 }
+  day_2_end_time { 1020 }
+  day_3_start_time { 480 }
+  day_3_end_time { 1020 }
+  day_4_start_time { 480 }
+  day_4_end_time { 1020 }
+  day_5_start_time { 480 }
+  day_5_end_time { 1020 }
+  day_6_start_time { 480 }
+  day_6_end_time { 1020 }
+end
+
+FactoryBakery.define(SiteSettingLocalization) do
+  # setting_is_localizable: the name must be a localizable site setting
+  # (config/site_settings.yml). "title" is localizable and not cooked.
+  setting_name { 'title' }
+  cooked { nil }
+end
+
+# --- smoke round 6 -------------------------------------------------------
+
+FactoryBakery.define(AiModerationSetting) do
+  # Postgres enum ai_moderation_setting_type (plugins/discourse-ai/db/migrate/
+  # 20241206030229_add_ai_moderation_settings.rb).
+  setting_type { 'spam' }
+  # model_present: one of llm_model / decision_model must be set.
+  association :decision_model do |_owner|
+    FactoryBakery.bake!(DecisionModel)
+  end
+end
+
+# Reviewable#type is the STI discriminator; ReviewableNote#reviewable_id is a
+# plain column with no belongs_to the mapper can fill.
+FactoryBakery.define(Reviewable) do
+  type { 'ReviewableQueuedPost' }
+  created_by { Discourse.system_user }
+  target_created_by { nil }
+  topic { nil }
+  category { nil }
+  target { nil }
+end
+
+FactoryBakery.define(ReviewableNote) do
+  reviewable_id { FactoryBakery.bake!(Reviewable).id }
+end
+
+# ensure_supported_linkable_type and presence require a supported link target.
+FactoryBakery.define(SidebarSectionLink) do
+  linkable { Category.find(SiteSetting.uncategorized_category_id) }
+  user { Fabricate(:user) }
+  sidebar_section { nil }
+end
+
+# link_to_self compares topic IDs; an external link uses only a source topic.
+FactoryBakery.define(TopicLink) do
+  url { "https://example.com/#{SecureRandom.hex(8)}" }
+  domain { 'example.com' }
+  topic { Fabricate(:topic, user: Discourse.system_user) }
+  user { Discourse.system_user }
+  post { nil }
+  link_topic { nil }
+  link_post { nil }
+end
+
+FactoryBakery.define(TopicLinkClick) do
+  topic_link { FactoryBakery.bake!(TopicLink) }
+  user { Discourse.system_user }
+end
+
+# The comparison validator requires distinct invitee and inviter IDs.
+FactoryBakery.define(Live::Invite) do
+  user { Fabricate(:user) }
+  invited_by { Discourse.system_user }
+end
+
+# generate_auto_slug runs before validation and is implemented by the STI subclass.
+FactoryBakery.define(Chat::Channel) do
+  initialize_with(type: 'CategoryChannel')
+  type { 'CategoryChannel' }
+  name { "FactoryBakery channel #{SecureRandom.hex(6)}" }
+  chatable { Category.find(SiteSetting.uncategorized_category_id) }
+  last_message { nil }
+end
+
+# alias_declared and secret_exists require persisted records with a matching contract.
+FactoryBakery.define(AiToolSecretBinding) do
+  public_send(:alias) { 'smoke_token' }
+  ai_tool do
+    name = "smoke_tool_#{SecureRandom.hex(6)}"
+    AiTool.create!(name: name, tool_name: name, description: 'Smoke tool', summary: 'Smoke tool',
+                   script: 'function invoke() { return {}; }', created_by: Discourse.system_user,
+                   secret_contracts: [{ 'alias' => 'smoke_token' }])
+  end
+  ai_secret { AiSecret.create!(name: "smoke_secret_#{SecureRandom.hex(6)}", secret: 'test-value') }
+  created_by { Discourse.system_user }
+end
+
+# metadata_schema checks the component against the selected script's fields.
+FactoryBakery.define(DiscourseAutomation::Field) do
+  automation do
+    DiscourseAutomation::Automation.create!(name: 'Smoke automation', script: 'auto_responder',
+                                            trigger: 'post_created_edited', enabled: false,
+                                            last_updated_by: Discourse.system_user)
+  end
+  target { 'script' }
+  name { 'once' }
+  component { 'boolean' }
+  metadata { { 'value' => true } }
+end
+
+# check_interpolation_keys looks up the original English translation.
+FactoryBakery.define(TranslationOverride) do
+  locale { 'en' }
+  translation_key { 'email_from' }
+  value { '%{user_name}' }
+end
+
+# required_provider_params and valid_vision_configuration run when the quota's model saves.
+FactoryBakery.define(LlmQuotaUsage) do
+  user { Discourse.system_user }
+  llm_quota do
+    llm = LlmModel.create!(provider: 'open_ai', name: 'gpt-4o-mini', display_name: 'Smoke LLM',
+                           tokenizer: 'DiscourseAi::Tokenizer::OpenAiTokenizer',
+                           url: 'https://example.com/v1/chat/completions',
+                           api_key: 'test-key', max_prompt_tokens: 4096)
+    LlmQuota.create!(llm_model: llm, group: Group.find(Group::AUTO_GROUPS[:everyone]),
+                     duration_seconds: 3600, max_tokens: 1000)
+  end
+end
+
+# ensure_can_comment requires an enabled Post Voting topic and a top-level post.
+FactoryBakery.define(PostVotingComment) do
+  post do
+    SiteSetting.post_voting_enabled = true
+    topic = Fabricate(:topic, subtype: Topic::POST_VOTING_SUBTYPE)
+    Fabricate(:post, topic: topic, user: topic.user)
+  end
+  user { Discourse.system_user }
+  raw { 'This comment explains why the proposed answer works.' }
+end
+
+# ensure_valid_vote rejects self-votes; ensure_valid_comment allows only upvotes.
+FactoryBakery.define(PostVotingVote) do
+  votable { FactoryBakery.bake!(PostVotingComment, user: Fabricate(:user)) }
+  user { Discourse.system_user }
+  direction { 'up' }
+end
+
+# valid_bookmarkable_type accepts a registered target; a reminder is optional.
+FactoryBakery.define(Bookmark) do
+  bookmarkable { Fabricate(:topic) }
+  user { Discourse.system_user }
+  name { 'Smoke bookmark' }
+  reminder_at { nil }
+end
+
+# ensure_same_topic requires both posts to share the same persisted topic.
+FactoryBakery.define(PostReply) do
+  association(:post) { Fabricate(:post) }
+  association(:reply) do |post_reply|
+    Fabricate(:post, topic: post_reply.post.topic, reply_to_post_number: post_reply.post.post_number)
+  end
+end
+
+# The sharing API requires a Topic and the model validates nonempty context.
+FactoryBakery.define(SharedAiConversation) do
+  post = nil
+  target { (post ||= Fabricate(:post)).topic }
+  user { (post ||= Fabricate(:post)).user }
+  context do
+    post ||= Fabricate(:post)
+    [{ 'id' => post.id, 'user_id' => post.user_id, 'created_at' => post.created_at.iso8601, 'cooked' => post.cooked }]
+  end
+end
