@@ -17,7 +17,7 @@ module FactoryBakery
     # The result is memoized on the class (a bake asks several times);
     # reloading a class drops the cache with it. A frozen class is read
     # without caching, matching the constraints cache's own handling.
-    module AssociationIntrospection
+    module AssociationIntrospection # rubocop:disable Metrics/ModuleLength
       module_function
 
       # nil marks a class that is not association-introspectable at all,
@@ -62,7 +62,7 @@ module FactoryBakery
           name: reflection.name.to_s,
           kind: reflection.macro,
           target_class_name: reflection.class_name,
-          foreign_keys: foreign_keys(reflection),
+          foreign_keys: foreign_keys(klass, reflection),
           foreign_type: foreign_type(reflection),
           polymorphic: reflection.polymorphic?,
           counter_cache_columns: counter_columns(reflection, detector),
@@ -76,8 +76,30 @@ module FactoryBakery
       end
 
       # `foreign_key` is an array for composite FKs and a string otherwise.
-      def foreign_keys(reflection)
-        Array(reflection.foreign_key).map(&:to_s).freeze
+      #
+      # A HABTM join model's `belongs_to :left_side` is synthetic: Rails
+      # declares it without a real foreign key, so the reflection answers
+      # `left_side_id` even though the join table only has the owner's real
+      # column (`post_id`). Report that real column instead, so the
+      # association builder assigns the column that exists.
+      def foreign_keys(klass, reflection)
+        keys = Array(reflection.foreign_key).map(&:to_s)
+        join_key = habtm_join_left_key(klass, reflection)
+        return [join_key].freeze if join_key
+
+        keys.freeze
+      end
+
+      def habtm_join_left_key(klass, reflection)
+        return nil unless reflection.macro == :belongs_to
+        return nil unless reflection.name.to_s == 'left_side'
+        return nil unless klass.respond_to?(:columns_hash)
+
+        owner = reflection.options[:anonymous_class]
+        return nil unless owner.is_a?(Class) && owner.name
+
+        key = owner.name.foreign_key
+        key if klass.columns_hash.key?(key)
       end
 
       def foreign_type(reflection)

@@ -468,6 +468,16 @@ FactoryBakery::Associations.with(mode: :all, default_count: 3) do
 end
 ```
 
+#### Bounded `:all` graphs
+
+`:all` is best-effort by design: one missing or invalid optional child must not fail the whole bake.
+
+- **In-graph identity.** Within one top-level bake, an auto-built `belongs_to` reuses an object of exactly the target class that was already completed in this graph, so a diamond such as `comment.user` and `comment.post.user` shares one User instead of building two. Sharing is skipped when the edge has an association `scope`, when the owner's foreign key carries a `uniqueness` validator (sharing would violate a has-one-like constraint), when the edge is a [raw-FK-presence edge](#raw-fk-presence-edges) (it needs its own persisted parent), and for explicit `association` declarations.
+- **Optional edges never break the bake.** An optional `belongs_to`, and every `has_one` / `has_many` that `RequiredHasOneBuilder` would not treat as required, is built inside a savepoint. If the child raises or is invalid, its writes and generated records are rolled back and the edge stays nil (or the collection stays empty). Required edges keep raising.
+- **Cycles stop at required edges.** A required cycle still raises `FactoryBakery::CyclicAssociationError`. An optional edge that would repeat its reflection path, or point at a class already being built (an optional self-reference such as `Status#quoted_status`), is left nil.
+- **HABTM plumbing is skipped.** `:all` never auto-builds a `has_and_belongs_to_many` or its anonymous `HABTM_...` join model. The join class can still be baked directly: its real join-table columns are filled, so `FactoryBakery.bake!(Post::HABTM_Tags)` sets both foreign keys.
+- **Unwired back-references are skipped.** A `has_many` / `has_one` with no verified inverse whose child has a required `belongs_to` back to the owner is skipped: the child cannot be wired to an unsaved owner, and the alternative is an "Owner must exist" failure.
+
 #### Polymorphic target discovery
 
 A required polymorphic `belongs_to` picks a concrete target when the mapper can discover one (ADR-0001 keeps every framework read in the ActiveRecord mapper; the plugin only sees the resulting classes):

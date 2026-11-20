@@ -25,8 +25,17 @@ module FactoryBakery
           entries_to_build(introspection, context).each_with_object({}) do |entry, values|
             next if suppressed?(entry, taken)
 
-            values[entry.name] = build_parent(klass, entry)
+            key, value = build_value(klass, entry)
+            values[key] = value
           end
+        end
+
+        def build_value(klass, entry)
+          parent = build_parent(klass, entry)
+          return [entry.name, parent] unless column_fk?(klass, entry)
+
+          persist_column_fk!(parent) if parent
+          [entry.foreign_keys.first, parent.respond_to?(:id) ? parent.id : nil]
         end
 
         # True for a collection on `klass` that points back to the class whose
@@ -68,12 +77,50 @@ module FactoryBakery
         # A polymorphic edge asks the mapper for candidate classes; an ordinary
         # one resolves its target directly. Both arrive as plain data.
         #
+        # :all shares the dependency graph: a completed object of exactly the
+        # target class is reused instead of built again (unless the edge is
+        # scoped or its foreign key is uniqueness-validated, where sharing
+        # would violate the constraint). An optional edge is built in a
+        # savepoint and discarded, nil, when its child raises or is invalid;
+        # a required edge keeps the old behaviour of surfacing the failure.
+        def build_parent(klass, entry)
+          completed = completed_parent(klass, entry)
+          return completed if completed
+
+          return build_optional_parent(klass, entry) if optional_edge?(entry)
+
+          build_required_parent(klass, entry)
+        end
+
+        def completed_parent(klass, entry)
+          return nil if entry.polymorphic
+          # A raw-FK-presence edge needs a real id on the owner, and a reused
+          # parent may still be unsaved. Build fresh so FkParentPersistence
+          # can insert it, exactly as it does without in-graph sharing.
+          return nil if entry.fk_presence
+          return nil unless ReuseResolver.strategy_for(nil) == :fresh
+          return nil if entry.scope
+          return nil if uniqueness_validated_fk?(klass, entry)
+
+          BuildContext.completed_object_of(entry.resolve_target)
+        end
+
+        def uniqueness_validated_fk?(klass, entry)
+          entry.foreign_keys.any? do |key|
+            FactoryBakery::MapperRegistry.uniqueness_validated?(klass, key)
+          end
+        end
+
+        def optional_edge?(entry)
+          Associations.mode == :all && !entry.required
+        end
+
         # A candidate that fails is discarded whole: its savepoint rolls back
         # any row its FK-presence parent inserted, and the generated-record
         # mark drops the records it built so `bake!` verifies only the graph
         # that was kept (otherwise a failed candidate's unsaved parent fails
         # the winning bake).
-        def build_parent(klass, entry)
+        def build_required_parent(klass, entry)
           discovered = entry.polymorphic ? polymorphic_targets(klass, entry) : direct_targets(entry)
           failures = []
           discovered.candidates.each do |target|
@@ -87,6 +134,55 @@ module FactoryBakery
           end
 
           raise_unresolved!(klass, entry, discovered, failures)
+        end
+
+        def build_optional_parent(klass, entry)
+          adapter = FactoryBakery::MapperRegistry.persistence_adapter(klass)
+          mark = BuildContext.generated_records.length
+          begin
+            if adapter.transactional?
+              adapter.transaction(klass) { optional_candidate(klass, entry) }
+            else
+              optional_candidate(klass, entry)
+            end
+          rescue StandardError
+            BuildContext.trim_generated_records!(mark)
+            nil
+          end
+        end
+
+        def optional_candidate(klass, entry)
+          parent = build_required_parent(klass, entry)
+          persist_column_fk!(parent) if column_fk?(klass, entry)
+          raise FactoryBakery::FallbackBuilder::DiscardAttempt if invalid_child?(parent)
+
+          parent
+        end
+
+        # A child whose validation raises cannot certify itself either, so it
+        # counts as invalid and the optional edge is dropped.
+        def invalid_child?(child)
+          return false unless child.respond_to?(:valid?)
+
+          !child.valid?
+        rescue StandardError
+          true
+        end
+
+        # Rails' anonymous HABTM join model declares `belongs_to :left_side`
+        # without a real foreign key. The join table's actual left column is
+        # the owner model's foreign key, exposed by the mapper as the entry's
+        # foreign key. Assign that column's id instead of the synthetic
+        # association writer (which does not exist on the join table).
+        def column_fk?(klass, entry)
+          klass.name&.start_with?('HABTM_') && entry.name == 'left_side'
+        end
+
+        def persist_column_fk!(parent)
+          return unless BuildContext.persisting?
+          return unless parent.respond_to?(:new_record?) && parent.new_record?
+
+          FactoryBakery::MapperRegistry.persistence_adapter(parent).save!(parent)
         end
 
         def attempt_candidate(klass, entry, target)
@@ -121,6 +217,8 @@ module FactoryBakery
 
           previous_path = reflection_path
           edge = "#{klass}##{entry.name}"
+          return nil if skip_optional_cycle?(previous_path, edge, target_class, entry)
+
           ensure_acyclic!(previous_path, edge)
 
           Fiber[REFLECTION_PATH_KEY] = previous_path + [edge]
@@ -129,6 +227,17 @@ module FactoryBakery
           end
         ensure
           Fiber[REFLECTION_PATH_KEY] = previous_path
+        end
+
+        # Only a required edge may close a cycle. An optional edge that would
+        # repeat its reflection path, or point at a class already being built
+        # (an optional self-reference such as Status#quoted_status), is
+        # skipped and stays nil instead of recursing.
+        def skip_optional_cycle?(path, edge, target_class, entry)
+          return false if entry.required
+          return false unless Associations.mode == :all
+
+          path.include?(edge) || BuildContext.current.path.include?(target_class)
         end
 
         # No candidates keeps the original actionable error, now naming the

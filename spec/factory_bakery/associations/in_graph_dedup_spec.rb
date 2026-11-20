@@ -57,12 +57,12 @@ RSpec.describe 'in-graph sharing under :reuse' do
       expect(first.user).not_to equal(second.user)
     end
 
-    it 'does not share under the default :fresh strategy' do
+    it 'shares a completed parent under the default :fresh strategy too (in-graph identity)' do
       _user, _shop, order = define_order_graph('DedupFresh')
 
       baked = FactoryBakery.bake(order)
 
-      expect(baked.user).not_to equal(baked.shop.user)
+      expect(baked.user).to equal(baked.shop.user)
     end
   end
 
@@ -85,7 +85,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
     end
 
     it 'does not share objects whose scalar overrides differ' do
-      person = define_model('DedupPerson', name: :string)
+      define_model('DedupPerson', name: :string)
       post = define_model('DedupPost', author_id: :integer, editor_id: :integer) do
         belongs_to :author, class_name: 'DedupPerson', optional: false
         belongs_to :editor, class_name: 'DedupPerson', optional: false
@@ -117,7 +117,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
     end
 
     it 'does not share objects matched under different association scopes' do
-      account = define_model('DedupScopedAccount', name: :string, active: :boolean)
+      define_model('DedupScopedAccount', name: :string, active: :boolean)
       profile = define_model('DedupScopedProfile', active_account_id: :integer, archived_account_id: :integer) do
         belongs_to :active_account, -> { where(active: true) },
                    class_name: 'DedupScopedAccount', optional: false
@@ -134,7 +134,7 @@ RSpec.describe 'in-graph sharing under :reuse' do
   describe 'guards' do
     it 'does not share an ancestor that is still being built' do
       user = define_model('DedupCycleUser', name: :string)
-      account = define_model('DedupCycleAccount', user_id: :integer) do
+      define_model('DedupCycleAccount', user_id: :integer) do
         belongs_to :user, class_name: 'DedupCycleUser', optional: false
       end
       user.class_eval do
