@@ -7,6 +7,31 @@
 require 'securerandom'
 require 'factory_bakery/attachments'
 
+# Deterministic OpenAI provider setup shared by all LLM models.
+# Bakes a fresh, valid LlmModel (open_ai, vision disabled) inside the current
+# bake graph. Avoids flaky random providers (bedrock/vertex) that require
+# region/project_id, and avoids vision / legacy-user validations.
+def smoke_llm_model
+  LlmModel.create!(
+    provider: LlmModel::OPEN_AI_PROVIDER_NAME,
+    name: "smoke_llm_#{SecureRandom.hex(4)}",
+    display_name: 'Smoke LLM',
+    tokenizer: 'DiscourseAi::Tokenizer::OpenAiTokenizer',
+    url: 'https://example.com/v1/chat/completions',
+    api_key: 'test-key',
+    max_prompt_tokens: 4096,
+    max_output_tokens: 1000,
+    input_cost: 0,
+    output_cost: 0,
+    cached_input_cost: 0,
+    provider_params: {},
+    ai_secret_id: nil,
+    user_id: nil,
+    vision_llm_model_id: nil,
+    vision_enabled: false,
+  )
+end
+
 # Discourse sets belongs_to_required_by_default = false, so UserEmail#user is
 # optional. Break the User -> primary_email -> UserEmail -> User cycle.
 FactoryBakery.define(UserEmail) do
@@ -324,12 +349,152 @@ FactoryBakery.define(LlmQuotaUsage) do
   end
 end
 
+# Deterministic open_ai LlmModel shared by all LLM credit models. Forces the
+# provider so random bedrock/vertex providers (which need region/project_id)
+# are never picked. Disables vision and legacy user association so "all" mode
+# (passes C/D) stays valid.
+FactoryBakery.define(LlmModel) do
+  provider { LlmModel::OPEN_AI_PROVIDER_NAME }
+  name { "smoke_llm_#{SecureRandom.hex(4)}" }
+  display_name { 'Smoke LLM' }
+  tokenizer { 'DiscourseAi::Tokenizer::OpenAiTokenizer' }
+  url { 'https://example.com/v1/chat/completions' }
+  api_key { 'test-key' }
+  max_prompt_tokens { 4096 }
+  max_output_tokens { 1000 }
+  input_cost { 0 }
+  output_cost { 0 }
+  cached_input_cost { 0 }
+  provider_params { {} }
+  ai_secret_id { nil }
+  user_id { nil }
+  vision_llm_model_id { nil }
+  vision_enabled { false }
+end
+
+# LlmQuota belongs_to llm_model + group; needs at least one limit (max_tokens).
+FactoryBakery.define(LlmQuota) do
+  llm_model { smoke_llm_model }
+  group { Group.find(Group::AUTO_GROUPS[:everyone]) }
+  duration_seconds { 3600 }
+  max_tokens { 1000 }
+end
+
+# LlmCreditAllocation: llm_model unique, daily_credits > 0, soft_limit 0..100.
+FactoryBakery.define(LlmCreditAllocation) do
+  llm_model { smoke_llm_model }
+  daily_credits { 1000 }
+  soft_limit_percentage { 80 }
+end
+
+# LlmCreditDailyUsage: llm_model + usage_date + credits_used >= 0.
+FactoryBakery.define(LlmCreditDailyUsage) do
+  llm_model { smoke_llm_model }
+  usage_date { Date.current }
+  credits_used { 0 }
+end
+
+# LlmFeatureCreditCost: llm_model + feature_name unique per model, credits_per_token >= 0.
+FactoryBakery.define(LlmFeatureCreditCost) do
+  llm_model { smoke_llm_model }
+  feature_name { "smoke_feature_#{SecureRandom.hex(4)}" }
+  credits_per_token { 1 }
+end
+
+# EmbeddingDefinition: forces open_ai provider (avoids bedrock region/model_id
+# requirements) and a valid tokenizer. URL is required for non-bedrock providers.
+FactoryBakery.define(EmbeddingDefinition) do
+  provider { EmbeddingDefinition::OPEN_AI }
+  display_name { "smoke_embedding_#{SecureRandom.hex(4)}" }
+  tokenizer_class { 'DiscourseAi::Tokenizer::OpenAiTokenizer' }
+  dimensions { 1536 }
+  max_sequence_length { 512 }
+  url { 'https://api.openai.com/v1/embeddings' }
+  pg_function { '<=>' }
+  api_key { 'test-key' }
+end
+
+# SkippedEmailLog: pick a valid non-custom reason_type so custom_reason is not
+# required (and must be absent).
+FactoryBakery.define(SkippedEmailLog) do
+  email_type { 'user_email' }
+  to_address { "smoke_#{SecureRandom.hex(4)}@example.com" }
+  reason_type { SkippedEmailLog.reason_types[:exceeded_emails_limit] }
+  custom_reason { nil }
+end
+
+# ThemeSettingsMigration: needs a valid theme + theme_field (belongs_to, not
+# optional) and unique (theme_id, version) / unique theme_field_id.
+# Builds a minimal Theme directly to avoid heuristic-created child fields
+# that fail Theme#validate_theme_fields in "all" mode.
+FactoryBakery.define(ThemeSettingsMigration) do
+  theme do
+    t = Theme.new(name: "smoke_theme_#{SecureRandom.hex(4)}", user: Discourse.system_user, component: false)
+    t.save!(validate: false)
+    t
+  end
+  theme_field do
+    FactoryBakery.bake!(
+      ThemeField,
+      name: "smoke_field_#{SecureRandom.hex(4)}",
+      value: 'hello',
+      target_id: Theme.targets[:common],
+      type_id: ThemeField.types[:html],
+    )
+  end
+  version { 1 }
+  name { 'Smoke migration' }
+  diff { { additions: [], deletions: [] }.to_json }
+end
+
+# ThemeTranslationOverride: pin a valid translation_key/locale/value and a real
+# theme so check_interpolation_keys + capture_original_translation don't hit
+# invalid YAML in "all" mode (passes C/D).
+FactoryBakery.define(ThemeTranslationOverride) do
+  locale { 'en' }
+  translation_key { 'email_from' }
+  value { '%{user_name}' }
+  theme do
+    t = Theme.new(name: "smoke_theme_#{SecureRandom.hex(4)}", user: Discourse.system_user, component: false)
+    t.save!(validate: false)
+    t
+  end
+end
+
+# Permalink: exactly one of topic_id/post_id/category_id/tag_id/user_id/
+# external_url must be set. Use external_url and nil the rest (pass D failure).
+FactoryBakery.define(Permalink) do
+  url { "https://example.com/smoke-#{SecureRandom.hex(8)}" }
+  external_url { "/t/smoke-topic-#{SecureRandom.hex(4)}" }
+  topic_id { nil }
+  post_id { nil }
+  category_id { nil }
+  tag_id { nil }
+  user_id { nil }
+end
+
+# EmbeddableHostTag: unique (embeddable_host_id, tag_id). Fresh embeddable_host
+# + tag per bake avoids cross-bake category_tag_stats collisions (pass C) and
+# tag synonyms errors (pass D). topic_tags is empty so no CategoryTagStat rows
+# are created via TopicTag callbacks; target_tag_id is nil so the
+# target_tag_validator (synonyms) never fires.
+FactoryBakery.define(EmbeddableHostTag) do
+  embeddable_host { FactoryBakery.bake!(EmbeddableHost) }
+  tag { FactoryBakery.bake!(Tag, name: "smoke_tag_#{SecureRandom.hex(4)}", topic_tags: [], target_tag_id: nil) }
+end
+
 # ensure_can_comment requires an enabled Post Voting topic and a top-level post.
+# SiteSetting is restored so it does not leak across bakes.
 FactoryBakery.define(PostVotingComment) do
   post do
+    previous = SiteSetting.post_voting_enabled
     SiteSetting.post_voting_enabled = true
-    topic = Fabricate(:topic, subtype: Topic::POST_VOTING_SUBTYPE)
-    Fabricate(:post, topic: topic, user: topic.user)
+    begin
+      topic = Fabricate(:topic, subtype: Topic::POST_VOTING_SUBTYPE)
+      Fabricate(:post, topic: topic, user: topic.user)
+    ensure
+      SiteSetting.post_voting_enabled = previous
+    end
   end
   user { Discourse.system_user }
   raw { 'This comment explains why the proposed answer works.' }
@@ -359,12 +524,13 @@ FactoryBakery.define(PostReply) do
 end
 
 # The sharing API requires a Topic and the model validates nonempty context.
+# State is scoped to one bake (fresh post each time) so rolled-back post IDs
+# are never reused across passes.
 FactoryBakery.define(SharedAiConversation) do
-  post = nil
-  target { (post ||= Fabricate(:post)).topic }
-  user { (post ||= Fabricate(:post)).user }
+  target { Fabricate(:post).topic }
+  user { Discourse.system_user }
   context do
-    post ||= Fabricate(:post)
+    post = Fabricate(:post)
     [{ 'id' => post.id, 'user_id' => post.user_id, 'created_at' => post.created_at.iso8601, 'cooked' => post.cooked }]
   end
 end
