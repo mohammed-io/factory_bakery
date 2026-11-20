@@ -76,9 +76,12 @@ module FactoryBakery
 
     # The rebuild, with the opt-in scoped on. It answers a lean record that was
     # already probed and found invalid, so it is returned as built, exactly as
-    # before.
+    # before. The opt-in applies only to the record being rebuilt: a nested
+    # bake (a parent built by a declaration or association) is a separate
+    # record with its own fallback and stays lean, so the rebuild cannot turn
+    # a nested parent into a fuller record that fails its own validation.
     def rebuild(model_klass, definition, overrides, traits, adapter)
-      FillOptional.with(true) do
+      FillOptional.with_rebuild(BuildContext.current.depth) do
         adapter.transaction(model_klass) do
           build_object(model_klass, definition, overrides, traits, true).first
         end
@@ -117,7 +120,9 @@ module FactoryBakery
       return verify_optional_fills!(attempt, probe) unless probe == :invalid
 
       BuildContext.trim_generated_records!(mark)
-      FillOptional.with(true) { build_object(model_klass, definition, overrides, traits, true).first }
+      FillOptional.with_rebuild(BuildContext.current.depth) do
+        build_object(model_klass, definition, overrides, traits, true).first
+      end
     end
 
     # :invalid when the lean record must be rebuilt, :valid when the probe

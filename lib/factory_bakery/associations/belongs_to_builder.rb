@@ -83,9 +83,12 @@ module FactoryBakery
         # :all shares the dependency graph: a completed object of exactly the
         # target class is reused instead of built again (unless the edge is
         # scoped or its foreign key is uniqueness-validated, where sharing
-        # would violate the constraint). An optional edge is built in a
-        # savepoint and discarded, nil, when its child raises or is invalid;
-        # a required edge keeps the old behaviour of surfacing the failure.
+        # would violate the constraint). Under `bake!` only a persisted object
+        # is shared, because an unsaved parent in a graph about to be inserted
+        # can close a cycle through Rails' autosave. An optional edge is built
+        # in a savepoint and discarded, nil, when its child raises or is
+        # invalid; a required edge keeps the old behaviour of surfacing the
+        # failure.
         def build_parent(klass, entry, siblings = [])
           completed = completed_parent(klass, entry, siblings)
           return completed if completed
@@ -106,10 +109,15 @@ module FactoryBakery
 
         # A raw-FK-presence edge needs a real id on the owner, so only an
         # already persisted object can be shared there; an unsaved one is
-        # left alone and the edge builds (and inserts) its own parent.
+        # left alone and the edge builds (and inserts) its own parent. Under
+        # `bake!` (`BuildContext.persisting?`) the same rule holds for every
+        # edge: sharing an unsaved parent across a graph that is about to be
+        # inserted makes Rails' autosave walk a cycle (a new parent whose
+        # collection reaches the child being saved) and can insert the child
+        # with a nil foreign key. A persisted object is safe to share.
         def shareable(object, entry)
           return nil unless object
-          return object unless entry.fk_presence
+          return object unless entry.fk_presence || BuildContext.persisting?
 
           object.respond_to?(:persisted?) && object.persisted? ? object : nil
         end

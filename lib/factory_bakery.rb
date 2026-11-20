@@ -102,7 +102,7 @@ module FactoryBakery
     end
 
     def bake(target, *traits, fill_optional: nil, **overrides)
-      mode = normalize_fill_optional(fill_optional)
+      mode = resolve_fill_optional(fill_optional)
       FillOptional.with(mode) do
         model_klass, definition = BakeryBuilder.resolve(target)
         BuildContext.push(model_klass) do
@@ -120,7 +120,7 @@ module FactoryBakery
     # persistence check are performed through the mapper's persistence adapter;
     # a target no mapper claims keeps plain build-and-save semantics.
     def bake!(target, *traits, fill_optional: nil, **overrides)
-      mode = normalize_fill_optional(fill_optional)
+      mode = resolve_fill_optional(fill_optional)
       # FK-column-validated edges insert their parent while the graph is being
       # built, so the flag must cover graph building too, not just the save.
       BuildContext.with_persistence do
@@ -156,6 +156,17 @@ module FactoryBakery
       return value.map(&:to_s) if value.is_a?(Array)
 
       raise ArgumentError, "fill_optional must be true, false, or an array of attribute names, got #{value.inspect}"
+    end
+
+    # The verified fallback's rebuild fills optional columns for the one record
+    # it rebuilds. A nested bake inherits that opt-in by default, so it is
+    # forced back to lean unless the caller named a value explicitly.
+    def resolve_fill_optional(fill_optional)
+      mode = normalize_fill_optional(fill_optional)
+      return mode unless fill_optional.nil?
+      return mode unless FillOptional.nested_in_rebuild?(BuildContext.current.depth)
+
+      false
     end
 
     def build_with_fallback(model_klass, definition, overrides, traits, mode)

@@ -204,14 +204,41 @@ module FactoryBakery
       end
 
       # Runs the real validator against a throwaway copy of the record so its
-      # errors are not mixed into the object the caller receives.
+      # errors are not mixed into the object the caller receives. A column
+      # protected only by a single-column UNIQUE index has no validator, so the
+      # database is asked directly for it: such an index is just as binding as
+      # a `validates ... uniqueness:` rule.
       def uniqueness_check(record, attr_name, value)
-        uniqueness_validated?(record.class, attr_name) &&
-          uniqueness_validators_for(record.class, attr_name).any? do |validator|
-            probe = build_probe(record, attr_name, value)
-            validator.validate_each(probe, attr_name, value)
-            taken_error?(probe.errors, attr_name)
-          end
+        return false unless uniqueness_validated?(record.class, attr_name)
+
+        validators = uniqueness_validators_for(record.class, attr_name)
+        return unique_index_taken?(record, attr_name, value) if validators.empty?
+
+        validators.any? do |validator|
+          probe = build_probe(record, attr_name, value)
+          validator.validate_each(probe, attr_name, value)
+          taken_error?(probe.errors, attr_name)
+        end
+      end
+
+      # Does the database already hold `value` in a unique-indexed column? The
+      # record's own class scopes the query like the index's table (default
+      # scope and STI included); a persisted record never collides with itself.
+      def unique_index_taken?(record, attr_name, value)
+        klass = record.class
+        return false if value.nil?
+        return false unless klass.respond_to?(:where)
+
+        # `unscoped` matches the database index (and Rails' own uniqueness
+        # validator) instead of a default scope that could hide a row.
+        scope = klass.respond_to?(:unscoped) ? klass.unscoped : klass
+        scope = scope.where(attr_name => value)
+        if record.respond_to?(:persisted?) && record.persisted? && klass.primary_key
+          scope = scope.where.not(klass.primary_key => record.public_send(klass.primary_key))
+        end
+        scope.exists?
+      rescue StandardError
+        false
       end
 
       # Human-readable validator descriptions for exhaustion errors.
@@ -338,7 +365,26 @@ module FactoryBakery
       def virtual_attribute_names(klass)
         excluded = virtual_exclusions(klass)
         validator_attribute_names(klass).reject do |name|
-          excluded.include?(name) || !klass.public_method_defined?("#{name}=")
+          excluded.include?(name) || !(settable?(klass, name) || lazily_definable?(klass, name))
+        end
+      end
+
+      def settable?(klass, name)
+        klass.public_method_defined?("#{name}=")
+      end
+
+      # Rails' AcceptanceValidator defines the attribute accessors lazily, the
+      # first time the class is validated (its `LazilyDefineAttributes` module).
+      # Before that first validation the writer does not exist, so a
+      # validator-declared acceptance attribute would be missing from the
+      # universe and never filled. The builder assigns through `respond_to?`,
+      # which triggers the definition, so the name is safe to include.
+      def lazily_definable?(klass, name)
+        return false unless defined?(::ActiveModel::Validations::AcceptanceValidator)
+        return false unless klass.respond_to?(:validators_on)
+
+        klass.validators_on(name).any? do |validator|
+          validator.is_a?(::ActiveModel::Validations::AcceptanceValidator)
         end
       end
 
