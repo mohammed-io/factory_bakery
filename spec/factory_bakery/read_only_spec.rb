@@ -221,4 +221,81 @@ RSpec.describe 'read-only bake targets' do
       expect(child.count).to eq(1)
     end
   end
+
+  # A belongs_to whose requirement is the association's presence validator
+  # (`optional: false`) rather than a raw-FK presence check has a nil FK when
+  # its parent is unsaved, so `bake` used to be fine with it. Under `bake!`
+  # that unsaved parent would be autosaved by the root save!, which fails on a
+  # read-only view: the parent must adopt an existing row instead.
+  describe 'read-only parents on association-presence edges' do
+    def define_view_and_owner(prefix)
+      view = define_model("#{prefix}View", name: { type: :string, null: false }) do
+        validates :name, presence: true
+        define_method(:readonly?) { true }
+      end
+      owner = define_model("#{prefix}Owner", name: :string, view_id: :integer) do
+        belongs_to :view, class_name: "#{prefix}View", optional: false
+      end
+      [view, owner]
+    end
+
+    def insert_view_row(view, name)
+      view.insert_all([{ name: name }])
+      view.first
+    end
+
+    # Statements that read or write the table's own rows. Schema introspection
+    # (`PRAGMA table_xinfo`, sqlite_master lookups) names the table in passing
+    # but never touches its rows, so it is deliberately not counted.
+    def statements_on(table)
+      sqls = []
+      pattern = /(?:from|into|update)\s+["`]?#{Regexp.escape(table)}["`]?/i
+      subscriber = ActiveSupport::Notifications.subscribe('sql.active_record') do |_name, _start, _finish, _id, payload|
+        sql = payload[:sql].to_s
+        sqls << sql if sql.match?(pattern)
+      end
+      yield
+      sqls
+    ensure
+      ActiveSupport::Notifications.unsubscribe(subscriber)
+    end
+
+    it 'bake! adopts the existing view row and inserts nothing into the view' do
+      view, owner = define_view_and_owner('ViewAssocHit')
+      existing = insert_view_row(view, 'existing')
+
+      sqls = statements_on(view.table_name) { @baked = FactoryBakery.bake!(owner) }
+
+      expect(@baked.view).to eq(existing)
+      expect(@baked.view_id).to eq(existing.id)
+      expect(sqls.grep(/\AINSERT/i)).to be_empty
+      expect(view.count).to eq(1)
+      expect(owner.count).to eq(1)
+    end
+
+    it 'bake! raises ReadOnlyTargetError, never ReadOnlyRecord, when the view is empty' do
+      _view, owner = define_view_and_owner('ViewAssocEmpty')
+
+      # A raw ActiveRecord::ReadOnlyRecord here would fail this expectation.
+      expect { FactoryBakery.bake!(owner) }
+        .to raise_error(FactoryBakery::ReadOnlyTargetError,
+                        /ViewAssocEmptyOwner#view -> ViewAssocEmptyView is read-only/)
+
+      expect(owner.count).to eq(0)
+    end
+
+    it 'bake leaves the parent unsaved and populated without reading the view' do
+      view, owner = define_view_and_owner('ViewAssocPlain')
+
+      sqls = statements_on(view.table_name) { @baked = FactoryBakery.bake(owner) }
+
+      expect(@baked.view).to be_a(view)
+      expect(@baked.view).to be_new_record
+      expect(@baked.view.name).to be_a(String)
+      expect(@baked.view.name).not_to be_empty
+      expect(@baked.view_id).to be_nil
+      expect(sqls).to be_empty
+      expect(view.count).to eq(0)
+    end
+  end
 end

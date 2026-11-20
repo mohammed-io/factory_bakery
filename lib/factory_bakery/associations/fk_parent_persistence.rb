@@ -17,13 +17,17 @@ module FactoryBakery
     # A read-only parent (a model whose `readonly?` is true, e.g. a database
     # view) can never be inserted. The edge adopts an existing row of exactly
     # that class when the table has one; otherwise the parent stays unsaved and
-    # no write is attempted. Under `bake!` the read-only guard then fails the
-    # bake with `ReadOnlyTargetError`; under `bake` the caller gets the
-    # populated, unsaved parent.
+    # no write is attempted. Under `bake!` that holds for every belongs_to
+    # parent, not just FK-presence edges: a read-only parent the root `save!`
+    # would autosave is replaced by an existing row, so the read-only guard
+    # sees a persisted record (or fails the bake with `ReadOnlyTargetError`
+    # when the table has no row). Under plain `bake` a read-only parent on a
+    # non-FK edge stays unsaved and populated, and no database read happens.
     #
-    # Association-presence edges are deliberately untouched: an unsaved parent
-    # satisfies `validates :user, presence: true`, so they stay database-free
-    # under `bake`. Polymorphic edges keep their existing behavior too.
+    # Association-presence edges are otherwise deliberately untouched: an
+    # unsaved parent satisfies `validates :user, presence: true`, so they stay
+    # database-free under `bake`. Polymorphic edges keep their existing
+    # behavior too.
     module FkParentPersistence
       class << self
         def required?(entry)
@@ -31,19 +35,36 @@ module FactoryBakery
         end
 
         # Returns the parent that should be assigned to the owner: the object
-        # it was given, or the existing row a read-only parent adopts.
-        def persist!(parent, entry)
-          return parent unless required?(entry)
-          return parent unless parent.respond_to?(:new_record?) && parent.new_record?
+        # it was given, the row it saved, or the existing row a read-only
+        # parent adopted. `bake!` (`BuildContext.persisting?`) settles every
+        # read-only new parent so the root save! never autosaves one; plain
+        # `bake` only settles read-only parents on FK-presence edges, where
+        # the id is needed.
+        def settle(parent, entry)
+          return adopt(parent) if read_only_new?(parent, entry)
 
-          return adopt(parent) if FactoryBakery::MapperRegistry.read_only?(parent)
+          persist_fk!(parent, entry)
+        end
+
+        private
+
+        def read_only_new?(parent, entry)
+          new_record?(parent) &&
+            FactoryBakery::MapperRegistry.read_only?(parent) &&
+            (required?(entry) || BuildContext.persisting?)
+        end
+
+        def persist_fk!(parent, entry)
+          return parent unless required?(entry) && new_record?(parent)
 
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(parent)
           adapter.save!(parent)
           parent
         end
 
-        private
+        def new_record?(parent)
+          parent.respond_to?(:new_record?) && parent.new_record?
+        end
 
         # A read-only parent is never saved: an existing row of exactly that
         # class is adopted so the FK points somewhere real, and an empty table
