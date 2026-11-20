@@ -327,4 +327,18 @@ RSpec.describe FactoryBakery::AttributeFillers::StringFiller do
       expect(value).not_to be_empty
     end
   end
+
+  describe 'a required attribute whose format admits whitespace' do
+    let!(:Ad) do
+      define_model('Ad', name: :string) do
+        validates :name, presence: true, format: { with: /\A[a\s]*\z/ }
+      end
+    end
+
+    it 'never generates a blank value' do
+      values = Array.new(60) { described_class.new(Ad, :name).call }
+
+      expect(values).to all(match(/[^[:space:]]/))
+    end
+  end
 end

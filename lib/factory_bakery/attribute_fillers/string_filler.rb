@@ -138,8 +138,14 @@ module FactoryBakery
         adjust_length(value, lengths)
       end
 
+      # A format that admits whitespace (`/\A[[:alnum:]\s]*\z/`) can yield an
+      # all-blank candidate, which a presence validator rejects.
+      BLANK = /\A[[:space:]]*\z/
+      private_constant :BLANK
+
       def compliant?(value, context, lengths)
         return false if value.nil?
+        return false if must_be_present? && BLANK.match?(value)
         return false unless matches_with_regexes?(value)
         return false if matches_without_regexes?(value)
         return false if forbidden_values?(value, context)
