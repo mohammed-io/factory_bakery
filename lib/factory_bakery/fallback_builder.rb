@@ -59,6 +59,7 @@ module FactoryBakery
     # them.
     def attempt_in_savepoint(model_klass, definition, overrides, traits, adapter)
       mark = BuildContext.generated_records.length
+      taken = BuildContext.unique_values
       attempt = nil
       probe = nil
       errors = []
@@ -69,6 +70,11 @@ module FactoryBakery
           errors = missing_attributes(attempt.first) if probe == :invalid
           if probe == :invalid
             BuildContext.trim_generated_records!(mark)
+            # The discarded attempt's unique values are free again, so the
+            # rebuild can take them (a value that can only be one thing,
+            # like Discourse's Chat::NullUser#username, would otherwise
+            # collide with itself).
+            BuildContext.restore_unique_values(taken)
             raise DiscardAttempt
           end
         end

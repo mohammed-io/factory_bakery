@@ -282,6 +282,12 @@ module FactoryBakery
         Fiber[UNIQUE_VALUES_KEY] ||= {}
       end
 
+      # The registry is replaced, never mutated, so a snapshot taken before a
+      # discarded attempt restores exactly the values taken before it.
+      def restore_unique_values(snapshot)
+        Fiber[UNIQUE_VALUES_KEY] = snapshot
+      end
+
       # Records generated at or below `path_prefix`. This scopes a nested
       # `bake!` to its own subtree instead of failing on a sibling's unsaved
       # object that the root `bake!` will verify later.

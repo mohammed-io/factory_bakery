@@ -192,6 +192,19 @@ RSpec.describe 'required-only baking (issue #51)' do
       end
     end
 
+    it 'lets the rebuild reuse a unique value the discarded attempt took' do
+      # Discourse's Chat::NullUser: a username that can only ever be one value.
+      validator = credential_validator
+      model = define_model('FallbackUniqueCredential', code: :string, token: :string, secret: :string) do
+        validates :code, uniqueness: true, inclusion: { in: %w[only] }
+        validates_with validator
+      end
+
+      record = FactoryBakery.bake(model)
+
+      expect([record.code, record.valid?]).to eq(['only', true])
+    end
+
     it 'rebuilds with optional columns filled when a custom validator needs one' do
       validator = credential_validator
       model = define_model('FallbackCredential', token: :string, secret: :string) do
