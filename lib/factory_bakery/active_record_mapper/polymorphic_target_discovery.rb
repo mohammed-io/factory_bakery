@@ -143,9 +143,24 @@ module FactoryBakery
         end
 
         def order(candidates)
-          candidates.uniq.sort_by do |candidate|
+          canonical(candidates.uniq).sort_by do |candidate|
             [abstract?(candidate) ? 1 : 0, table_exists?(candidate) ? 0 : 1, candidate.name.to_s]
           end.freeze
+        end
+
+        # A stored type names one class. Subclasses that inherit an `as:` edge
+        # share their base's polymorphic_name, and a row of that type loads as
+        # the class the name resolves to, so that class alone is kept
+        # (Discourse's Chat::NullUser < User would otherwise sort first).
+        def canonical(candidates)
+          candidates.group_by { stored_type(_1) }.flat_map do |type, group|
+            named = group.select { |candidate| candidate.name == type }
+            named.empty? ? group : named
+          end
+        end
+
+        def stored_type(candidate)
+          candidate.respond_to?(:polymorphic_name) ? candidate.polymorphic_name : candidate.name
         end
 
         def abstract?(candidate)

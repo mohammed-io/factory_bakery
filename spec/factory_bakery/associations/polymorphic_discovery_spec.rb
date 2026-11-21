@@ -115,6 +115,21 @@ RSpec.describe 'FactoryBakery polymorphic association discovery' do
       expect(record).to be_valid
     end
 
+    it 'picks the base class over a subclass that only inherits its as: inverse' do
+      # Discourse's Chat::NullUser < User inherits User's `as:` edges, sorts
+      # first by name, and overrides username to a constant.
+      link = define_link('PolyInherited')
+      owner = define_model('PolyInheritedOwner', name: :string) do
+        has_many :links, as: :target, class_name: 'PolyInheritedLink'
+      end
+      null_owner = define_class('APolyInheritedNullOwner', owner)
+      stub_descendants(null_owner, owner)
+
+      record = FactoryBakery.bake(link)
+
+      expect([record.target.class, record.target_type]).to eq([owner, owner.polymorphic_name])
+    end
+
     it 'chooses deterministically among several inverse candidates' do
       channel = define_link('PolySeveral', :chatable, :chatable_type)
       zeta = define_model('PolyZetaOwner', name: :string) do
