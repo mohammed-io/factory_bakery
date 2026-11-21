@@ -6,6 +6,7 @@
 - `association :post, Post` names the target class positionally, same as `factory: Post`. Giving both raises.
 - `persist: true` bakes a `belongs_to` target with `bake!` before the owner is validated, even under plain `bake`, for validators that read the parent's id (FactoryBot's `strategy: :create` on an association). Refused on `has_one`/`has_many` and with a block.
 - The `persist:` and `strategy:` declaration errors (and the traits-with-`:reuse_non_unique` error) now name the owner's edge (`Post#comments`), where they used to name the target class.
+- Nested `bake!` checks records by build lineage, so `persist: true` works when another `belongs_to` on the same owner targets the same class and is still unsaved.
 
 ### Association strategies
 

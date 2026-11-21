@@ -141,7 +141,6 @@ end
 
 FactoryBakery.define(Invite) do
   association :user, persist: true
-  association :invited_by, persist: true   # persist the sibling too, see below
 end
 ```
 
@@ -150,7 +149,8 @@ Rules:
 - Refused on `has_one` / `has_many` (a child needs the owner's id): `persist: is only supported on belongs_to, but X#y is a has_many association`.
 - Refused with a block: `a block cannot be combined with persist:; call bake! inside the block`.
 - `persist:` must be `true` or `false`.
-- If two edges target the **same class**, persist both, or declare the second. Persisting only one raises `IncompletePersistenceError`, because the nested `bake!` also sees the other, unsaved sibling (observed with `Invite#user` + `#invited_by`). Declaring the sibling by block, or `invited_by { nil }`, also works.
+
+A nested `bake!` verifies the graph it builds. Two edges can target the same class while using different persistence options. In this example, plain `bake` can leave `invited_by` unsaved, and an enclosing `bake!` verifies both parents after it saves the invite.
 
 ### Owner block
 

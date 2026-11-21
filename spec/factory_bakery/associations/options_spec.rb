@@ -168,6 +168,87 @@ RSpec.describe 'association options' do
       expect(FactoryBakery.bake!(post).author).to be_persisted
     end
 
+    context 'when two belongs_to edges target the same model' do
+      def define_invite(user, **inviter_options)
+        define_model('AssocPersistSiblingInvite', user_id: :integer, invited_by_id: :integer) do
+          belongs_to :user, class_name: user.name, optional: false
+          belongs_to :invited_by, class_name: user.name, optional: false, **inviter_options
+        end
+      end
+
+      it 'persists only the declared parent under plain bake' do
+        user = define_model('AssocPersistSiblingUser', name: :string)
+        invite = define_invite(user)
+        FactoryBakery.define(invite) { association :user, persist: true }
+
+        record = FactoryBakery.bake(invite)
+
+        expect(record).to be_new_record
+        expect(record.user).to be_persisted
+        expect(record.invited_by).to be_new_record
+        expect(user.count).to eq(1)
+      end
+
+      it 'persists both parents under outer bake! when the declared reuse lookup misses' do
+        user = define_model('AssocPersistSiblingUser', name: :string)
+        invite = define_invite(user)
+        FactoryBakery.define(invite) { association :user, persist: true, strategy: :reuse_non_unique }
+
+        record = FactoryBakery.bake!(invite).reload
+
+        expect(user.ids).to match_array([record.user_id, record.invited_by_id])
+        expect(record.user_id).not_to eq(record.invited_by_id)
+      end
+
+      it 'reports a sibling skipped by autosave on the outer invite and rolls back both saves' do
+        user = define_model('AssocPersistSiblingUser', name: :string)
+        invite = define_invite(user, autosave: false)
+        FactoryBakery.define(invite) do
+          association :invited_by
+          association :user, persist: true
+        end
+
+        expect { FactoryBakery.bake!(invite) }
+          .to raise_error(FactoryBakery::IncompletePersistenceError, /assigned to invited_by/)
+        expect(invite.count).to eq(0)
+        expect(user.count).to eq(0)
+      end
+
+      it 'leaves a read-only sibling alone under plain bake' do
+        user = define_model('AssocPersistSiblingUser', name: :string) do
+          def readonly?
+            name == 'read-only'
+          end
+        end
+        invite = define_invite(user)
+        FactoryBakery.define(invite) do
+          association :invited_by, with: { name: 'read-only' }
+          association :user, persist: true, with: { name: 'writable' }
+        end
+
+        record = FactoryBakery.bake(invite)
+
+        expect(record.user).to be_persisted
+        expect(record.invited_by).to have_attributes(readonly?: true, new_record?: true)
+      end
+
+      it 'finishes deferred has_one work for both parents under outer bake! in :all mode' do
+        user = define_model('AssocPersistSiblingUser', name: :string) do
+          has_one :profile, class_name: 'AssocPersistSiblingProfile', inverse_of: :user
+        end
+        profile = define_model('AssocPersistSiblingProfile', user_id: :integer) do
+          belongs_to :user, class_name: user.name, optional: false
+        end
+        invite = define_invite(user)
+        FactoryBakery.define(invite) { association :user, persist: true }
+
+        record = FactoryBakery::Associations.with(mode: :all, max_depth: 3) { FactoryBakery.bake!(invite) }
+
+        expect(profile.pluck(:user_id)).to match_array([record.user_id, record.invited_by_id])
+        expect(record.user_id).not_to eq(record.invited_by_id)
+      end
+    end
+
     it 'combines with a positional class, traits and overrides' do
       author, post = define_id_reading_owner('AssocPersistOptions')
       FactoryBakery.define(author) { trait(:named) { name { 'trait' } } }

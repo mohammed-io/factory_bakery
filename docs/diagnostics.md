@@ -258,17 +258,13 @@ All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reu
 
 - **Message:** `bake! did not persist all generated records: Member (assigned to members). Persist the record explicitly via a declaration or override, or change the association's autosave/validate options.`
 - **Class:** `FactoryBakery::IncompletePersistenceError`. The bake is rolled back first.
-- **Cause:** After the root `save!`, a generated record is still new. Usual reasons: `autosave: false` on the association, `validate: false` on an invalid child, a parent Rails skipped because it was invalid, or the [sibling case](#nested-bake-sibling-of-same-class).
+- **Cause:** After the root `save!`, a generated record is still new. Usual reasons: `autosave: false` on the association, `validate: false` on an invalid child, or a parent Rails skipped because it was invalid.
 - **Where to look:** gem `PersistenceVerifier`. App: the association's `autosave` / `validate` options, and the named record's own validity.
 - **Fix:** Persist the record explicitly in a declaration or override, or fix the association options. Make the named record valid first: `FactoryBakery.bake(Member).valid?`.
 
 ### nested-bake-sibling-of-same-class
 
-- **Message:** the same as [#incomplete-persistence](#incomplete-persistence), naming a class that you thought was saved (for example `User`).
-- **Cause (observed, undocumented elsewhere):** A nested `bake!` (from `persist: true` or a declaration block) verifies every generated record under its own class path. If another edge of the same owner targets the **same class**, was auto-built and is still unsaved, the nested bake sees it and raises. Example: `Invite` with `association :user, persist: true` while `invited_by` (also a `User`) is auto-built unsaved.
-- **Where to look:** gem `BuildContext.records_under` (path-prefix match). App: two edges to one class.
-- **Fix:** Persist both edges (`association :invited_by, persist: true`), or declare the sibling (`invited_by { nil }`, or a block that returns a saved record). Verified in a scratch run on SQLite.
-- **If it still fails:** report it as a gem issue with the two edges.
+Fixed in Unreleased. Nested `bake!` used to raise `IncompletePersistenceError` when an unsaved sibling shared its class path. It now checks records by build lineage. For example, `association :user, persist: true` on `Invite` saves `user` while a plain `bake` can leave the auto-built `invited_by` unsaved. An enclosing `bake!` verifies the whole invite graph after it saves the invite.
 
 ### read-only-target
 
@@ -299,7 +295,7 @@ All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reu
 - **Message *(Rails)*:** `Validation failed: ...` or `errors.full_messages` such as `topic mismatch`, `inviter must differ`. A `bake` returns a record that is not `valid?`.
 - **Cause:** A custom validator reads a parent's **id**, not the object (`user_id == invited_by_id`, `topic_id == link_topic_id`, `comparison: { other_than: :invited_by_id }`). While parents are unsaved their ids are `nil`, so the comparison is `nil == nil`.
 - **Where to look:** App: the validator that mentions `*_id`.
-- **Fix:** `association :user, persist: true` on the parent(s) that must have an id. If two edges target the same class, persist both ([sibling case](#nested-bake-sibling-of-same-class)).
+- **Fix:** `association :user, persist: true` on the parent(s) that must have an id.
 - **Examples:**
   - Discourse `TopicLink`: `association :topic, persist: true, with: { user: Discourse.system_user }`
   - Discourse `Live::Invite`: `association :user, persist: true`

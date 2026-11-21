@@ -41,6 +41,7 @@ require_relative 'factory_bakery/attribute_fillers/confirmation_filler'
 require_relative 'factory_bakery/attribute_fillers/filler_selector'
 require_relative 'factory_bakery/uniqueness_enforcer'
 
+# Builds model instances from factory definitions and model validation rules.
 module FactoryBakery
   class Error < StandardError; end
   class NestingTooDeepError < Error; end
@@ -137,16 +138,7 @@ module FactoryBakery
             object = nil
             adapter.transaction(model_klass) do
               object = BuildContext.push(model_klass) do
-                mark = BuildContext.generated_records.length
-                record = build_with_fallback(model_klass, definition, overrides, traits, mode)
-                # Check before any save: a read-only target cannot be persisted,
-                # and a read-only parent generated anywhere in the graph fails
-                # the whole bake! inside this savepoint.
-                ensure_writable!(record, adapter)
-                adapter.save!(record)
-                BuildContext.finish_persistence!(mark, adapter)
-                verify_persistence!(record, adapter)
-                record
+                persist_build!(adapter) { build_with_fallback(model_klass, definition, overrides, traits, mode) }
               end
             end
             object
@@ -180,24 +172,21 @@ module FactoryBakery
       FallbackBuilder.new(mode).build(model_klass, definition, overrides, traits)
     end
 
-    def verify_persistence!(root, adapter)
-      entries = BuildContext.records_under(BuildContext.current.path)
-      PersistenceVerifier.new(root, entries, adapter).call
+    def persist_build!(adapter)
+      mark = BuildContext.generated_records.length
+      record = yield
+      ReadOnlyGuard.new(record, adapter, BuildContext.records_in_current_build).call
+      adapter.save!(record)
+      BuildContext.finish_persistence!(mark, adapter)
+      PersistenceVerifier.new(record, BuildContext.records_in_current_build, adapter).call
+      record
     end
 
     def bake_untransactional(target, adapter, overrides, traits, mode)
       object = bake(target, *traits, fill_optional: mode, **overrides)
-      ensure_writable!(object, adapter)
+      ReadOnlyGuard.new(object, adapter, []).call
       adapter.save!(object)
       object
-    end
-
-    # Read-only targets are fine for `bake` but cannot be written. The guard
-    # runs after graph building and before the root save, inside the savepoint
-    # that rolls back any parent the graph inserted earlier.
-    def ensure_writable!(root, adapter)
-      entries = BuildContext.records_under(BuildContext.current.path)
-      ReadOnlyGuard.new(root, adapter, entries).call
     end
   end
 end
