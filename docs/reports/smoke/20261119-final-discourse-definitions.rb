@@ -93,7 +93,7 @@ FactoryBakery.define(Chat::Message) do
   message { "FactoryBakery chat message #{SecureRandom.hex(6)}" }
   user { Discourse.system_user }
   last_editor { Discourse.system_user }
-  chat_channel { FactoryBakery.bake!(Chat::Channel) }
+  association :chat_channel
   in_reply_to { nil }
   thread { nil }
 end
@@ -243,7 +243,7 @@ end
 # ensure_supported_linkable_type and presence require a supported link target.
 FactoryBakery.define(SidebarSectionLink) do
   linkable { Category.find(SiteSetting.uncategorized_category_id) }
-  user { FactoryBakery.bake!(User) }
+  association :user
   sidebar_section { nil }
 end
 
@@ -251,6 +251,8 @@ end
 FactoryBakery.define(TopicLink) do
   url { "https://example.com/#{SecureRandom.hex(8)}" }
   domain { 'example.com' }
+  # bake! (not `association`): link_to_self compares topic_id, which an unsaved
+  # topic leaves nil.
   topic { FactoryBakery.bake!(Topic, user: Discourse.system_user) }
   user { Discourse.system_user }
   post { nil }
@@ -259,12 +261,13 @@ FactoryBakery.define(TopicLink) do
 end
 
 FactoryBakery.define(TopicLinkClick) do
-  topic_link { FactoryBakery.bake!(TopicLink) }
+  association :topic_link
   user { Discourse.system_user }
 end
 
 # The comparison validator requires distinct invitee and inviter IDs.
 FactoryBakery.define(Live::Invite) do
+  # bake!: the comparison validator reads user_id, nil for an unsaved user.
   user { FactoryBakery.bake!(User) }
   invited_by { Discourse.system_user }
 end
@@ -314,7 +317,7 @@ end
 # required_provider_params and valid_vision_configuration run when the quota's model saves.
 FactoryBakery.define(LlmQuotaUsage) do
   user { Discourse.system_user }
-  llm_quota { FactoryBakery.bake!(LlmQuota) }
+  association :llm_quota
 end
 
 # Deterministic open_ai LlmModel shared by all LLM credit models. Forces the
@@ -345,7 +348,7 @@ end
 
 # LlmQuota belongs_to llm_model + group; needs at least one limit (max_tokens).
 FactoryBakery.define(LlmQuota) do
-  llm_model { FactoryBakery.bake!(LlmModel) }
+  association :llm_model
   group { Group.find(Group::AUTO_GROUPS[:everyone]) }
   duration_seconds { 3600 }
   max_tokens { 1000 }
@@ -353,21 +356,21 @@ end
 
 # LlmCreditAllocation: llm_model unique, daily_credits > 0, soft_limit 0..100.
 FactoryBakery.define(LlmCreditAllocation) do
-  llm_model { FactoryBakery.bake!(LlmModel) }
+  association :llm_model
   daily_credits { 1000 }
   soft_limit_percentage { 80 }
 end
 
 # LlmCreditDailyUsage: llm_model + usage_date + credits_used >= 0.
 FactoryBakery.define(LlmCreditDailyUsage) do
-  llm_model { FactoryBakery.bake!(LlmModel) }
+  association :llm_model
   usage_date { Date.current }
   credits_used { 0 }
 end
 
 # LlmFeatureCreditCost: llm_model + feature_name unique per model, credits_per_token >= 0.
 FactoryBakery.define(LlmFeatureCreditCost) do
-  llm_model { FactoryBakery.bake!(LlmModel) }
+  association :llm_model
   feature_name { "smoke_feature_#{SecureRandom.hex(4)}" }
   credits_per_token { 1 }
 end
@@ -412,7 +415,7 @@ end
 # baked with FactoryBakery (see the Theme definition); the theme_field is baked
 # separately so the migration's theme_id/theme_field_id are independent.
 FactoryBakery.define(ThemeSettingsMigration) do
-  theme { FactoryBakery.bake!(Theme) }
+  association :theme
   theme_field do
     FactoryBakery.bake!(
       ThemeField,
@@ -459,8 +462,8 @@ end
 # are created via TopicTag callbacks; target_tag_id is nil so the
 # target_tag_validator (synonyms) never fires.
 FactoryBakery.define(EmbeddableHostTag) do
-  embeddable_host { FactoryBakery.bake!(EmbeddableHost) }
-  tag { FactoryBakery.bake!(Tag, name: "smoke_tag_#{SecureRandom.hex(4)}", topic_tags: [], target_tag_id: nil) }
+  association :embeddable_host
+  association :tag, name: "smoke_tag_#{SecureRandom.hex(4)}", topic_tags: [], target_tag_id: nil
 end
 
 # ensure_can_comment requires an enabled Post Voting topic and a top-level post.
@@ -494,6 +497,7 @@ end
 
 # valid_bookmarkable_type accepts a registered target; a reminder is optional.
 FactoryBakery.define(Bookmark) do
+  # bake!: polymorphic_columns_present needs bookmarkable_id, not just the object.
   bookmarkable { FactoryBakery.bake!(Topic) }
   user { Discourse.system_user }
   name { 'Smoke bookmark' }
@@ -502,6 +506,7 @@ end
 
 # ensure_same_topic requires both posts to share the same persisted topic.
 FactoryBakery.define(PostReply) do
+  # bake!: the reply below needs the post's persisted topic and post_number.
   association(:post) { FactoryBakery.bake!(Post) }
   association(:reply) do |post_reply|
     FactoryBakery.bake!(Post, topic: post_reply.post.topic, reply_to_post_number: post_reply.post.post_number)

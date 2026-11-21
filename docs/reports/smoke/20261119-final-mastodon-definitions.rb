@@ -46,7 +46,7 @@ FactoryBakery.define(Doorkeeper::Application) do
   # Polymorphic owner has a real DB FK to users; an Account breaks that FK.
   owner_id { nil }
   owner_type { nil }
-  owner { FactoryBakery.bake!(User) }
+  association :owner, User
   redirect_uri { 'https://example.com/callback' }
 end
 
@@ -125,6 +125,8 @@ end
 
 # PollVote checks the chosen option and forbids voting on your own poll.
 FactoryBakery.define(PollVote) do
+  # bake!: the own-poll check compares poll.account_id with account_id, which
+  # are both nil while the records are unsaved.
   poll { FactoryBakery.bake!(Poll) }
   account { FactoryBakery.bake!(Account) }
   choice { 0 }
