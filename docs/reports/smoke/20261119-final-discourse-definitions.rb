@@ -13,7 +13,7 @@ FactoryBakery.define(UserEmail) do
   user { nil }
 end
 
-FactoryBakery.define(User) do
+user_definition = proc do
   # Default username filler violates Discourse's alphanumeric/20-char validator.
   username { "fb_#{SecureRandom.hex(5)}" }
   password { 'SmokePass123!' }
@@ -24,55 +24,16 @@ FactoryBakery.define(User) do
   end
 end
 
-FactoryBakery.define(Category) do
-  # Regex \A(\h{6}|\h{3})\z defeats the synthesizer (it emits "hhhhhh").
-  color { 'FF0000' }
-  text_color { '00FF00' }
-  # emoji_exists validator requires a real Emoji row; nil skips it.
-  emoji { nil }
-end
-
-FactoryBakery.define(AccessControlList) do
-  target_id { nil }
-  target_type { nil }
-  association :target do |_owner|
-    FactoryBakery.bake(Group)
-  end
-end
-
-FactoryBakery.define(AiSummary) do
-  target_id { nil }
-  target_type { nil }
-  association :target do |_owner|
-    FactoryBakery.bake(Topic)
-  end
-end
-
-FactoryBakery.define(AiAgent) do
-  examples { [] }
-end
+FactoryBakery.define(User, &user_definition)
+# Definitions are keyed by exact class, so the Chat::NullUser subclass needs
+# the same block for its primary email.
+FactoryBakery.define(Chat::NullUser, &user_definition)
 
 FactoryBakery.define(AdPlugin::AdImpression) do
   # AdPlugin::AdType enum: house / adsense / dfp / amazon / carbon / adbutler.
   # Non-house ads must have a nil house-ad FK.
   ad_type { :adsense }
   ad_plugin_house_ad_id { nil }
-end
-
-FactoryBakery.define(AiMcpServer) do
-  url { 'https://discourse.org' }
-end
-
-FactoryBakery.define(Assignment) do
-  assigned_to_id { nil }
-  assigned_to_type { nil }
-  association :assigned_to do |_owner|
-    FactoryBakery.bake(User)
-  end
-end
-
-FactoryBakery.define(Blog::Path) do
-  path { "/smoke-path-#{SecureRandom.hex(6)}" }
 end
 
 FactoryBakery.define(Blog::Publication) do
@@ -236,10 +197,6 @@ FactoryBakery.define(Reviewable) do
   target { nil }
 end
 
-FactoryBakery.define(ReviewableNote) do
-  reviewable_id { FactoryBakery.bake!(Reviewable).id }
-end
-
 # ensure_supported_linkable_type and presence require a supported link target.
 FactoryBakery.define(SidebarSectionLink) do
   linkable { Category.find(SiteSetting.uncategorized_category_id) }
@@ -251,24 +208,18 @@ end
 FactoryBakery.define(TopicLink) do
   url { "https://example.com/#{SecureRandom.hex(8)}" }
   domain { 'example.com' }
-  # bake! (not `association`): link_to_self compares topic_id, which an unsaved
-  # topic leaves nil.
-  topic { FactoryBakery.bake!(Topic, user: Discourse.system_user) }
+  # persist: link_to_self compares topic_id, which an unsaved topic leaves nil.
+  association :topic, persist: true, with: { user: Discourse.system_user }
   user { Discourse.system_user }
   post { nil }
   link_topic { nil }
   link_post { nil }
 end
 
-FactoryBakery.define(TopicLinkClick) do
-  association :topic_link
-  user { Discourse.system_user }
-end
-
 # The comparison validator requires distinct invitee and inviter IDs.
 FactoryBakery.define(Live::Invite) do
-  # bake!: the comparison validator reads user_id, nil for an unsaved user.
-  user { FactoryBakery.bake!(User) }
+  # persist: the comparison validator reads user_id, nil for an unsaved user.
+  association :user, persist: true
   invited_by { Discourse.system_user }
 end
 
@@ -314,13 +265,9 @@ FactoryBakery.define(TranslationOverride) do
   value { '%{user_name}' }
 end
 
-# required_provider_params and valid_vision_configuration run when the quota's model saves.
-FactoryBakery.define(LlmQuotaUsage) do
-  user { Discourse.system_user }
-  association :llm_quota
-end
-
-# Deterministic open_ai LlmModel shared by all LLM credit models. Forces the
+# Deterministic open_ai LlmModel. The quota and credit models (LlmQuota,
+# LlmQuotaUsage, LlmCredit*, LlmFeatureCreditCost) need no definitions of their
+# own: the gem builds their llm_model through this one. Forces the
 # provider so random bedrock/vertex providers (which need region/project_id)
 # are never picked. Disables vision and legacy user association so "all" mode
 # (passes C/D) stays valid.
@@ -344,35 +291,6 @@ FactoryBakery.define(LlmModel) do
   user_id { nil }
   vision_llm_model_id { nil }
   vision_enabled { false }
-end
-
-# LlmQuota belongs_to llm_model + group; needs at least one limit (max_tokens).
-FactoryBakery.define(LlmQuota) do
-  association :llm_model
-  group { Group.find(Group::AUTO_GROUPS[:everyone]) }
-  duration_seconds { 3600 }
-  max_tokens { 1000 }
-end
-
-# LlmCreditAllocation: llm_model unique, daily_credits > 0, soft_limit 0..100.
-FactoryBakery.define(LlmCreditAllocation) do
-  association :llm_model
-  daily_credits { 1000 }
-  soft_limit_percentage { 80 }
-end
-
-# LlmCreditDailyUsage: llm_model + usage_date + credits_used >= 0.
-FactoryBakery.define(LlmCreditDailyUsage) do
-  association :llm_model
-  usage_date { Date.current }
-  credits_used { 0 }
-end
-
-# LlmFeatureCreditCost: llm_model + feature_name unique per model, credits_per_token >= 0.
-FactoryBakery.define(LlmFeatureCreditCost) do
-  association :llm_model
-  feature_name { "smoke_feature_#{SecureRandom.hex(4)}" }
-  credits_per_token { 1 }
 end
 
 # EmbeddingDefinition: forces open_ai provider (avoids bedrock region/model_id
@@ -463,7 +381,7 @@ end
 # target_tag_validator (synonyms) never fires.
 FactoryBakery.define(EmbeddableHostTag) do
   association :embeddable_host
-  association :tag, name: "smoke_tag_#{SecureRandom.hex(4)}", topic_tags: [], target_tag_id: nil
+  association :tag, with: { name: "smoke_tag_#{SecureRandom.hex(4)}", topic_tags: [], target_tag_id: nil }
 end
 
 # ensure_can_comment requires an enabled Post Voting topic and a top-level post.
@@ -497,8 +415,8 @@ end
 
 # valid_bookmarkable_type accepts a registered target; a reminder is optional.
 FactoryBakery.define(Bookmark) do
-  # bake!: polymorphic_columns_present needs bookmarkable_id, not just the object.
-  bookmarkable { FactoryBakery.bake!(Topic) }
+  # persist: polymorphic_columns_present needs bookmarkable_id, not just the object.
+  association :bookmarkable, Topic, persist: true
   user { Discourse.system_user }
   name { 'Smoke bookmark' }
   reminder_at { nil }
@@ -506,8 +424,8 @@ end
 
 # ensure_same_topic requires both posts to share the same persisted topic.
 FactoryBakery.define(PostReply) do
-  # bake!: the reply below needs the post's persisted topic and post_number.
-  association(:post) { FactoryBakery.bake!(Post) }
+  # persist: the reply below needs the post's persisted topic and post_number.
+  association :post, Post, persist: true
   association(:reply) do |post_reply|
     FactoryBakery.bake!(Post, topic: post_reply.post.topic, reply_to_post_number: post_reply.post.post_number)
   end

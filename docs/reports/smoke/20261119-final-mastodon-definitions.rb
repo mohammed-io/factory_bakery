@@ -125,10 +125,11 @@ end
 
 # PollVote checks the chosen option and forbids voting on your own poll.
 FactoryBakery.define(PollVote) do
-  # bake!: the own-poll check compares poll.account_id with account_id, which
-  # are both nil while the records are unsaved.
-  poll { FactoryBakery.bake!(Poll) }
-  account { FactoryBakery.bake!(Account) }
+  # persist: the own-poll check compares poll.account_id with account_id, which
+  # are both nil while the records are unsaved. strategy: :fresh, because
+  # reusing an account could pick the poll's own author.
+  association :poll, persist: true
+  association :account, persist: true, strategy: :fresh
   choice { 0 }
 end
 
