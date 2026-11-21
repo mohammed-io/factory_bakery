@@ -268,7 +268,7 @@ end
 # ensure_supported_linkable_type and presence require a supported link target.
 FactoryBakery.define(SidebarSectionLink) do
   linkable { Category.find(SiteSetting.uncategorized_category_id) }
-  user { Fabricate(:user) }
+  user { FactoryBakery.bake!(User) }
   sidebar_section { nil }
 end
 
@@ -276,7 +276,7 @@ end
 FactoryBakery.define(TopicLink) do
   url { "https://example.com/#{SecureRandom.hex(8)}" }
   domain { 'example.com' }
-  topic { Fabricate(:topic, user: Discourse.system_user) }
+  topic { FactoryBakery.bake!(Topic, user: Discourse.system_user) }
   user { Discourse.system_user }
   post { nil }
   link_topic { nil }
@@ -290,7 +290,7 @@ end
 
 # The comparison validator requires distinct invitee and inviter IDs.
 FactoryBakery.define(Live::Invite) do
-  user { Fabricate(:user) }
+  user { FactoryBakery.bake!(User) }
   invited_by { Discourse.system_user }
 end
 
@@ -423,16 +423,25 @@ FactoryBakery.define(SkippedEmailLog) do
   custom_reason { nil }
 end
 
+# A minimal valid theme: name + user, not a component. theme_fields are not
+# declared here; in "all" mode the heuristic auto-builds optional theme_field
+# children and any that are invalid are discarded before the theme saves, so
+# Theme#validate_theme_fields always passes.
+FactoryBakery.define(Theme) do
+  name { "smoke_theme_#{SecureRandom.hex(4)}" }
+  user { Discourse.system_user }
+  component { false }
+  # Under :all these relations get auto-built with a random parent/child
+  # theme that fails ThemeValidator ("Parent theme relation is invalid").
+  skip :parent_theme_relation, :child_theme_relation
+end
+
 # ThemeSettingsMigration: needs a valid theme + theme_field (belongs_to, not
-# optional) and unique (theme_id, version) / unique theme_field_id.
-# Builds a minimal Theme directly to avoid heuristic-created child fields
-# that fail Theme#validate_theme_fields in "all" mode.
+# optional) and unique (theme_id, version) / unique theme_field_id. The theme is
+# baked with FactoryBakery (see the Theme definition); the theme_field is baked
+# separately so the migration's theme_id/theme_field_id are independent.
 FactoryBakery.define(ThemeSettingsMigration) do
-  theme do
-    t = Theme.new(name: "smoke_theme_#{SecureRandom.hex(4)}", user: Discourse.system_user, component: false)
-    t.save!(validate: false)
-    t
-  end
+  theme { FactoryBakery.bake!(Theme) }
   theme_field do
     FactoryBakery.bake!(
       ThemeField,
@@ -456,7 +465,7 @@ FactoryBakery.define(ThemeTranslationOverride) do
   value { '%{user_name}' }
   theme do
     t = Theme.new(name: "smoke_theme_#{SecureRandom.hex(4)}", user: Discourse.system_user, component: false)
-    t.save!(validate: false)
+    t.save!
     t
   end
 end
@@ -484,17 +493,22 @@ FactoryBakery.define(EmbeddableHostTag) do
 end
 
 # ensure_can_comment requires an enabled Post Voting topic and a top-level post.
-# SiteSetting is restored so it does not leak across bakes.
+# post_voting_enabled must stay ON while the comment is validated:
+# Topic#is_post_voting? (read by ensure_can_comment) checks the setting live, and
+# Topic#ensure_regular_topic needs it while the question_answer topic bakes.
+# Restoring it in an `ensure` here would run *before* the comment's valid? and
+# break validation ("post_voting_not_enabled"). bake() does not persist the root
+# record, so there is no after-persist hook to restore in; the setting stays
+# enabled for the rest of the run. That is harmless: every other validation keyed
+# on post_voting_enabled (Topic#ensure_regular_topic, Post#ensure_only_replies)
+# additionally requires a question_answer subtype topic, which no other smoke
+# model creates.
 FactoryBakery.define(PostVotingComment) do
   post do
-    previous = SiteSetting.post_voting_enabled
     SiteSetting.post_voting_enabled = true
-    begin
-      topic = Fabricate(:topic, subtype: Topic::POST_VOTING_SUBTYPE)
-      Fabricate(:post, topic: topic, user: topic.user)
-    ensure
-      SiteSetting.post_voting_enabled = previous
-    end
+    user = FactoryBakery.bake!(User)
+    topic = FactoryBakery.bake!(Topic, subtype: Topic::POST_VOTING_SUBTYPE, user: user)
+    FactoryBakery.bake!(Post, topic: topic, user: user)
   end
   user { Discourse.system_user }
   raw { 'This comment explains why the proposed answer works.' }
@@ -502,14 +516,14 @@ end
 
 # ensure_valid_vote rejects self-votes; ensure_valid_comment allows only upvotes.
 FactoryBakery.define(PostVotingVote) do
-  votable { FactoryBakery.bake!(PostVotingComment, user: Fabricate(:user)) }
+  votable { FactoryBakery.bake!(PostVotingComment, user: FactoryBakery.bake!(User)) }
   user { Discourse.system_user }
   direction { 'up' }
 end
 
 # valid_bookmarkable_type accepts a registered target; a reminder is optional.
 FactoryBakery.define(Bookmark) do
-  bookmarkable { Fabricate(:topic) }
+  bookmarkable { FactoryBakery.bake!(Topic) }
   user { Discourse.system_user }
   name { 'Smoke bookmark' }
   reminder_at { nil }
@@ -517,9 +531,9 @@ end
 
 # ensure_same_topic requires both posts to share the same persisted topic.
 FactoryBakery.define(PostReply) do
-  association(:post) { Fabricate(:post) }
+  association(:post) { FactoryBakery.bake!(Post) }
   association(:reply) do |post_reply|
-    Fabricate(:post, topic: post_reply.post.topic, reply_to_post_number: post_reply.post.post_number)
+    FactoryBakery.bake!(Post, topic: post_reply.post.topic, reply_to_post_number: post_reply.post.post_number)
   end
 end
 
@@ -527,10 +541,10 @@ end
 # State is scoped to one bake (fresh post each time) so rolled-back post IDs
 # are never reused across passes.
 FactoryBakery.define(SharedAiConversation) do
-  target { Fabricate(:post).topic }
+  target { FactoryBakery.bake!(Post).topic }
   user { Discourse.system_user }
   context do
-    post = Fabricate(:post)
+    post = FactoryBakery.bake!(Post)
     [{ 'id' => post.id, 'user_id' => post.user_id, 'created_at' => post.created_at.iso8601, 'cooked' => post.cooked }]
   end
 end
