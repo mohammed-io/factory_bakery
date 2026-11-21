@@ -380,8 +380,11 @@ RSpec.describe 'association strategies' do
       end
       FactoryBakery.define(author) { association :posts, strategy: :reuse_non_unique }
 
-      expect { FactoryBakery.bake(author) }
-        .to raise_error(ArgumentError, /only supported on belongs_to/)
+      expect { FactoryBakery.bake(author) }.to raise_error(
+        ArgumentError,
+        'strategy: :reuse_non_unique is only supported on belongs_to, ' \
+        'but StrategCollAuthor#posts is a has_many association'
+      )
     end
 
     it 'rejects an explicit reuse_non_unique strategy on has_one' do
@@ -394,8 +397,11 @@ RSpec.describe 'association strategies' do
       end
       FactoryBakery.define(author) { association :profile, strategy: :reuse_non_unique }
 
-      expect { FactoryBakery.bake(author) }
-        .to raise_error(ArgumentError, /only supported on belongs_to/)
+      expect { FactoryBakery.bake(author) }.to raise_error(
+        ArgumentError,
+        'strategy: :reuse_non_unique is only supported on belongs_to, ' \
+        'but StrategOneAuthor#profile is a has_one association'
+      )
     end
 
     it 'silently ignores an inherited reuse_non_unique strategy on collections' do
@@ -419,8 +425,9 @@ RSpec.describe 'association strategies' do
       FactoryBakery.define(category) { trait(:special) { name { 'special' } } }
       FactoryBakery.define(post) { association :category, :special, strategy: :reuse_non_unique }
 
-      expect { FactoryBakery.bake(post) }
-        .to raise_error(ArgumentError, /traits cannot be combined with strategy: :reuse_non_unique/)
+      expect { FactoryBakery.bake(post) }.to raise_error(
+        ArgumentError, 'traits cannot be combined with strategy: :reuse_non_unique on StrategTraitsPost#category'
+      )
     end
 
     it 'rejects an encrypted attribute override with reuse_non_unique' do

@@ -23,7 +23,7 @@ No. Sequences: a counter local at the top of the file, or `SecureRandom`. Transi
 You can; it is ignored.
 
 **Where are definitions loaded from?**
-`spec/factories`, then `test/factories`, then `factories` (the first existing one), or `config.factory_bakery.definition_paths`. See [Rails](rails.md).
+`config.factory_bakery.definition_paths` when set. Otherwise `spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`. See [Rails](rails.md#configuration).
 
 ## Values
 

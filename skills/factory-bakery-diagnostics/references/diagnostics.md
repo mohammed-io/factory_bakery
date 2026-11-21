@@ -1,6 +1,6 @@
 # Diagnostics catalog
 
-Every failure kind a bake can produce, with the exact message, the cause, where to look, the smallest fix, and a real example when one exists. Anchors are stable. `bin/rails factory_bakery:doctor` links to them. <!-- verify against implementation -->
+Every failure kind a bake can produce, with the exact message, the cause, where to look, the smallest fix, and a real example when one exists. Anchors are stable. `bin/rails factory_bakery:doctor` prints a GitHub link to the matching anchor for each failing model.
 
 Conventions:
 
@@ -126,7 +126,7 @@ Never change the model, its validations or the schema to make baking easier. Tha
 
 - **Message:** `No plugin DSL call is in progress`
 - **Cause:** A plugin called `record_plugin_declaration` outside one of its own DSL methods, or from a method that is not defined directly on its `dsl_module`.
-- **Fix:** Define the method on the DSL module itself. See [Plugins](../../../docs/guide/plugins.md).
+- **Fix:** Define the method on the DSL module itself. See [Plugins](https://github.com/mohammed-io/factory_bakery/blob/main/docs/guide/plugins.md).
 
 ### nesting-too-deep
 
@@ -184,7 +184,7 @@ All are `ArgumentError` raised when the declaration is evaluated or at bake time
 | `count: must be a non-negative Integer` | | Use an Integer >= 0 |
 | `a block cannot be combined with count:, traits, factory: or with:` | | Use options, or a block |
 | `count: is only supported on collections, but Post#user is a belongs_to association` | `count:` on a singular edge | Remove `count:` |
-| `persist: is only supported on belongs_to, but Comment#comments is a has_many association` | A child cannot be saved before its owner | Remove `persist:`. (The prefix names the **target** class, not the owner. This is how the message is built today.) |
+| `persist: is only supported on belongs_to, but Post#comments is a has_many association` | A child cannot be saved before its owner. `Post#comments` names the owner and the edge | Remove `persist:` |
 
 ### polymorphic-factory-required
 
@@ -225,7 +225,7 @@ All are `ArgumentError` raised when the declaration is evaluated or at bake time
 
 ### reuse-strategy-errors
 
-All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reuse_resolver.rb`.
+All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reuse_resolver.rb`. `X#y` is the owner model and the edge it declares.
 
 | Message | Fix |
 | --- | --- |
@@ -501,7 +501,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 - **Symptom:** A `NoMethodError` or duplicate-definition error at boot from a definition file.
 - **Cause:** FactoryBakery and factory_bot both load `spec/factories`, so one evaluates the other's files. A syntax or constant error inside a file propagates, and files from earlier paths are already loaded.
-- **Fix:** Put FactoryBakery definitions in `spec/bakery` and set `config.factory_bakery.definition_paths`. See [Migrating](../../../docs/guide/migrating-from-factory-bot.md#step-2-set-up-side-by-side).
+- **Fix:** Put FactoryBakery definitions in `spec/bakery` and set `config.factory_bakery.definition_paths`. See [Migrating](https://github.com/mohammed-io/factory_bakery/blob/main/docs/guide/migrating-from-factory-bot.md#step-2-set-up-side-by-side).
 
 ---
 

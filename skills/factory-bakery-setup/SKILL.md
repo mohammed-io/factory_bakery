@@ -77,9 +77,9 @@ Choose the associations mode:
 | Situation | Directory |
 | --- | --- |
 | No factory library | `spec/factories` (RSpec) or `test/factories` (Minitest). Rails finds it with no config |
-| `factory_bot` present | `spec/bakery` or `test/bakery`, plus `config.factory_bakery.definition_paths = [...]` |
+| `factory_bot` present | `spec/bakery` or `test/bakery`, plus `config.factory_bakery.definition_paths = [...]`. Rails defaults to this directory when it detects factory_bot, but state it explicitly |
 
-Create the directory. Add an empty `.keep` if the project ignores empty directories.
+`bin/rails g factory_bakery:install` (step 7) creates the directory and, for factory_bot, writes the `definition_paths` line. By hand: create the directory, and add an empty `.keep` if the project ignores empty directories.
 
 ### 5. Plugins to require
 
@@ -107,17 +107,15 @@ end
 
 ### 7. Generators and rake tasks
 
-<!-- verify against implementation -->
-
 Details: [`references/generators-and-rake.md`](references/generators-and-rake.md).
 
 ```sh
 bin/rails g factory_bakery:install            # initializer + definitions directory
 bin/rails g factory_bakery:definition Post    # one stub
-bin/rails factory_bakery:definitions          # stubs for every model without a definition
+bin/rails factory_bakery:definitions          # stubs for every concrete model without a class-keyed definition
 ```
 
-If those commands do not exist in the installed gem version, create the directory and the files by hand. Do not invent options.
+Existing files are skipped, never overwritten, unless the user asks for `--force`. If those commands do not exist in the installed gem version (`bin/rails g --help` lists `factory_bakery:install`), create the directory and the files by hand. Do not invent options.
 
 ### 8. Verify
 
@@ -132,18 +130,18 @@ Run the checks in order. Stop at the first failure.
    ```sh
    bin/rails runner -e test 'p FactoryBakery.bake(User).valid?'
    ```
-3. Doctor (all models, rolled back): <!-- verify against implementation -->
+3. Doctor (all concrete models, rolled back):
    ```sh
-   bin/rails factory_bakery:doctor
+   RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor
    ```
-   Fix nothing yet. List the failing models with their anchors.
+   `NO_FAIL=1` keeps the exit status `0` so the report is not treated as a command failure. Without it, any failing model exits `1`. The last line is `N valid, M needs definition`. Fix nothing yet. List the failing models with their hint links.
 4. Run the project's existing test suite. It must pass exactly as before the setup. Setup alone changes no test.
 
 If the doctor lists failures, hand the list to the `factory-bakery-diagnostics` skill. Each failure usually needs one definition line.
 
 ### 9. Report
 
-Tell the user: what was added (gem, config, directory, helper include), which plugins are on, the doctor result (counts and the failing models), and the exact files changed. Offer next steps: generate stubs for failing models, or migrate from factory_bot.
+Tell the user: what was added (gem, config, directory, helper include), which plugins are on, the doctor result (counts and the failing models), and the exact files changed. Offer next steps: generate stubs for failing models (`WRITE=1 NO_FAIL=1 bin/rails factory_bakery:doctor`), or migrate from factory_bot.
 
 ## Troubleshooting
 

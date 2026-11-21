@@ -44,7 +44,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | Atomic `bake!` and rollback | One savepoint transaction |
 | Persistence verification | `IncompletePersistenceError` for a half-saved graph |
 | Cycle detection and depth backstop | `CyclicAssociationError`, `NestingTooDeepError` |
-| `FactoryBot.lint` | `factory_bakery:doctor` (when available) <!-- verify against implementation --> |
+| `FactoryBot.lint` | `factory_bakery:doctor` (Rails, gem version with the rake tasks). It checks models, not named factories or traits |
 
 ## Needs a definition
 

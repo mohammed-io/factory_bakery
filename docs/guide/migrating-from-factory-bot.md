@@ -60,7 +60,7 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | `create(:post, :published, title: 'x')` | `FactoryBakery.bake!(Post, :published, title: 'x')` |
 | `create(:post) { \|p\| ... }` | The block is **ignored**. See the limits below |
 | `use_parent_strategy` | The default: `bake` builds the whole graph unsaved, `bake!` saves it in one transaction |
-| `FactoryBot.lint` | `bin/rails factory_bakery:doctor` <!-- verify against implementation --> |
+| `FactoryBot.lint` | `bin/rails factory_bakery:doctor`. It checks models, not named factories or traits |
 | `include FactoryBot::Syntax::Methods` | `FactoryBakery::Methods` gives bare `bake` and `bake!`. The migration uses the fully qualified form so call sites stay explicit |
 | `FactoryBot.find_definitions` / `definition_file_paths` | `FactoryBakery.find_definitions` / `definition_paths` |
 
@@ -110,7 +110,13 @@ group :development, :test do
 end
 ```
 
-**Edge case: both gems load `spec/factories`.** factory_bot's documented default definition paths include `spec/factories` and `test/factories`, which are the same directories FactoryBakery loads by default. Each gem would evaluate the other's files, and factory_bot files loaded twice can raise a duplicate-definition error. (Stated from the two gems' documented defaults. The author did not run a collision.) Give FactoryBakery its own directory:
+**Edge case: both gems load `spec/factories`.** factory_bot's documented default definition paths include `spec/factories` and `test/factories`, which are the directories FactoryBakery loads when factory_bot is absent. Each gem would evaluate the other's files, and factory_bot files loaded twice can raise a duplicate-definition error. (Stated from the two gems' documented defaults. The author did not run a collision.) FactoryBakery avoids this when it detects factory_bot (the `FactoryBot` constant is defined, or a file under `spec/factories`, `test/factories` or `factories` starts a line with `FactoryBot.define`): its default directory becomes `spec/bakery` or `test/bakery`. Do not rely on detection. Give FactoryBakery its own directory explicitly. The install generator does both steps:
+
+```sh
+bin/rails g factory_bakery:install
+```
+
+It creates `spec/bakery` (`test/bakery` for Minitest) and an initializer with `config.definition_paths = ["spec/bakery"]`. By hand:
 
 ```ruby
 # config/application.rb
@@ -178,7 +184,7 @@ Per-construct rules:
 
 ## Step 4: Run doctor, then simplify (ask first)
 
-Run doctor on the translated models (see [Rails](rails.md)). <!-- verify against implementation -->
+Run doctor on the translated models (see [Rails](rails.md#rake-tasks)). Name the models, comma separated. With no names it checks every Active Record model in the app and exits `1` if any fails, including models your tests never bake.
 
 ```sh
 bin/rails 'factory_bakery:doctor[Post]'
@@ -243,7 +249,7 @@ The removed lines must be old factory calls. The added lines must be their paire
 
 - Full suite: same example count, 0 failures, no new pending or skipped.
 - `git diff` of test files: renames only.
-- `bin/rails factory_bakery:doctor` passes for every model your tests bake. <!-- verify against implementation -->
+- `bin/rails 'factory_bakery:doctor[Post,Comment]'` (every model your tests bake) exits `0` and ends with `N valid, 0 needs definition`. The unqualified `bin/rails factory_bakery:doctor` covers all models and may fail on models you never baked.
 - Optionally, run the suite twice with different seeds. FactoryBakery values are random, so a test that relied on a fixed fake value shows up.
 
 ## Step 7: Ask about the old factories. The last one-way door

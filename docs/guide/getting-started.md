@@ -120,7 +120,7 @@ With the generators and rake tasks (see [Rails](rails.md)):
 bin/rails factory_bakery:doctor
 ```
 
-This bakes every model and prints the ones that fail, with a hint for each. <!-- verify against implementation -->
+This bakes every concrete Active Record model, with `bake` and `valid?` and then with `bake!`, rolls everything back, and prints the models that fail with a hint and a link into the [diagnostics catalog](../diagnostics.md) for each. It ends with a count (`12 valid, 2 needs definition`) and exits with status `1` if any model failed. Add `NO_FAIL=1` to always exit `0`, or `WRITE=1` to write a stub definition for each failing model.
 
 ## Next
 

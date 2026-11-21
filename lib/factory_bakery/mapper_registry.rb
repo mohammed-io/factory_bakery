@@ -10,7 +10,7 @@ module FactoryBakery
   # validator-bearing plain objects; further frameworks plug in the same way.
   #
   # Mapper protocol (every method takes the target class unless noted):
-  #   supported?(klass)  => bool
+  #   supports?(klass)  => bool
   #       Can this mapper introspect the class at all?
   #   attribute_universe(klass) => [String]
   #       Attribute names heuristics may consider filling.

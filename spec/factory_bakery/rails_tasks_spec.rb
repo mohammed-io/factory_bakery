@@ -45,6 +45,11 @@ RSpec.describe 'FactoryBakery rake tasks' do
     File.join(@root, "test/factories/#{name}.rb")
   end
 
+  # The documentation link doctor prints for a diagnostics anchor, as a regexp source.
+  def link(anchor)
+    Regexp.escape("(https://github.com/mohammed-io/factory_bakery/blob/main/docs/diagnostics.md##{anchor})")
+  end
+
   def with_flag(name)
     previous = ENV[name]
     ENV[name] = '1'
@@ -106,7 +111,11 @@ RSpec.describe 'FactoryBakery rake tasks' do
         throw :abort
       end
     end
-    report = /RakeInvalid: Custom validation rejected the record.*custom-validation.*RakeNoSave:.*1 valid, 2 needs/m
+    report = Regexp.new(
+      ['RakeInvalid: Custom validation rejected the record', link('domain-rules-inference-cannot-know'),
+       'RakeNoSave:', '1 valid, 2 needs'].join('.*'),
+      Regexp::MULTILINE
+    )
 
     expect do
       expect { invoke(:doctor, failed_validation.name, good.name, failed_save.name) }
@@ -146,7 +155,7 @@ RSpec.describe 'FactoryBakery rake tasks' do
 
     with_flag('NO_FAIL') do
       expect { invoke(:doctor, unique.name, not_null.name) }.to output(
-        /RakeUnique:.*unique-value-collisions.*RakeNotNull:.*database-constraints/m
+        /RakeUnique:.*#{link('unique-value-collisions')}.*RakeNotNull:.*#{link('db-only-constraints')}/m
       ).to_stdout
     end
     expect([unique.count, not_null.count]).to eq([1, 0])
@@ -167,7 +176,8 @@ RSpec.describe 'FactoryBakery rake tasks' do
 
     with_flag('NO_FAIL') do
       expect { invoke(:doctor, missing.name, incomplete.name) }.to output(
-        /RakeMissingTarget:.*association-target.*RakeIncomplete:.*incomplete-persistence/m
+        /RakeMissingTarget:.*#{link('no-polymorphic-target-discovered')}
+          .*RakeIncomplete:.*#{link('incomplete-persistence')}/mx
       ).to_stdout
     end
     expect([parent.count, incomplete.count, missing.count]).to eq([0, 0, 0])

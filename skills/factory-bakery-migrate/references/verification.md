@@ -90,7 +90,7 @@ Not allowed (blockers):
 Remove lines **one factory at a time**, not in bulk.
 
 1. Remove the lines the user approved for one model.
-2. Run `factory_bakery:doctor[Model]`. <!-- verify against implementation --> It must pass.
+2. Run `bin/rails 'factory_bakery:doctor[Model]'`. It must exit `0` and print `1 valid, 0 needs definition`.
 3. Run the tests that bake that model (search for the class name, or run the whole suite).
 4. If a test now fails, **restore the line** and note the reason ("a test depends on this value" or "the model cannot bake without it").
 5. Repeat for the next model.
@@ -103,7 +103,7 @@ Run the whole suite at the end, twice with different seeds.
 | --- | --- |
 | Suite equals baseline | Full run, compare counts |
 | Test diff is renames only | The rename check, clean or fully reviewed |
-| Every baked model passes doctor | `bin/rails factory_bakery:doctor` <!-- verify against implementation --> |
+| Every baked model passes doctor | `bin/rails 'factory_bakery:doctor[Post,Comment]'` naming every model the tests bake. Exit `0`, `N valid, 0 needs definition`. The unnamed form checks all models and may fail on ones the tests never bake |
 | No remaining uses of the old library in tests | Search `spec`/`test` for `create(`, `build(`, `create_list`, `FactoryBot`, `Fabricate`, `.make` |
 | Blockers are written down | A list with file, line, reason |
 

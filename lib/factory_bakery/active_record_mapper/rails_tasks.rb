@@ -4,21 +4,25 @@ module FactoryBakery
   module ActiveRecordMapper
     # Selects application models, checks their bakes and writes definition stubs.
     class RailsTasks
+      DIAGNOSTICS_URL = 'https://github.com/mohammed-io/factory_bakery/blob/main/docs/diagnostics.md'
+
+      # Each entry maps a failure to a hint and a heading anchor in docs/diagnostics.md.
       HINTS = {
         /could not generate a unique value/i => [
           'Declare a value that varies across bakes.', 'unique-value-collisions'
         ],
         /no target discovered/i => [
-          'Declare the association and its target class.', 'association-target'
+          'Declare the association and its target class.', 'no-polymorphic-target-discovered'
         ],
         /IncompletePersistenceError/ => [
           'Check whether the associated records can be saved.', 'incomplete-persistence'
         ],
         /NotNullViolation|InvalidForeignKey/ => [
-          'Declare values or associations required by the database.', 'database-constraints'
+          'Declare values or associations required by the database.', 'db-only-constraints'
         ],
         // => [
-          'Check the model validations and callbacks, then declare any required overrides.', 'custom-validation'
+          'Check the model validations and callbacks, then declare any required overrides.',
+          'domain-rules-inference-cannot-know'
         ]
       }.freeze
 
@@ -112,7 +116,7 @@ module FactoryBakery
       def report_failure(model, error)
         message = "#{error.class}: #{error.message}"
         _, (hint, anchor) = HINTS.find { |pattern, _| pattern.match?(message) }
-        puts "#{model.name}: #{error.message.lines.first&.chomp} — #{hint} (docs/diagnostics.md##{anchor})"
+        puts "#{model.name}: #{error.message.lines.first&.chomp} — #{hint} (#{DIAGNOSTICS_URL}##{anchor})"
         write_definition(model, error.message) if ENV['WRITE'] == '1'
       end
     end

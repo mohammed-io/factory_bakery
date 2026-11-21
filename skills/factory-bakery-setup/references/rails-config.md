@@ -7,9 +7,10 @@ Source: `lib/factory_bakery/active_record_mapper/railtie.rb`, `lib/factory_baker
 At boot, in `config.after_initialize`, in this order:
 
 1. If `config.factory_bakery.associations` is set (not `nil`, not `false`): `require 'factory_bakery/associations'` and configure it.
-2. Set `FactoryBakery.definition_paths` and call `FactoryBakery.find_definitions`.
+2. If `config.factory_bakery.fill_optional` is not `nil`: assign it to `FactoryBakery.fill_optional`.
+3. Set `FactoryBakery.definition_paths` (from `definition_paths`, or the default directory) and call `FactoryBakery.find_definitions`.
 
-On boot and on every reload (`config.to_prepare`), the polymorphic-target cache is cleared.
+On boot and on every reload (`config.to_prepare`), the polymorphic-target cache is cleared. The Railtie also loads the generators (`generators do`) and the rake tasks (`rake_tasks do`).
 
 ## Options
 
@@ -22,8 +23,9 @@ config.factory_bakery.definition_paths = [Rails.root.join('spec/bakery').to_s]
 | Option | Values | Default |
 | --- | --- | --- |
 | `associations` | `nil`/`false` (off), `true`, a mode symbol, or a Hash with `mode`, `strategy`, `max_depth`, `default_count`, `eager_load` | unset (off) |
-| `definition_paths` | A String or an Array of absolute paths | unset: the first existing of `spec/factories`, `test/factories`, `factories` |
-| `generators` | `false` disables the model generator hook <!-- verify against implementation --> | `true` |
+| `fill_optional` | `true`, `false` or an Array of attribute names | unset (core default `false`) |
+| `definition_paths` | A String or an Array. Relative paths resolve against `Rails.root` | unset: `spec/bakery` (`test/bakery`) when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories` |
+| `generators` | `true`: the model generator hook always wins. `false`: the hook is off. `nil`: on unless another `fixture_replacement` is selected | unset (`nil`) |
 
 Unknown keys and invalid values raise `ArgumentError`:
 
@@ -64,7 +66,8 @@ The gem should be in `group :development, :test` or `group :test`. Definitions l
 
 ## Things to know
 
-- Only the first existing conventional directory is loaded.
+- Only one directory is loaded when `definition_paths` is unset (see the table). `definition_paths` itself may list several. Missing directories are skipped.
+- Generator behavior, `--skip-factory-bakery`, `--force`, and the rake tasks: [generators-and-rake.md](generators-and-rake.md).
 - A definition naming a model (`define(User)`) autoloads it during boot. A bare symbol (`define(:user)`) resolves at the first bake.
 - Class-keyed definitions go stale across code reloads. Tests do not reload.
-- If `factory_bot` is installed, set `definition_paths` to a separate directory. Both gems default to `spec/factories`.
+- If `factory_bot` is installed, set `definition_paths` to a separate directory (`bin/rails g factory_bakery:install` does it). Without factory_bot, both gems would default to `spec/factories`. With factory_bot detected, FactoryBakery defaults to `spec/bakery` or `test/bakery`, but state it explicitly.

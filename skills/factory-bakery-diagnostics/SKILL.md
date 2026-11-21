@@ -28,7 +28,15 @@ bin/rails runner -e test 'FactoryBakery.bake!(Model)'
 
 Run each model on its own, so one failure does not hide another. Wrap in a transaction you roll back if the app uses a real database.
 
-If `bin/rails factory_bakery:doctor[Model]` exists, run it first. It prints the error, a hint and an anchor. <!-- verify against implementation -->
+In a Rails app, run `bin/rails 'factory_bakery:doctor[Model]'` first (add `NO_FAIL=1` to keep the exit status `0`). It runs `bake` plus `valid?`, then `bake!`, rolled back, and prints for each failing model the first error line, a hint and a link to a catalog anchor. The link is the published `docs/diagnostics.md`, which is identical to this skill's catalog. Doctor only knows five anchors, so a failure it files under `domain-rules-inference-cannot-know` is a catch-all: classify it yourself in step 2.
+
+| Doctor links to | Triggered by |
+| --- | --- |
+| `unique-value-collisions` | `could not generate a unique value` |
+| `no-polymorphic-target-discovered` | `no target discovered` |
+| `incomplete-persistence` | `IncompletePersistenceError` |
+| `db-only-constraints` | `NotNullViolation`, `InvalidForeignKey` |
+| `domain-rules-inference-cannot-know` | any other error (custom validation, callbacks) |
 
 Record three facts: the exception class, the full message, and whether it fails under `bake`, `bake!` or both.
 
@@ -108,7 +116,7 @@ File it in the GitHub issues of `mohammed-io/factory_bakery` (see `docs/agents/i
 - `FactoryBakery.bake!(Model)` succeeds, twice in a row (catches uniqueness collisions).
 - With the associations plugin: also try `Associations.with(mode: :all) { FactoryBakery.bake(Model) }` if the project uses `:all`.
 - Run the affected tests. They must pass exactly as before.
-- Run `bin/rails factory_bakery:doctor[Model]` if available. <!-- verify against implementation -->
+- In Rails, run `bin/rails 'factory_bakery:doctor[Model]'`. It must print `1 valid, 0 needs definition` and exit `0`.
 
 ## Common first checks (fast path)
 

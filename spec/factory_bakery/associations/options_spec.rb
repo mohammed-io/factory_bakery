@@ -207,7 +207,10 @@ RSpec.describe 'association options' do
       author.has_many :posts, class_name: post.name, foreign_key: :author_id
       FactoryBakery.define(author) { association :posts, persist: true }
 
-      expect { FactoryBakery.bake(author) }.to raise_error(ArgumentError, /persist: is only supported on belongs_to/)
+      expect { FactoryBakery.bake(author) }.to raise_error(
+        ArgumentError,
+        'persist: is only supported on belongs_to, but AssocPersistCollectionAuthor#posts is a has_many association'
+      )
     end
 
     it 'rejects persist: combined with a block' do

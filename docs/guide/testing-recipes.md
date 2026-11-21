@@ -173,4 +173,4 @@ A bake is mostly method dispatch and small lookups.
 1. Try `FactoryBakery.bake(Model)` in a console, then `.valid?` and `.errors.full_messages`.
 2. Try `bake!` to see the persistence error.
 3. Look the message up in [diagnostics.md](../../skills/factory-bakery-diagnostics/references/diagnostics.md).
-4. Run `bin/rails factory_bakery:doctor[Model]` if available. <!-- verify against implementation -->
+4. In Rails, run `bin/rails 'factory_bakery:doctor[Model]'`. It repeats steps 1 and 2 for you, rolled back, and prints the first error with a link to the matching catalog entry.

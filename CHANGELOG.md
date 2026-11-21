@@ -5,6 +5,7 @@
 - **Breaking:** attribute overrides for an association target go in `with:` (`association :topic, with: { user: admin }`). Passing them beside the options raises `ArgumentError` naming the `with:` spelling. A target column named `count`, `strategy`, `factory` or `persist` can now be overridden.
 - `association :post, Post` names the target class positionally, same as `factory: Post`. Giving both raises.
 - `persist: true` bakes a `belongs_to` target with `bake!` before the owner is validated, even under plain `bake`, for validators that read the parent's id (FactoryBot's `strategy: :create` on an association). Refused on `has_one`/`has_many` and with a block.
+- The `persist:` and `strategy:` declaration errors (and the traits-with-`:reuse_non_unique` error) now name the owner's edge (`Post#comments`), where they used to name the target class.
 
 ### Association strategies
 

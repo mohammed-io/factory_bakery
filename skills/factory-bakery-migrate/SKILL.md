@@ -65,11 +65,12 @@ Classify each finding with the [capability matrix](references/capability-matrix.
 ### Phase 2. Side-by-side setup (two-way)
 
 1. Add the gem to the test groups of the Gemfile. Run `bundle install`.
-2. Give FactoryBakery its **own** definitions directory: `spec/bakery` (RSpec) or `test/bakery` (Minitest). **Edge case:** both gems default to `spec/factories` and `test/factories`, and would load each other's files. Set:
+2. Give FactoryBakery its **own** definitions directory: `spec/bakery` (RSpec) or `test/bakery` (Minitest). **Edge case:** without factory_bot both gems would default to `spec/factories` and `test/factories` and load each other's files. FactoryBakery switches its default to `spec/bakery`/`test/bakery` when it detects factory_bot, but do not rely on that. Run `bin/rails g factory_bakery:install` (creates the directory and an initializer with `config.definition_paths = ["spec/bakery"]`), or set by hand:
    ```ruby
    config.factory_bakery.definition_paths = [Rails.root.join('spec/bakery').to_s]
    config.factory_bakery.associations     = { mode: :required_only }
    ```
+   The initializer keeps `associations` commented. Turn it on there or in `config/application.rb`. The `bin/rails g model` hook only writes a FactoryBakery stub when no other `fixture_replacement` (such as `:factory_bot`) is selected. During the migration use `bin/rails g factory_bakery:definition Post` explicitly. Setting `config.factory_bakery.generators = true` would replace the factory_bot hook, so ask first.
 3. If `FactoryBot.use_parent_strategy = false` is set, note it: edges the tests expect saved need `persist: true`.
 4. Run the full suite. It must equal the baseline. Nothing uses FactoryBakery yet.
 5. Commit on the migration branch.
@@ -89,7 +90,7 @@ Run the suite after the batch. Commit.
 
 ### Phase 4. Doctor, then ask to simplify (two-way, with a question)
 
-1. Run `bin/rails factory_bakery:doctor` for the translated models. <!-- verify against implementation --> If the task is missing, run `FactoryBakery.bake(Model).valid?` and `bake!` per model in a rolled-back transaction.
+1. Run `bin/rails 'factory_bakery:doctor[Post,Comment]'` with the names of the translated models. It runs `bake` plus `valid?`, then `bake!`, rolled back, and exits `1` if any model fails (`NO_FAIL=1` to report only). With no names it checks every model, including ones your tests never bake. If the task is missing (an older gem), run `FactoryBakery.bake(Model).valid?` and `bake!` per model in a rolled-back transaction.
 2. For each factory, compare its lines to what inference produces (see [what inference covers](../../docs/guide/migrating-from-factory-bot.md#what-inference-covers)). Prepare the list of lines you would drop.
 3. **Ask the user** (use the agent's question tool when available). Present exactly these two options:
 

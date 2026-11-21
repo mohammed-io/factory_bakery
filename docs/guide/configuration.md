@@ -56,8 +56,9 @@ Restore defaults in tests: `FactoryBakery::Associations.reset_configuration!`. D
 | Setting | Default | Notes |
 | --- | --- | --- |
 | `config.factory_bakery.associations` | unset (core only) | `true`, a mode symbol, or a Hash of the plugin settings |
-| `config.factory_bakery.definition_paths` | unset (first existing of `spec/factories`, `test/factories`, `factories`) | A String or an Array of absolute paths |
-| `config.factory_bakery.generators` | `true` <!-- verify against implementation --> | `false` disables the model-generator hook |
+| `config.factory_bakery.fill_optional` | unset (core default, `false`) | `true`, `false` or an Array of attribute names. Assigned to `FactoryBakery.fill_optional` at boot |
+| `config.factory_bakery.definition_paths` | unset (`spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`) | A String or an Array. Relative paths resolve against `Rails.root` |
+| `config.factory_bakery.generators` | unset (the model-generator hook is on unless another `fixture_replacement` is selected) | `true` always selects FactoryBakery. `false` turns the hook off. See [Rails](rails.md#model-generator-hook) |
 
 Details and generators: [Rails](rails.md).
 
@@ -75,7 +76,8 @@ Do not call `reset_plugins!` between examples of an app suite unless you registe
 
 | Variable | Used by |
 | --- | --- |
-| `WRITE=1` | `bin/rails factory_bakery:doctor`, to write stubs for failing models <!-- verify against implementation --> |
+| `WRITE=1` | `bin/rails factory_bakery:doctor`: also writes a stub definition for each failing model |
+| `NO_FAIL=1` | `bin/rails factory_bakery:doctor`: exits `0` even when models fail (the default exit status is `1`) |
 | `SKIP_REGEX_COVERAGE_GATE=1` | The gem's own spec run on a single file. Not for apps |
 
 ## Randomness

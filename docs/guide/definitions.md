@@ -161,7 +161,7 @@ Class and symbol registrations are separate keys. `define(User)` and `define(:us
 
 ### In Rails
 
-Definition files load once, after the app initializes, from the first existing of `spec/factories`, `test/factories`, `factories`. All `*.rb` files below it load recursively, in sorted order. Configure it with `config.factory_bakery.definition_paths`. See [Rails](rails.md).
+Definition files load once, after the app initializes, from one directory: `spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`. All `*.rb` files below it load recursively, in sorted order. Configure it with `config.factory_bakery.definition_paths`. See [Rails](rails.md#configuration).
 
 ### Outside Rails
 
@@ -177,7 +177,7 @@ FactoryBakery.find_definitions
 
 ### One definition per file, or many?
 
-The loader does not care. Convention: one file per model, named after it (`spec/bakery/post.rb`). That is also where `bin/rails g factory_bakery:definition Post` writes it. <!-- verify against implementation -->
+The loader does not care. Convention: one file per model, named after it (`spec/bakery/post.rb`). That is also where `bin/rails g factory_bakery:definition Post` writes it: the first `definition_paths` entry, or the default directory (see [Rails](rails.md#configuration)). A namespaced model goes in a matching subdirectory (`Admin::Post` is `admin/post.rb`).
 
 ## When to write a definition
 
