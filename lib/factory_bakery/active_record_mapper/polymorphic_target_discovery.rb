@@ -52,47 +52,49 @@ module FactoryBakery
         end
 
         def discover(klass, entry, eager_load)
-          candidates = inclusion_candidates(klass, entry)
-          candidates = inverse_candidates(klass, entry.name) if candidates.empty?
-          candidates = eager_load_candidates(klass, entry.name) if candidates.empty? && eager_load
+          domain = inclusion_domain(klass, entry)
+          candidates = inclusion_candidates(klass, domain)
+          candidates = within_domain(inverse_candidates(klass, entry.name), domain) if candidates.empty?
+          if candidates.empty? && eager_load
+            candidates = within_domain(eager_load_candidates(klass, entry.name), domain)
+          end
 
           FactoryBakery::MapperRegistry::DiscoveredTargets.new(
             candidates: order(candidates), sources: sources(entry, eager_load)
           )
         end
 
-        # Inclusion validators name their targets in plain strings, so this
-        # source needs no model loading (the lazy-Zeitwerk case). Only literal,
-        # statically known `:in` values are read: a Proc or Symbol is evaluated
-        # by Rails against the record at validation time, so we never evaluate
-        # it here (conditional validators with `if:`/`unless:` are left to
-        # definitions). A candidate must be a table-backed ActiveRecord class
-        # whose `polymorphic_name` (the value Rails writes to the type column,
-        # the STI base class for STI targets) is itself in the allowed list;
-        # otherwise the validator would reject what Rails stores. Class
-        # objects in the list never match the stored String, so they are
-        # skipped too.
-        def inclusion_candidates(klass, entry)
-          return [] unless klass.respond_to?(:validators_on)
-          return [] unless defined?(::ActiveModel::Validations::InclusionValidator)
+        # A nil domain means no static restriction. An empty intersection
+        # rules out every stored type, including candidates from inverses.
+        def inclusion_domain(klass, entry)
+          return unless klass.respond_to?(:validators_on)
+          return unless defined?(::ActiveModel::Validations::InclusionValidator)
 
-          klass.validators_on(entry.foreign_type.to_s).flat_map do |validator|
-            next [] unless validator.is_a?(::ActiveModel::Validations::InclusionValidator)
+          klass.validators_on(entry.foreign_type.to_s).filter_map do |validator|
+            next unless validator.is_a?(::ActiveModel::Validations::InclusionValidator)
+            next if validator.options.keys.intersect?(%i[if unless on except_on])
 
-            allowed = static_domain(validator.options[:in])
-            allowed.filter_map do |name|
-              candidate = constantize(name, klass)
-              candidate if viable_candidate?(candidate, allowed)
-            end
-          end.uniq
+            static_domain(validator.options[:in] || validator.options[:within])
+          end.reduce(:&)
         end
 
-        # Literal Array / Set domains only; a Proc or Symbol is resolved by
-        # Rails per record and is left to definitions.
+        # Read literal Array and Set domains from unconditional validators.
+        # Rails resolves callable domains per record and stores type strings.
         def static_domain(raw)
-          return [] unless raw.is_a?(Array) || raw.is_a?(::Set)
+          return unless raw.is_a?(Array) || raw.is_a?(::Set)
 
-          raw.grep(String)
+          raw.select { |value| value.is_a?(String) }
+        end
+
+        def inclusion_candidates(klass, domain)
+          candidates = Array(domain).filter_map { |name| constantize(name, klass) }
+          within_domain(candidates, domain)
+        end
+
+        def within_domain(candidates, domain)
+          return candidates unless domain
+
+          candidates.select { |candidate| viable_candidate?(candidate, domain) }
         end
 
         def viable_candidate?(candidate, allowed)

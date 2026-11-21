@@ -32,9 +32,9 @@ RSpec.describe 'raw-FK presence edges' do
   end
 
   # The edge's required signal is the FK COLUMN; the association is optional.
-  def define_fk_edge(prefix, association_presence: false)
-    owner = define_model("#{prefix}Owner", name: :string)
-    child = define_model("#{prefix}Child", owner_id: :integer, name: :string) do
+  def define_fk_edge(prefix, association_presence: false, owner_columns: {}, child_columns: {})
+    owner = define_model("#{prefix}Owner", name: :string, **owner_columns)
+    child = define_model("#{prefix}Child", owner_id: :integer, name: :string, **child_columns) do
       belongs_to :owner, class_name: "#{prefix}Owner", optional: !association_presence
       validates :owner_id, presence: true
       validates :owner, presence: true if association_presence
@@ -213,13 +213,13 @@ RSpec.describe 'raw-FK presence edges' do
     # The owner is saved to give the FK-presence child a real id. Its optional
     # has_one stat is built automatically under plain bake, so autosave must not
     # insert it alongside the owner's own callback row.
-    def define_stat_graph(prefix, callback:)
-      stat_model = define_model("#{prefix}Stat", owner_id: :integer, label: :string) do
+    def define_stat_graph(prefix, callback:, stat_columns: {}, stat_scope: nil, stat_options: {}, **edge_options)
+      stat_model = define_model("#{prefix}Stat", owner_id: :integer, label: :string, **stat_columns) do
         belongs_to :owner, class_name: "#{prefix}Owner", optional: false
       end
       stat_model.connection.add_index(stat_model.table_name, :owner_id, unique: true)
-      owner_model, child_model = define_fk_edge(prefix)
-      owner_model.has_one :stat, class_name: "#{prefix}Stat", inverse_of: :owner
+      owner_model, child_model = define_fk_edge(prefix, **edge_options)
+      owner_model.has_one :stat, stat_scope, class_name: "#{prefix}Stat", inverse_of: :owner, **stat_options
       owner_model.after_create { create_stat!(label: 'from callback') } if callback
       [owner_model, child_model, stat_model]
     end
@@ -243,6 +243,139 @@ RSpec.describe 'raw-FK presence edges' do
       expect(child.owner.stat).to be_a(stat_model)
       expect(child.owner.stat.owner).to equal(child.owner)
       expect(stat_model.count).to eq(0)
+    end
+
+    def define_discarded_stat_graph(explicit:, required:)
+      profile = define_model('FkDiscardProfile', name: :string)
+      owner, child, stat = define_stat_graph(
+        'FkDiscard',
+        callback: true,
+        stat_columns: { profile_id: :integer },
+        owner_columns: { backup_id: :integer },
+        child_columns: { profile_id: :integer }
+      )
+      stat.belongs_to :profile, class_name: 'FkDiscardProfile', optional: true, autosave: false
+      owner.belongs_to :backup, class_name: 'FkDiscardProfile', optional: true, autosave: false
+      owner.attr_reader :generated_stat
+      owner.validates :stat, presence: true, unless: :generated_stat if required
+      owner.define_method(:stat=) do |value|
+        @generated_stat = value
+        self.backup = value.profile unless explicit
+        super(value)
+      end
+      FactoryBakery.define(owner) { skip :backup }
+      FactoryBakery.define(stat) { association :profile } if explicit
+      [owner, child, profile]
+    end
+
+    [true, false].each do |explicit|
+      descendant = explicit ? 'a definition-built descendant' : 'the shared parent'
+
+      it "still shares #{descendant} after plain bake discards an automatic child" do
+        _owner, child, _profile = define_discarded_stat_graph(explicit: explicit, required: false)
+        child.belongs_to :profile, class_name: 'FkDiscardProfile', optional: false
+
+        record = FactoryBakery::Associations.with(mode: :all, max_depth: 5) { FactoryBakery.bake(child) }
+
+        expect(record.owner.stat.label).to eq('from callback')
+        expect(record.profile).to equal(record.owner.generated_stat.profile)
+      end
+
+      it "still verifies #{descendant} after bake! discards an automatic child" do
+        owner, child, _profile = define_discarded_stat_graph(explicit: explicit, required: true)
+
+        expect do
+          FactoryBakery::Associations.with(mode: :all, max_depth: 5) { FactoryBakery.bake!(child) }
+        end.to raise_error(FactoryBakery::IncompletePersistenceError, /FkDiscardProfile/)
+        expect(owner.count).to eq(0)
+      end
+    end
+
+    it 'leaves an autosave-disabled child attached while saving its owner' do
+      owner, child, stat = define_stat_graph('FkDisabledStat', callback: false, stat_options: { autosave: false })
+      observed = nil
+      owner.before_create { observed = self.stat }
+
+      record = FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(child) }
+
+      expect(observed).to be_a(stat)
+      expect(record.owner.stat).to equal(observed)
+      expect(stat.count).to eq(0)
+    end
+
+    it 'keeps the generated child when reload finds a different STI class' do
+      owner, child, stat = define_stat_graph('FkTypedStat', callback: false, stat_columns: { type: :string })
+      alternate = define_class('FkAlternateStat', stat)
+      owner.after_create { alternate.create!(owner_id: id, label: 'from callback') }
+
+      record = FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(child) }
+
+      expect(record.owner.stat).to be_an_instance_of(stat)
+      expect(record.owner.stat).to be_new_record
+      expect(alternate.count).to eq(1)
+    end
+
+    it 'keeps the generated child when a scope returns a row with a different owner key' do
+      scope = -> { unscope(where: :owner_id).where(label: 'unrelated') }
+      _owner, child, stat = define_stat_graph('FkWrongKeyStat', callback: false, stat_scope: scope)
+      stat.insert_all!([{ owner_id: 100, label: 'unrelated' }])
+
+      record = FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(child) }
+
+      expect(record.owner.stat).to be_new_record
+      expect(record.owner.stat.owner).to equal(record.owner)
+      expect(stat.pluck(:owner_id)).to eq([100])
+    end
+
+    it 'restores the generated child when the post-save association lookup raises' do
+      scope = ->(record) { raise 'stat lookup failed' if record.persisted? }
+      owner, child, stat = define_stat_graph('FkRestoreStat', callback: false, stat_scope: scope)
+      attempted_owner = nil
+      owner.before_create { attempted_owner = self }
+
+      expect do
+        FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(child) }
+      end.to raise_error('stat lookup failed')
+      expect(attempted_owner.stat).to be_a(stat)
+      expect(owner.count).to eq(0)
+    end
+
+    it 'leaves descendants attached inside a detached subtree' do
+      owner, child, stat = define_stat_graph('FkPrunedStat', callback: true)
+      metric = define_model('FkPrunedMetric', stat_id: :integer) do
+        belongs_to :stat, class_name: 'FkPrunedStatStat', optional: false
+      end
+      stat.has_one :metric, class_name: metric.name, inverse_of: :stat
+      generated_stat = nil
+      observed_metric = nil
+      owner.define_method(:stat=) do |value|
+        generated_stat = value
+        super(value)
+      end
+      owner.after_create { observed_metric = generated_stat.metric }
+
+      record = FactoryBakery::Associations.with(mode: :all, max_depth: 5) { FactoryBakery.bake(child) }
+
+      expect(record.owner.stat).to be_persisted
+      expect(observed_metric).to be_a(metric)
+      expect(metric.count).to eq(0)
+    end
+
+    it 'settles children of a changed persisted parent reached through autosave' do
+      parent, dependent, stat = define_stat_graph('FkChangedStat', callback: false)
+      parent.after_update { stat.create!(owner_id: id, label: 'from update') }
+      owner, child = define_fk_edge('FkChangedOuter', owner_columns: { parent_id: :integer })
+      owner.belongs_to :parent, class_name: parent.name, autosave: true, optional: false
+      FactoryBakery.define(owner) do
+        parent do
+          FactoryBakery.bake(dependent).owner.tap { |record| record.name = 'updated' }
+        end
+      end
+
+      record = FactoryBakery::Associations.with(mode: :all, max_depth: 6) { FactoryBakery.bake(child) }
+
+      expect(record.owner.parent.reload.name).to eq('updated')
+      expect(stat.where(owner_id: record.owner.parent_id).pluck(:label)).to eq(['from update'])
     end
 
     # Saving the owner also autosaves its new optional belongs_to parent. That

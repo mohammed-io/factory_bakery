@@ -53,7 +53,7 @@ module FactoryBakery
     AUTOMATIC_PARENTS_KEY = :factory_bakery_automatic_parents
     AUTOMATIC_BUILD_KEY = :factory_bakery_automatic_build
     AutomaticParent = Data.define(:owner, :entry, :parent, :records)
-    GeneratedRecord = Data.define(:path, :object, :automatic, :after_persist)
+    GeneratedRecord = Data.define(:path, :build_lineage, :object, :automatic, :after_persist)
     # FK-column-validated edges need a persisted parent. Under `bake!` that
     # parent is inserted inside the root savepoint; under plain `bake` it is an
     # explicit, documented exception to the unsaved graph. This fiber-local
@@ -89,7 +89,9 @@ module FactoryBakery
       end
 
       def record_generated(object)
-        generated_records << GeneratedRecord.new(current.path, object, current.automatic, current.take_after_persist)
+        generated_records << GeneratedRecord.new(
+          current.path, current.build_lineage, object, current.automatic, current.take_after_persist
+        )
       end
 
       def automatic_build
@@ -154,29 +156,41 @@ module FactoryBakery
         discard_cached_records!(discarded)
       end
 
-      # Drops one generated object and the records generated while building
-      # it, for an automatic child that the graph no longer uses (an owner
-      # callback created the row instead). A record is registered when its
-      # build completes, so its descendants are the contiguous entries just
-      # before it whose path extends its own. Paths name classes, not objects,
-      # so a prefix match over the whole registry would also drop unrelated
-      # records of the same classes.
-      def discard_generated!(object)
-        records = generated_records
-        index = records.index { |record| record.object.equal?(object) }
-        return unless index
+      # Build lineages identify the subtrees replaced by save callbacks, even
+      # when siblings have the same class path.
+      def discard_generated!(objects, adapter)
+        return if objects.empty?
 
-        start = index
-        start -= 1 while start.positive? && extends_path?(records[start - 1].path, records[index].path)
-        discarded = Set.new.compare_by_identity.merge(records[start..index].map(&:object))
+        records = generated_records
+        builds = discarded_builds(records, objects)
+        return if builds.empty?
+
+        candidates, kept = records.partition { |record| record.automatic && record.build_lineage.intersect?(builds) }
+        retained = reachable_records([*Fiber[BUILDING_KEY], *kept.map(&:object)], adapter)
+        discarded = Set.new.compare_by_identity.merge(candidates.map(&:object)).subtract(retained)
         Fiber[RECORDS_KEY] = records.reject { |record| discarded.include?(record.object) }
         discard_cached_records!(discarded)
       end
 
-      def extends_path?(candidate, path)
-        candidate.length > path.length && candidate[0, path.length] == path
+      def discarded_builds(records, objects)
+        detached = Set.new.compare_by_identity.merge(objects)
+        records.filter_map do |record|
+          record.build_lineage.last if record.automatic && detached.include?(record.object)
+        end
       end
-      private :extends_path?
+      private :discarded_builds
+
+      def reachable_records(roots, adapter)
+        pending = roots.dup
+        seen = Set.new.compare_by_identity
+        until pending.empty?
+          record = pending.pop
+          next unless seen.add?(record)
+
+          pending.concat(adapter.cached_association_targets(record))
+        end
+        seen
+      end
 
       def discard_cached_records!(discarded)
         Fiber[AUTOMATIC_PARENTS_KEY] = automatic_parents.reject { |edge| discarded.include?(edge.parent) }
@@ -308,7 +322,9 @@ module FactoryBakery
 
         reset_per_bake_caches! if top_level
         Fiber[AUTOMATIC_BUILD_KEY] = nil
-        Fiber[STORAGE_KEY] = new(previous.path + [klass], automatic: automatic)
+        Fiber[STORAGE_KEY] = new(
+          previous.path + [klass], automatic: automatic, build_lineage: previous.build_lineage + [Object.new]
+        )
         yield
       ensure
         Fiber[STORAGE_KEY] = previous
@@ -331,7 +347,7 @@ module FactoryBakery
 
       def run_after_persist(entry)
         previous = current
-        Fiber[STORAGE_KEY] = new(entry.path)
+        Fiber[STORAGE_KEY] = new(entry.path, build_lineage: entry.build_lineage)
         entry.after_persist.each { |work| work.call(entry.object) }
       ensure
         Fiber[STORAGE_KEY] = previous
@@ -364,7 +380,7 @@ module FactoryBakery
     # keep using `taken_names`.
     attr_accessor :explicit_names
 
-    attr_reader :path, :automatic
+    attr_reader :path, :automatic, :build_lineage
 
     def defer_until_persisted(&block)
       (@after_persist ||= []) << block
@@ -376,9 +392,10 @@ module FactoryBakery
       work
     end
 
-    def initialize(path, automatic: false)
+    def initialize(path, automatic: false, build_lineage: [])
       @path = path.freeze
       @automatic = automatic
+      @build_lineage = build_lineage.freeze
     end
 
     def depth
@@ -390,6 +407,5 @@ module FactoryBakery
     def generated_records
       self.class.generated_records
     end
-
   end
 end

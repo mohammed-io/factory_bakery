@@ -63,6 +63,35 @@ RSpec.describe 'FactoryBakery polymorphic association discovery' do
       expect(FactoryBakery.bake(link_model).linkable).to be_a(alpha_model)
     end
 
+    it 'selects a type in the intersection of unconditional inclusion validators' do
+      define_model('PolyOverlapAlpha', name: :string)
+      shared = define_model('PolyOverlapShared', name: :string)
+      define_model('PolyOverlapZed', name: :string)
+      link = define_link('PolyOverlap')
+      link.validates :target_type, inclusion: { in: %w[PolyOverlapAlpha PolyOverlapShared] }
+      link.validates :target_type, inclusion: { within: Set['PolyOverlapShared', 'PolyOverlapZed'] }
+      link.validates :target_type, inclusion: { in: ['PolyOverlapAlpha'] }, if: -> { false }
+      link.validates :target_type, inclusion: { in: ['PolyOverlapAlpha'] }, unless: -> { true }
+      link.validates :target_type, inclusion: { in: ['PolyOverlapAlpha'] }, on: :update
+
+      record = FactoryBakery.bake!(link)
+
+      expect(record.target).to be_an_instance_of(shared)
+      expect(record.valid?(:create)).to be(true)
+    end
+
+    it 'rejects inverse candidates outside a known static inclusion domain' do
+      link = define_link('PolyExcludedInverse')
+      candidate = define_model('PolyExcludedInverseOwner', name: :string) do
+        has_one :link, as: :target, class_name: 'PolyExcludedInverseLink'
+      end
+      link.validates :target_type, inclusion: { in: ['MissingPolyInverseOwner'] }
+      stub_descendants(candidate)
+
+      expect { FactoryBakery.bake(link) }
+        .to raise_error(FactoryBakery::Error, /no target discovered/)
+    end
+
     it 'picks the owner whose as: inverse names the baked STI subclass' do
       stub_const('PolyChat', Module.new)
       channel = define_model('PolyChatChannel', type: :string, chatable_type: :string, chatable_id: :integer) do

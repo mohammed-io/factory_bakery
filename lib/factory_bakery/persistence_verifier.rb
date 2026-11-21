@@ -41,7 +41,8 @@ module FactoryBakery
       candidates = superseded_candidates(unsaved_records)
       return candidates if candidates.empty?
 
-      retained = reachable_records(candidates)
+      roots = [@root, *@entries.map(&:object).reject { |record| candidates.include?(record) }]
+      retained = BuildContext.reachable_records(roots, @adapter)
       candidates.delete_if { |record| retained.include?(record) }
     end
 
@@ -51,18 +52,6 @@ module FactoryBakery
                             .select { |edge| @adapter.automatic_parent_discarded?(edge) }
                             .flat_map(&:records)
       Set.new.compare_by_identity.merge(records)
-    end
-
-    def reachable_records(candidates)
-      pending = [@root, *@entries.map(&:object).reject { |record| candidates.include?(record) }]
-      seen = Set.new.compare_by_identity
-      until pending.empty?
-        record = pending.pop
-        next unless seen.add?(record)
-
-        pending.concat(@adapter.cached_association_targets(record))
-      end
-      seen
     end
 
     def message_for(unsaved)

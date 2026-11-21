@@ -55,7 +55,8 @@ module FactoryBakery
       def save_owner_and_find_parent(owner, parent, reflection, automatic, &on_discard)
         inverse = owner.association(reflection.inverse_of.name)
         inverse.reset if inverse.target.equal?(parent)
-        save_detaching_children!(owner, automatic).each { |child| on_discard&.call(child) }
+        discarded = save_detaching_children!(owner, automatic)
+        on_discard&.call(discarded)
         parent.public_send("#{reflection.name}=", owner)
         replacement = inverse.reload&.target
         return replacement if replacement.instance_of?(parent.class) && replacement.id == parent.id
@@ -69,48 +70,82 @@ module FactoryBakery
       # Autosave inserts a new has_one child together with its owner, and an
       # owner callback that creates the same row would then collide with it.
       # The gem's automatic optional children are detached for the save. A row
-      # the callback created wins; otherwise the child is reattached, unsaved,
-      # to its owner. Required and user-declared children are never touched.
-      # The save also autosaves the record's new parents and children (an
-      # unsaved optional `belongs_to :deleted_by` User, say), so every new
-      # record reachable through the loaded graph is covered, not only `record`.
-      # Returns the children it dropped so the caller can unregister them; the
-      # generated-record registry belongs to core, not to this adapter.
+      # matching the association and child's class wins; otherwise the child
+      # is reattached. Returns the discarded children for core to unregister.
       def save_detaching_children!(record, automatic)
-        children = unsaved_graph(record).flat_map { |owner| detachable_children(owner, automatic) }
-        children.each { |detached| detached.owner.association(detached.reflection.name).target = nil }
-        begin
-          save!(record)
-        rescue StandardError
-          children.each { |detached| reattach(detached) }
-          raise
-        end
+        children = []
+        detach_autosave_children(record, automatic, children)
+        save!(record)
         children.filter_map { |detached| settle_child(detached) }
+      rescue StandardError
+        children.each { |detached| reattach(detached) }
+        raise
       end
 
-      # `record` plus every new record reachable from it through loaded
-      # associations: the records a save of `record` can autosave.
-      def unsaved_graph(record)
+      def detach_autosave_children(record, automatic, children)
+        automatic = Set.new.compare_by_identity.merge(automatic)
         seen = Set.new.compare_by_identity
         pending = [record]
         until pending.empty?
-          node = pending.pop
-          next unless seen.add?(node)
+          owner = pending.pop
+          next unless seen.add?(owner)
 
-          pending.concat(cached_association_targets(node).select { |target| target.respond_to?(:new_record?) && target.new_record? })
+          autosave_associations(owner).each do |association|
+            child = association.target
+            if !child.equal?(record) && detachable_child?(association, automatic)
+              children << DetachedChild.new(owner:, reflection: association.reflection, child:)
+              association.target = nil
+            else
+              pending.concat(autosave_targets(association))
+            end
+          end
         end
-        seen.to_a
       end
 
-      def detachable_children(owner, automatic)
+      def autosave_associations(owner)
         ReflectionCache.all(owner.class).filter_map do |reflection|
-          next unless reflection.macro == :has_one && optional_edge?(owner, reflection)
+          next if reflection.options[:autosave] == false || !owner.association_cached?(reflection.name)
 
-          child = owner.association(reflection.name).target
-          next unless child&.new_record? && automatic.any? { |record| record.equal?(child) }
+          association = owner.association(reflection.name)
+          next unless reflection.collection? || association.loaded?
 
-          DetachedChild.new(owner:, reflection:, child:)
+          association unless association.stale_target?
         end
+      end
+
+      def autosave_targets(association)
+        Array(association.target).select { |target| autosave_target?(association, target) }
+      end
+
+      def autosave_target?(association, target)
+        reflection = association.reflection
+        owner = association.owner
+        autosave = reflection.options[:autosave]
+        return false if target.destroyed? || (autosave && target.marked_for_destruction?)
+        return autosave_collection_target?(owner, reflection, target) if reflection.collection?
+        return true if autosave && target.changed_for_autosave?
+        return true if target.new_record?
+        return false unless reflection.macro == :has_one
+
+        owner.send(:_record_changed?, reflection, target, owner_key(owner, reflection))
+      end
+
+      def autosave_collection_target?(owner, reflection, target)
+        return target.changed_for_autosave? if reflection.options[:autosave] && !owner.new_record?
+        return false if reflection.nested?
+        return target.new_record? unless owner.new_record?
+
+        !reflection.through_reflection? || target.new_record? || target.has_changes_to_save?
+      end
+
+      def detachable_child?(association, automatic)
+        reflection = association.reflection
+        return false unless reflection.macro == :has_one && !reflection.through_reflection?
+
+        child = association.target
+        child&.new_record? && !child.destroyed? &&
+          !(reflection.options[:autosave] && child.marked_for_destruction?) &&
+          automatic.include?(child) && optional_edge?(association.owner, reflection)
       end
 
       # An edge whose presence cannot be decided is treated as required, so it
@@ -125,10 +160,25 @@ module FactoryBakery
       # An owner the save did not reach is still new: nothing to look up.
       def settle_child(detached)
         owner = detached.owner
-        return detached.child if owner.persisted? && owner.association(detached.reflection.name).reload
+        reflection = detached.reflection
+        replacement = owner.association(reflection.name).reload&.target if owner.persisted?
+        return detached.child if replacement.instance_of?(detached.child.class) &&
+                                 matching_child_key?(owner, reflection, replacement)
 
         reattach(detached)
         nil
+      end
+
+      def matching_child_key?(owner, reflection, child)
+        keys = owner_key(owner, reflection)
+        foreign_keys = Array(reflection.foreign_key).map { |key| child._read_attribute(key) }
+        return false if keys.any?(&:nil?) || keys != foreign_keys
+
+        !reflection.type || child._read_attribute(reflection.type) == owner.class.polymorphic_name
+      end
+
+      def owner_key(owner, reflection)
+        Array(reflection.active_record_primary_key).map { |key| owner._read_attribute(key) }
       end
 
       def reattach(detached)
