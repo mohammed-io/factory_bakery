@@ -9,6 +9,15 @@ user = FactoryBakery.bake(User, email: 'john@example.com')
 user.email # => "john@example.com" — other required attributes were filled heuristically
 ```
 
+## Documentation
+
+- [User guide](docs/guide/index.md): getting started, definitions, heuristics, associations, plugins, Rails, testing recipes and FAQ.
+- [Migrating from factory_bot](docs/guide/migrating-from-factory-bot.md): concept mapping and a step-by-step migration. It also covers fabrication, machinist, fixtures and `create!` helpers.
+- Agent skills in [`skills/`](skills/):
+  - [`factory-bakery-setup`](skills/factory-bakery-setup/SKILL.md): install and configure.
+  - [`factory-bakery-migrate`](skills/factory-bakery-migrate/SKILL.md): migrate a codebase from another factory tool.
+  - [`factory-bakery-diagnostics`](skills/factory-bakery-diagnostics/SKILL.md): find out why a model does not bake. Its [catalog](skills/factory-bakery-diagnostics/references/diagnostics.md) lists every error.
+
 ## Requirements
 
 - Ruby >= 3.2
