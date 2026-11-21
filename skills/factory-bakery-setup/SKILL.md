@@ -106,7 +106,7 @@ class ActiveSupport::TestCase
 end
 ```
 
-The seed is one of: `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =`, `FactoryBakery.seed_generator`, the framework's seed above, or a random one per process. The gem logs which one it used. See [Randomness](../../docs/guide/configuration.md#randomness).
+The seed is one of: `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer, or a callable returning one), the framework's seed above, or a random one per process. The gem logs which one it used. See [Randomness](../../docs/guide/configuration.md#randomness).
 
 ### 7. Generators and rake tasks
 

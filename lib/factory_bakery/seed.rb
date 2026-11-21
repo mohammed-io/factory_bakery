@@ -7,11 +7,11 @@ module FactoryBakery
   # that answers wins:
   #
   #   1. the FACTORY_BAKERY_SEED environment variable
-  #   2. FactoryBakery.seed = Integer
-  #   3. FactoryBakery.seed_generator, a callable returning an Integer
-  #   4. the test framework's seed, when an integration registered one
+  #   2. FactoryBakery.seed = value: an Integer, or a callable returning one
+  #      (called lazily, when the seed is resolved)
+  #   3. the test framework's seed, when an integration registered one
   #      (require 'factory_bakery/rspec' or 'factory_bakery/minitest')
-  #   5. a random seed chosen once per process
+  #   4. a random seed chosen once per process
   #
   # The decision is lazy: it is made on first use and memoized until a seed
   # setting changes. Each decision is announced through the logger once: INFO
@@ -22,14 +22,15 @@ module FactoryBakery
     RANDOM_LIMIT = 2**31
     LOG_FORMAT = ->(severity, _time, _program, message) { "[FactoryBakery] #{severity}: #{message}\n" }
 
-    # origin is :env, :explicit, :generator, :framework or :random. framework
-    # is the registered integration, and only set when origin is :framework.
+    # origin is :env, :explicit (an Integer setting), :callable (a callable
+    # setting), :framework or :random. framework is the registered integration,
+    # and only set when origin is :framework.
     Resolution = Data.define(:value, :origin, :framework) do
       def description
         case origin
         when :env then ENV_KEY
         when :explicit then 'FactoryBakery.seed='
-        when :generator then 'FactoryBakery.seed_generator'
+        when :callable then 'FactoryBakery.seed= (callable)'
         when :framework then framework.label
         else 'a random choice for this process'
         end
@@ -46,24 +47,18 @@ module FactoryBakery
     FrameworkSeed = Data.define(:label, :reproduce, :source)
 
     class << self
-      attr_reader :explicit, :generator, :framework
+      attr_reader :setting, :framework
       attr_writer :logger
 
-      def explicit=(value)
-        unless integer_or_nil?(value)
-          raise ArgumentError, "FactoryBakery.seed must be an Integer or nil, got #{value.inspect}"
+      # An Integer, a callable returning one, or nil to clear the setting.
+      def setting=(value)
+        unless valid_setting?(value)
+          raise ArgumentError,
+                'FactoryBakery.seed must be an Integer, a callable returning an Integer, or nil, ' \
+                "got #{value.inspect}"
         end
 
-        @explicit = value
-        reset!
-      end
-
-      def generator=(callable)
-        unless callable.nil? || callable.respond_to?(:call)
-          raise ArgumentError, "FactoryBakery.seed_generator must be callable or nil, got #{callable.inspect}"
-        end
-
-        @generator = callable
+        @setting = value
         reset!
       end
 
@@ -88,13 +83,13 @@ module FactoryBakery
 
       private
 
-      def integer_or_nil?(value)
-        value.nil? || value.is_a?(Integer)
+      def valid_setting?(value)
+        value.nil? || value.is_a?(Integer) || value.respond_to?(:call)
       end
 
       # The first source that answers wins; the random fallback always answers.
       def resolve
-        env_resolution || explicit_resolution || generator_resolution || framework_resolution || random_resolution
+        env_resolution || setting_resolution || framework_resolution || random_resolution
       end
 
       def env_resolution
@@ -102,13 +97,12 @@ module FactoryBakery
         Resolution.new(value:, origin: :env, framework: nil) unless value.nil?
       end
 
-      def explicit_resolution
-        Resolution.new(value: explicit, origin: :explicit, framework: nil) unless explicit.nil?
-      end
-
-      def generator_resolution
-        value = generator_seed
-        Resolution.new(value:, origin: :generator, framework: nil) unless value.nil?
+      def setting_resolution
+        case setting
+        when nil then nil
+        when Integer then Resolution.new(value: setting, origin: :explicit, framework: nil)
+        else Resolution.new(value: called_setting, origin: :callable, framework: nil)
+        end
       end
 
       def framework_resolution
@@ -129,10 +123,8 @@ module FactoryBakery
         raise ArgumentError, "#{ENV_KEY} must be an integer, got #{raw.inspect}"
       end
 
-      def generator_seed
-        return nil unless generator
-
-        checked(generator.call, 'FactoryBakery.seed_generator must return an Integer')
+      def called_setting
+        checked(setting.call, 'FactoryBakery.seed callable must return an Integer')
       end
 
       def framework_seed

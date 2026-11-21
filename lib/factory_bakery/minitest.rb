@@ -8,8 +8,8 @@ require 'factory_bakery'
 #
 #   require 'factory_bakery/minitest'
 #
-# Without it the seed comes from FACTORY_BAKERY_SEED, FactoryBakery.seed=,
-# FactoryBakery.seed_generator, or a random choice made once per process.
+# Without it the seed comes from FACTORY_BAKERY_SEED, FactoryBakery.seed=
+# (an Integer or a callable), or a random choice made once per process.
 FactoryBakery.register_test_framework_seed(label: 'Minitest', reproduce: 'bin/rails test --seed %d') do
   Minitest.seed if defined?(Minitest.seed)
 end

@@ -13,7 +13,7 @@ RSpec.configure do |config|
 end
 ```
 
-`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =`, `FactoryBakery.seed_generator`, or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot.
+`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer or a callable), or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot.
 
 Use in examples:
 

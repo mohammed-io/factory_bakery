@@ -4,27 +4,21 @@ module FactoryBakery
   # The seed settings, the logger and the explanation helper, extended onto
   # FactoryBakery so the public module stays a readable entry point.
   module SeedApi
-    # The seed every generated value derives from (an Integer). It is resolved
-    # on first use: FACTORY_BAKERY_SEED, then `seed=`, then `seed_generator`,
-    # then the test framework's seed, then a random seed for the process.
+    # The seed every generated value derives from, as an Integer. Reading it
+    # resolves the seed if that has not happened yet, so it returns the value in
+    # use. Resolution order: FACTORY_BAKERY_SEED, then `seed =`, then the test
+    # framework's seed, then a random seed for the process.
     # See docs/guide/configuration.md#randomness.
     def seed
       Seed.current.value
     end
 
-    # Nil clears the setting so the next source in the order applies.
+    # Sets the seed source: an Integer, or a callable returning one, such as
+    # `-> { MyCI.build_number }`. A callable is called once, when the seed is
+    # resolved, and must return an Integer. Nil clears the setting so the next
+    # source in the order applies. Anything else raises ArgumentError.
     def seed=(value)
-      Seed.explicit = value
-    end
-
-    # A callable returning an Integer, consulted when neither the environment
-    # variable nor `seed=` is set. Nil clears it.
-    def seed_generator
-      Seed.generator
-    end
-
-    def seed_generator=(callable)
-      Seed.generator = callable
+      Seed.setting = value
     end
 
     # Where seed announcements and warnings go. Defaults to stderr; nil silences them.

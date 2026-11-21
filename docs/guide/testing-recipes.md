@@ -44,7 +44,7 @@ class ActiveSupport::TestCase
 end
 ```
 
-`require 'factory_bakery/minitest'` makes generated values follow Minitest's seed, so `bin/rails test --seed 12345` reproduces a failing run. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =`, `FactoryBakery.seed_generator`, or a random choice made once per process. See [Randomness](configuration.md#randomness).
+`require 'factory_bakery/minitest'` makes generated values follow Minitest's seed, so `bin/rails test --seed 12345` reproduces a failing run. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer or a callable), or a random choice made once per process. See [Randomness](configuration.md#randomness).
 
 ```ruby
 class PostTest < ActiveSupport::TestCase

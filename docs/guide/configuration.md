@@ -88,18 +88,20 @@ Every generated value derives from one seed. The gem resolves it on first use, a
 | # | Source | How to set it | Announced at |
 | --- | --- | --- | --- |
 | 1 | Environment | `FACTORY_BAKERY_SEED=1234` | WARN |
-| 2 | Explicit | `FactoryBakery.seed = 1234` | WARN |
-| 3 | Generator | `FactoryBakery.seed_generator = -> { MyCI.build_number }` (must return an Integer, else `ArgumentError`) | WARN |
-| 4 | Test framework | `require 'factory_bakery/rspec'` (RSpec's seed) or `require 'factory_bakery/minitest'` (Minitest's seed) | INFO |
-| 5 | Random | Nothing set: one random seed for the process | WARN |
+| 2 | Setting | `FactoryBakery.seed = 1234`, or `FactoryBakery.seed = -> { MyCI.build_number }` (a callable, called once when the seed is resolved; it must return an Integer, else `ArgumentError`) | WARN |
+| 3 | Test framework | `require 'factory_bakery/rspec'` (RSpec's seed) or `require 'factory_bakery/minitest'` (Minitest's seed) | INFO |
+| 4 | Random | Nothing set: one random seed for the process | WARN |
 
-The environment variable outranks `FactoryBakery.seed =` on purpose, so CI can pin a seed without a code change. `FactoryBakery.seed` returns the resolved seed. Setting `seed`, `seed_generator` or the framework source again resolves it again.
+The environment variable outranks `FactoryBakery.seed =` on purpose, so CI can pin a seed without a code change. A callable is not called when you assign it, only when the seed is resolved. A callable outranks the test framework's seed, so `FactoryBakery.seed = -> { ... }` takes over from `rspec --seed`. Assigning `seed` again, or registering the framework source, resolves the seed again.
 
-Each resolution is announced once through `FactoryBakery.logger` (stderr by default; set it to `nil` to silence):
+`FactoryBakery.seed` returns the resolved Integer in use, resolving it first if needed. Assigning anything other than an Integer, a callable or `nil` raises `ArgumentError`.
+
+Each resolution is announced once through `FactoryBakery.logger` (stderr by default; set it to `nil` to silence). A callable is named `FactoryBakery.seed= (callable)`:
 
 ```
 [FactoryBakery] INFO: using RSpec seed 12345 for generated data (rspec --seed 12345 reproduces it)
 [FactoryBakery] WARN: seed 1234 from FACTORY_BAKERY_SEED (not the test framework's seed); reproduce with FACTORY_BAKERY_SEED=1234
+[FactoryBakery] WARN: seed 99 from FactoryBakery.seed= (callable) (not the test framework's seed); reproduce with FACTORY_BAKERY_SEED=99
 ```
 
 How the seed becomes values:
