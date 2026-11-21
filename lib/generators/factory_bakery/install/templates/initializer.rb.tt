@@ -1,0 +1,12 @@
+# frozen_string_literal: true
+
+Rails.application.config.factory_bakery.tap do |config|
+  # config.associations = :required_only
+<% if @bakery_directory -%>
+  config.definition_paths = <%= [@bakery_directory].inspect %>
+<% else -%>
+  # config.definition_paths = ['custom/factories']
+<% end -%>
+  # config.fill_optional = true
+  # config.generators = false
+end

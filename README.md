@@ -248,7 +248,7 @@ Definition files are loaded automatically after the application initializes. Fac
 2. `test/factories`
 3. `factories`
 
-All `*.rb` files under it are loaded recursively, so the usual test-framework layouts work without any `require`. To use a different location, set the paths in `config/application.rb` (or an environment file):
+All `*.rb` files under it are loaded recursively, so the usual test-framework layouts work without any `require`. If none of the directories exists, FactoryBakery picks `spec/factories` for RSpec and `test/factories` for Minitest. When it detects FactoryBot, it uses `spec/bakery` or `test/bakery` by default. To use a different location, set the paths in `config/application.rb` (or an environment file):
 
 ```ruby
 config.factory_bakery.definition_paths = [Rails.root.join('custom/factories').to_s]
@@ -266,6 +266,24 @@ FactoryBakery.find_definitions
 ```
 
 Nonexistent paths are skipped, and calling `find_definitions` again re-evaluates the files, which makes reloading safe.
+
+## Rails generators and rake tasks
+
+```sh
+bin/rails generate factory_bakery:install
+bin/rails generate model Post title:string user:references
+bin/rails generate factory_bakery:definition Admin::Post title:string
+bin/rails 'factory_bakery:definitions[Post,Admin::Post]'
+bin/rails 'factory_bakery:doctor[Post,Admin::Post]'
+```
+
+The installer creates the definitions directory and an initializer showing `config.factory_bakery.associations`, `definition_paths`, `fill_optional`, and `generators`. If FactoryBot is loaded or has `FactoryBot.define` files in a conventional directory, the initializer explicitly selects `spec/bakery` or `test/bakery`. Keep each gem's definitions in its own directory.
+
+Model and scaffold generation use the test framework's Rails `fixture_replacement` hook. FactoryBakery takes the slot by default when it is unclaimed. An existing replacement such as FactoryBot takes precedence. Set `config.factory_bakery.generators = true` to select FactoryBakery or `false` to disable its hook. Pass `--skip-factory-bakery` to skip a single model or scaffold run.
+
+Stubs use the first configured definition path or the conventional directory selected at boot. They contain a class-keyed `FactoryBakery.define` block with commented examples for any supplied attributes. Namespaces map to subdirectories, so `Admin::Post` goes into `admin/post.rb`. Generators skip existing stubs unless you pass `--force`.
+
+With no arguments the tasks eager-load the app. `factory_bakery:definitions` writes stubs for concrete Active Record models without a registered class-keyed definition. `factory_bakery:doctor` checks all concrete Active Record models with `bake` and `valid?`, then `bake!`. Doctor rolls back each probe and the overall run on the current role's registered Active Record connections. It reports the first error per model and exits with status 1 if any fail. Use `NO_FAIL=1` for reporting only or `WRITE=1` to create missing stubs with the error included as comments. See [doctor diagnostics](docs/diagnostics.md).
 
 ## In your test suite
 

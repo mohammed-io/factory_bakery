@@ -8,26 +8,30 @@ require 'open3'
 # so agnosticism cannot silently regress. Excluded from the core set are the
 # default mapper plugin (lib/factory_bakery/active_record_mapper/**), the
 # opt-in associations plugin internals (lib/factory_bakery/associations/**)
-# and the Rails integration (which lives inside the mapper plugin directory).
+# and the Rails generators (lib/generators/factory_bakery/**).
 RSpec.describe 'framework-agnostic core architecture guard' do
-  CORE_EXCLUSIONS = [
-    %r{\Alib/factory_bakery/active_record_mapper(?:\.rb|/|\z)}, # default mapper plugin + Rails integration
-    %r{\Alib/factory_bakery/associations(?:/|\z)}               # opt-in associations plugin internals
-  ].freeze
+  let(:core_exclusions) do
+    [
+      %r{\Alib/factory_bakery/active_record_mapper(?:\.rb|/|\z)},
+      %r{\Alib/factory_bakery/associations(?:/|\z)},
+      %r{\Alib/generators/factory_bakery/}
+    ]
+  end
 
   # Constant references, including name-string matching (validator classes
   # are matched by name in the mapper, never in the core) and any textual
   # mention in comments. ActiveSupport is included: the core's date and
   # datetime arithmetic is stdlib-only.
-  FORBIDDEN_CONSTANT_REFERENCES = /\b(?:ActiveRecord|ActiveModel|Rails|ActiveSupport)\b/
+  let(:forbidden_constant_references) { /\b(?:ActiveRecord|ActiveModel|Rails|ActiveSupport)\b/ }
 
   # Requiring a framework gem is a dependency, not just a mention.
-  FORBIDDEN_FRAMEWORK_REQUIRES =
-    %r{\brequire\s*\(?\s*['"](?:rails|active_record|active_model|active_support)['"]}
+  let(:forbidden_framework_requires) do
+    /\brequire\s*\(?\s*['"](?:rails|active_record|active_model|active_support)['"]/
+  end
 
   def core_files
     Dir.glob('lib/**/*.rb').reject do |path|
-      CORE_EXCLUSIONS.any? { |pattern| path.match?(pattern) }
+      core_exclusions.any? { |pattern| path.match?(pattern) }
     end.sort
   end
 
@@ -64,28 +68,28 @@ RSpec.describe 'framework-agnostic core architecture guard' do
     # A canary proving the pattern catches genuine references. If this ever
     # fails, the core assertions above are guarding nothing.
     expect(File.read('lib/factory_bakery/active_record_mapper/mapper.rb'))
-      .to match(FORBIDDEN_CONSTANT_REFERENCES)
+      .to match(forbidden_constant_references)
   end
 
   it 'is armed: the excluded Rails integration really does reference ActiveSupport' do
     # A canary proving the extended pattern catches ActiveSupport references
     # too, not just the ORM constants.
     expect(File.read('lib/factory_bakery/active_record_mapper/railtie.rb'))
-      .to match(FORBIDDEN_CONSTANT_REFERENCES)
+      .to match(forbidden_constant_references)
   end
 
   it 'keeps every framework constant reference out of the core set' do
-    violations = violations_in(core_files, FORBIDDEN_CONSTANT_REFERENCES)
+    violations = violations_in(core_files, forbidden_constant_references)
 
-    expect(violations).to be_empty,
-          "framework constants leaked into the framework-agnostic core:\n#{violations.join("\n")}"
+    message = "framework constants leaked into the framework-agnostic core:\n#{violations.join("\n")}"
+    expect(violations).to be_empty, message
   end
 
   it 'keeps every framework require out of the core set' do
-    violations = violations_in(core_files, FORBIDDEN_FRAMEWORK_REQUIRES)
+    violations = violations_in(core_files, forbidden_framework_requires)
 
-    expect(violations).to be_empty,
-          "framework requires leaked into the framework-agnostic core:\n#{violations.join("\n")}"
+    message = "framework requires leaked into the framework-agnostic core:\n#{violations.join("\n")}"
+    expect(violations).to be_empty, message
   end
 
   it 'loads the gem and bakes a plain target with no framework boot at all' do
@@ -115,8 +119,7 @@ RSpec.describe 'framework-agnostic core architecture guard' do
       )
     end
 
-    expect(status).to be_success,
-                  "framework-free load failed:\n#{stderr}\n#{stdout}"
+    expect(status).to be_success, "framework-free load failed:\n#{stderr}\n#{stdout}"
     expect(stdout).to eq('OK')
   end
 
@@ -167,8 +170,7 @@ RSpec.describe 'framework-agnostic core architecture guard' do
       )
     end
 
-    expect(status).to be_success,
-                  "framework-free temporal arithmetic failed:\n#{stderr}\n#{stdout}"
+    expect(status).to be_success, "framework-free temporal arithmetic failed:\n#{stderr}\n#{stdout}"
     expect(stdout).to eq('OK')
   end
 end

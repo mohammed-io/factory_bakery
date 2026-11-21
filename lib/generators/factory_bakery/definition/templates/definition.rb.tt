@@ -1,0 +1,7 @@
+# frozen_string_literal: true
+
+FactoryBakery.define(<%= class_name %>) do
+<% attribute_comments.each do |comment| -%>
+  <%= comment %>
+<% end -%>
+end
