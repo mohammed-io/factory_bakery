@@ -58,7 +58,7 @@ module FactoryBakery
 
         def build(object, declaration, introspection)
           entry = entry_for(object, declaration.name, introspection)
-          validate!(object, declaration, entry)
+          DeclarationRules.validate!(object, declaration, entry)
           return if suppressed?(object, entry)
 
           if declaration.block
@@ -94,51 +94,6 @@ module FactoryBakery
             message += " (could not be introspected: #{failure})"
           end
           raise FactoryBakery::Error, message
-        end
-
-        def validate!(object, declaration, entry)
-          if unsupported_shape?(entry)
-            raise FactoryBakery::Error,
-                  "#{object.class}##{entry.name} (#{entry.kind}) is not supported; " \
-                  'assign via an attribute block'
-          end
-          validate_strategy!(declaration, entry)
-          return if declaration.child_count.nil? || collection?(entry)
-
-          raise ArgumentError,
-                "count: is only supported on collections, but #{object.class}##{entry.name} " \
-                "is a #{entry.kind} association"
-        end
-
-        # Reusing a child would rewrite its FK and steal it from another
-        # owner, so only an *explicit* :reuse_non_unique on a non-belongs_to
-        # edge raises. An inherited scoped/global choice just skips ineligible
-        # edges.
-        def validate_strategy!(declaration, entry)
-          return unless ReuseResolver.strategy_for(declaration) == :reuse_non_unique
-
-          if declaration.strategy == :reuse_non_unique && entry.kind != :belongs_to
-            raise ArgumentError,
-                  "strategy: :reuse_non_unique is only supported on belongs_to, but #{qualified(entry)} " \
-                  "is a #{entry.kind} association"
-          end
-          return unless entry.kind == :belongs_to
-          return if declaration.traits.empty?
-
-          raise ArgumentError,
-                "traits cannot be combined with strategy: :reuse_non_unique on #{qualified(entry)}"
-        end
-
-        def qualified(entry)
-          "#{entry.target.call}##{entry.name}"
-        end
-
-        def unsupported_shape?(entry)
-          entry.kind == :has_and_belongs_to_many || entry.through
-        end
-
-        def collection?(entry)
-          %i[has_many has_and_belongs_to_many].include?(entry.kind)
         end
 
         # Core hands us the instantiated object rather than the overrides hash.

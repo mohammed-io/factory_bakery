@@ -27,14 +27,20 @@ module FactoryBakery
           if reuse
             resolved = BakeryBuilder.resolve(klass).first
             existing = ReuseResolver.existing(resolved, declaration.overrides, entry)
-            return FkParentPersistence.settle(existing, object, entry) if existing
+            return FkParentPersistence.settle(existing, object, entry, persist: declaration.persist) if existing
           end
 
-          fresh = FkParentPersistence.build(object, entry) do
-            FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
-          end
+          fresh = bake_fresh(object, declaration, entry, klass)
           ReuseResolver.remember(resolved, declaration.overrides, entry, fresh) if reuse
           fresh
+        end
+
+        # `persist: true` saves the fresh parent even where the edge would
+        # otherwise leave it unsaved.
+        def bake_fresh(object, declaration, entry, klass)
+          FkParentPersistence.build(object, entry, persist: declaration.persist) do
+            FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
+          end
         end
 
         def bake_child(object, declaration, entry, automatic: false)

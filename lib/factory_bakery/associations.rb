@@ -4,6 +4,7 @@ require 'factory_bakery'
 
 require_relative 'associations/configuration'
 require_relative 'associations/declaration'
+require_relative 'associations/declaration_rules'
 require_relative 'associations/dsl'
 require_relative 'associations/graph_validity'
 require_relative 'associations/back_edge_detector'

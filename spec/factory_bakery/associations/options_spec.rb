@@ -100,6 +100,82 @@ RSpec.describe 'association options' do
     end
   end
 
+  describe 'persist:' do
+    # The owner's validator reads the parent's id, as Discourse's TopicLink
+    # does; an unsaved parent leaves it nil.
+    def define_id_reading_owner(name)
+      author = define_model("#{name}Author", name: :string)
+      post = define_model("#{name}Post", author_id: :integer) do
+        belongs_to :author, class_name: "#{name}Author", optional: true
+        validate { errors.add(:base, 'author id required') if author_id.nil? }
+      end
+      [author, post]
+    end
+
+    it 'leaves the parent unsaved under plain bake without persist:' do
+      _author, post = define_id_reading_owner('AssocNoPersist')
+      FactoryBakery.define(post) { association :author }
+
+      expect(FactoryBakery.bake(post)).not_to be_valid
+    end
+
+    it 'saves the parent first under plain bake so id-reading validators pass' do
+      _author, post = define_id_reading_owner('AssocPersistBake')
+      FactoryBakery.define(post) { association :author, persist: true }
+
+      record = FactoryBakery.bake(post)
+      expect([record.author.persisted?, record.new_record?, record.valid?]).to eq([true, true, true])
+    end
+
+    it 'saves the parent before validation under bake!' do
+      _author, post = define_id_reading_owner('AssocPersistBakeBang')
+      FactoryBakery.define(post) { association :author, persist: true }
+
+      expect(FactoryBakery.bake!(post).author).to be_persisted
+    end
+
+    it 'combines with a positional class, traits and overrides' do
+      author, post = define_id_reading_owner('AssocPersistOptions')
+      FactoryBakery.define(author) { trait(:named) { name { 'trait' } } }
+      FactoryBakery.define(post) { association :author, author, :named, persist: true }
+
+      expect(FactoryBakery.bake(post).author).to have_attributes(name: 'trait', persisted?: true)
+    end
+
+    it 'saves a polymorphic parent' do
+      post_model = define_model('AssocPersistPolyPost', title: :string)
+      comment_model = define_model('AssocPersistPolyComment', commentable_type: :string, commentable_id: :integer) do
+        belongs_to :commentable, polymorphic: true, optional: true
+        validate { errors.add(:base, 'commentable id required') if commentable_id.nil? }
+      end
+      FactoryBakery.define(comment_model) { association :commentable, post_model, persist: true }
+
+      expect(FactoryBakery.bake(comment_model)).to be_valid
+    end
+
+    it 'rejects persist: on a collection' do
+      author, post = define_author_and_post('AssocPersistCollection')
+      author.has_many :posts, class_name: post.name, foreign_key: :author_id
+      FactoryBakery.define(author) { association :posts, persist: true }
+
+      expect { FactoryBakery.bake(author) }.to raise_error(ArgumentError, /persist: is only supported on belongs_to/)
+    end
+
+    it 'rejects persist: combined with a block' do
+      _author, post = define_author_and_post('AssocPersistBlock')
+      FactoryBakery.define(post) { association(:author, persist: true) { nil } }
+
+      expect { FactoryBakery.bake(post) }.to raise_error(ArgumentError, /block cannot be combined with persist:/)
+    end
+
+    it 'rejects a non-boolean persist:' do
+      _author, post = define_author_and_post('AssocPersistBad')
+      FactoryBakery.define(post) { association :author, persist: 'yes' }
+
+      expect { FactoryBakery.bake(post) }.to raise_error(ArgumentError, /persist: must be true or false/)
+    end
+  end
+
   describe 'factory:' do
     it 'uses a registered symbol factory and its declarations for the target' do
       author, post = define_author_and_post('AssocSymbolFactory')

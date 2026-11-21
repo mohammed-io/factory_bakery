@@ -13,10 +13,15 @@ module FactoryBakery
       # The target class may lead the positional arguments instead of being
       # passed as factory: (`association :post, Post, :published`); traits are
       # always symbols, so a Class there is unambiguous.
-      def association(name, *traits, factory: nil, strategy: nil, count: nil, **overrides, &block) # rubocop:disable Metrics/ParameterLists
+      #
+      # `persist: true` saves a belongs_to target before the owner is
+      # validated, even under plain `bake`, for validators that read the
+      # parent's id (like FactoryBot's `strategy: :create` on an association).
+      def association(name, *traits, factory: nil, strategy: nil, count: nil, persist: false, **overrides, &block) # rubocop:disable Metrics/ParameterLists
         factory, traits = positional_target(traits, factory)
         Associations.validated_strategy!(strategy) unless strategy.nil?
         validate_count!(count)
+        validate_persist!(persist, block)
         validate_block!(block, count, traits, factory, overrides)
 
         record_plugin_declaration(
@@ -27,7 +32,8 @@ module FactoryBakery
             child_count: count,
             overrides: overrides,
             block: block,
-            strategy: strategy
+            strategy: strategy,
+            persist: persist
           )
         )
       end
@@ -39,6 +45,15 @@ module FactoryBakery
         raise ArgumentError, 'pass the target class positionally or as factory:, not both' unless factory.nil?
 
         [traits.first, traits.drop(1)]
+      end
+
+      # A block returns the finished value, so it alone decides whether that
+      # value is saved.
+      def validate_persist!(persist, block)
+        raise ArgumentError, 'persist: must be true or false' unless [true, false].include?(persist)
+        return unless persist && block
+
+        raise ArgumentError, 'a block cannot be combined with persist:; call bake! inside the block'
       end
 
       def validate_count!(count)
