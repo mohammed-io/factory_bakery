@@ -40,23 +40,18 @@ module FactoryBakery
       end
 
       class << self
-        # `persist` is the declaration's `persist: true`: the author asked for a
-        # saved parent, so the edge is handled like an FK-presence edge even
-        # when it is polymorphic or nothing validates its foreign key.
-        def required?(entry, persist: false)
-          return true if persist
-
+        def required?(entry)
           !entry.nil? && entry.fk_presence && !entry.polymorphic
         end
 
         # Adopting a row discards the entire fresh build, including writes
         # made by nested declarations or FK-presence edges.
-        def build(owner, entry, transaction_class: owner.class, persist: false)
-          return yield unless required?(entry, persist: persist) || BuildContext.persisting?
+        def build(owner, entry, transaction_class: owner.class)
+          return yield unless required?(entry) || BuildContext.persisting?
 
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(transaction_class)
           mark = BuildContext.generated_records.length
-          adapter.transaction(transaction_class) { settle_fresh(yield, owner, entry, mark, persist) }
+          adapter.transaction(transaction_class) { settle_fresh(yield, owner, entry, mark) }
         rescue AdoptedParent => e
           BuildContext.trim_generated_records!(mark)
           e.row.reload
@@ -68,23 +63,23 @@ module FactoryBakery
         # read-only new parent so the root save! never autosaves one; plain
         # `bake` only settles read-only parents on FK-presence edges, where
         # the id is needed.
-        def settle(parent, owner, entry, persist: false)
-          return adopt(parent, owner, entry) if read_only_new?(parent, entry, persist)
+        def settle(parent, owner, entry)
+          return adopt(parent, owner, entry) if read_only_new?(parent, entry)
 
-          persist_fk!(parent, entry, persist)
+          persist_fk!(parent, entry)
         end
 
         private
 
-        def settle_fresh(parent, owner, entry, mark, persist)
-          if read_only_new?(parent, entry, persist)
+        def settle_fresh(parent, owner, entry, mark)
+          if read_only_new?(parent, entry)
             settled = adopt(parent, owner, entry)
             raise AdoptedParent, settled unless parent.equal?(settled)
 
             return parent
           end
 
-          persist_fk!(parent, entry, persist) do |adapter|
+          persist_fk!(parent, entry) do |adapter|
             next unless adapter.respond_to?(:callback_created_parent)
 
             adapter.callback_created_parent(parent, BuildContext.generated_records.drop(mark)) do |children|
@@ -93,14 +88,14 @@ module FactoryBakery
           end
         end
 
-        def read_only_new?(parent, entry, persist)
+        def read_only_new?(parent, entry)
           new_record?(parent) &&
             FactoryBakery::MapperRegistry.read_only?(parent) &&
-            (required?(entry, persist: persist) || BuildContext.persisting?)
+            (required?(entry) || BuildContext.persisting?)
         end
 
-        def persist_fk!(parent, entry, persist)
-          return parent unless required?(entry, persist: persist) && new_record?(parent)
+        def persist_fk!(parent, entry)
+          return parent unless required?(entry) && new_record?(parent)
 
           refuse_broken_parents!(parent)
           adapter = FactoryBakery::MapperRegistry.persistence_adapter(parent)

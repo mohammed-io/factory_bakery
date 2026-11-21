@@ -46,7 +46,7 @@ RSpec.describe 'FactoryBakery association collections and has_one (A12)' do
   describe 'count: on has_many' do
     it 'builds N distinct children bound to the owner, with no database writes under bake' do
       post_model, comment_model = define_post_and_comment('CollCount')
-      FactoryBakery.define(post_model) { association :comments, count: 3, body: 'nice' }
+      FactoryBakery.define(post_model) { association :comments, count: 3, with: { body: 'nice' } }
 
       post = nil
       inserts = inserts_in { post = FactoryBakery.bake(post_model) }
@@ -91,7 +91,7 @@ RSpec.describe 'FactoryBakery association collections and has_one (A12)' do
 
     it 'applies overrides to every child' do
       post_model, _comment_model = define_post_and_comment('CollOverride')
-      FactoryBakery.define(post_model) { association :comments, count: 2, body: 'same' }
+      FactoryBakery.define(post_model) { association :comments, count: 2, with: { body: 'same' } }
 
       expect(FactoryBakery.bake(post_model).comments.map(&:body)).to eq(%w[same same])
     end
@@ -253,7 +253,7 @@ RSpec.describe 'FactoryBakery association collections and has_one (A12)' do
       cases = [
         proc { association(:comments, count: 2) { |_owner| [] } },
         proc { association(:comments, :some_trait) { |_owner| [] } },
-        proc { association(:comments, body: 'x') { |_owner| [] } }
+        proc { association(:comments, with: { body: 'x' }) { |_owner| [] } }
       ]
 
       cases.each do |declaration|

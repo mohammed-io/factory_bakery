@@ -538,20 +538,25 @@ Association-presence edges (`validates :user, presence: true`, `optional: false`
 ### The `association` DSL
 
 ```ruby
-association(name, *traits, factory: nil, strategy: nil, count: nil, **overrides, &owner_block)
+association(name, [TargetClass], *traits, factory: nil, strategy: nil, count: nil, persist: false, with: {}, &owner_block)
 ```
 
 ```ruby
 FactoryBakery.define(Post) do
   association :author                                          # reflection class, its factory + heuristics
-  association :category, :featured, name: 'News'                # traits and overrides for the child
-  association :editor, factory: :admin_user                     # named factory (class also accepted)
-  association :commentable, factory: :post                      # polymorphic target: factory: is required
-  association :comments, count: 3, body: 'nice'                 # has_many: three children bound to this post
+  association :category, :featured, with: { name: 'News' }      # traits, and attribute overrides for the child
+  association :editor, AdminUser                                # target class (same as factory: AdminUser)
+  association :editor, factory: :admin_user                     # named factory
+  association :commentable, Post                                # polymorphic target: the class is required
+  association :comments, count: 3, with: { body: 'nice' }       # has_many: three children bound to this post
   association :cover                                            # has_one: one child bound to the owner
+  association :topic, persist: true                             # belongs_to saved first, even under plain bake
   association(:reviewer) { |post| FactoryBakery.bake(User, team: post.team) }
 end
 ```
+
+- **`with:`** holds the attribute overrides for the built target. They are kept apart from the options, so `association :topic, persist: true, with: { user: admin }` reads unambiguously and a target column named `count` or `strategy` can still be set. An override passed beside the options (`association :topic, user: admin`) raises `ArgumentError` naming the `with:` spelling.
+- **`persist: true`** bakes a `belongs_to` target with `bake!`, so it and its graph are saved before the owner is validated, even under plain `bake`. Use it when a validator reads the parent's id rather than the object (for example `topic_id == link_topic_id`, which is `nil == nil` while the topic is unsaved). It is FactoryBot's `strategy: :create` on an association. It is refused on `has_one`/`has_many` (a child needs the owner's id) and with a block (call `bake!` inside the block instead).
 
 - The name is checked against `reflect_on_association` at **bake time**, not definition time, so definition files can load before models. A typo raises `FactoryBakery::Error` naming the model and association.
 - Traits are forwarded to the child bake in order; `factory:` names a registered symbol or a class compatible with the reflection (a subclass is fine) and is mandatory for polymorphic targets. Overrides are forwarded too and beat the child's own factory declarations. Literal overrides are applied to **every** child: if the column also has a `uniqueness` validation, the children collide, because FactoryBakery does not make literal values unique. Use a block or leave the value to heuristics when each child needs a distinct value.
@@ -621,7 +626,8 @@ The same association specs run in the 3 × 3 CI matrix — Rails 7.1 / 7.2 / 8.0
 | factory_bot | FactoryBakery |
 | --- | --- |
 | `association :author` | `association :author` (after requiring the plugin, or with Rails config) |
-| `association :author, :admin, factory: :editor, name: 'Ann'` | Same spelling: traits, `factory:` and overrides |
+| `association :author, :admin, factory: :editor, name: 'Ann'` | `association :author, :admin, factory: :editor, with: { name: 'Ann' }`: overrides go in `with:` |
+| `association :author, strategy: :create` | `association :author, persist: true` (`strategy:` here means `:fresh` / `:reuse_non_unique`) |
 | `create_list(:comment, 3, post: post)` | `association :comments, count: 3` inside the owner's definition |
 | `use_parent_strategy` / build vs create strategy | `bake` builds the whole graph unsaved; `bake!` persists the whole graph in one transaction |
 

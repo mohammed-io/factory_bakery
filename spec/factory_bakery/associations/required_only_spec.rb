@@ -233,7 +233,7 @@ RSpec.describe 'FactoryBakery associations :required_only mode' do
       user_model = define_model('ReqDeclWinsUser', account_id: :integer) do
         belongs_to :account, class_name: 'ReqDeclWinsAccount', optional: false
       end
-      FactoryBakery.define(user_model) { association :account, name: 'declared' }
+      FactoryBakery.define(user_model) { association :account, with: { name: 'declared' } }
 
       user = nil
       inserts = inserts_in { user = FactoryBakery.bake!(user_model) }

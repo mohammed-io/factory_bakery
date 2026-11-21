@@ -27,7 +27,7 @@ module FactoryBakery
           if reuse
             resolved = BakeryBuilder.resolve(klass).first
             existing = ReuseResolver.existing(resolved, declaration.overrides, entry)
-            return FkParentPersistence.settle(existing, object, entry, persist: declaration.persist) if existing
+            return FkParentPersistence.settle(existing, object, entry) if existing
           end
 
           fresh = bake_fresh(object, declaration, entry, klass)
@@ -35,10 +35,13 @@ module FactoryBakery
           fresh
         end
 
-        # `persist: true` saves the fresh parent even where the edge would
-        # otherwise leave it unsaved.
+        # `persist: true` is a nested `bake!`: the target and its whole graph
+        # are saved (and verified) before the owner is validated, inside the
+        # caller's transaction when there is one. Otherwise the edge decides.
         def bake_fresh(object, declaration, entry, klass)
-          FkParentPersistence.build(object, entry, persist: declaration.persist) do
+          return FactoryBakery.bake!(klass, *declaration.traits, **declaration.overrides) if declaration.persist
+
+          FkParentPersistence.build(object, entry) do
             FactoryBakery.bake(klass, *declaration.traits, **declaration.overrides)
           end
         end

@@ -14,15 +14,22 @@ module FactoryBakery
       # passed as factory: (`association :post, Post, :published`); traits are
       # always symbols, so a Class there is unambiguous.
       #
+      # `with:` holds the attribute overrides for the built target, kept apart
+      # from the association's own options so a key such as `user:` cannot be
+      # read as one of them, and a column named `count` can still be set.
+      #
       # `persist: true` saves a belongs_to target before the owner is
       # validated, even under plain `bake`, for validators that read the
       # parent's id (like FactoryBot's `strategy: :create` on an association).
-      def association(name, *traits, factory: nil, strategy: nil, count: nil, persist: false, **overrides, &block) # rubocop:disable Metrics/ParameterLists
+      def association(name, *traits, factory: nil, strategy: nil, count: nil, persist: false, with: {}, # rubocop:disable Metrics/ParameterLists
+                      **unknown, &block)
+        reject_unknown!(unknown)
         factory, traits = positional_target(traits, factory)
         Associations.validated_strategy!(strategy) unless strategy.nil?
         validate_count!(count)
+        validate_with!(with)
         validate_persist!(persist, block)
-        validate_block!(block, count, traits, factory, overrides)
+        validate_block!(block, count, traits, factory, with)
 
         record_plugin_declaration(
           Declaration.new(
@@ -30,7 +37,7 @@ module FactoryBakery
             traits: traits,
             factory: factory,
             child_count: count,
-            overrides: overrides,
+            overrides: with,
             block: block,
             strategy: strategy,
             persist: persist
@@ -40,11 +47,25 @@ module FactoryBakery
 
       private
 
+      # Overrides passed beside the options (the FactoryBot spelling) are
+      # refused with the spelling that works.
+      def reject_unknown!(unknown)
+        return if unknown.empty?
+
+        raise ArgumentError,
+              "unknown association option(s) #{unknown.keys.map { "#{_1}:" }.join(', ')}; " \
+              "pass attribute overrides as with: #{unknown.inspect}"
+      end
+
       def positional_target(traits, factory)
         return [factory, traits] unless traits.first.is_a?(Class)
         raise ArgumentError, 'pass the target class positionally or as factory:, not both' unless factory.nil?
 
         [traits.first, traits.drop(1)]
+      end
+
+      def validate_with!(with)
+        raise ArgumentError, 'with: must be a Hash of attribute overrides' unless with.is_a?(Hash)
       end
 
       # A block returns the finished value, so it alone decides whether that
@@ -64,11 +85,11 @@ module FactoryBakery
 
       # A block decides the whole value from the owner, so combining it with
       # options that would also decide the children is ambiguous.
-      def validate_block!(block, count, traits, factory, overrides)
+      def validate_block!(block, count, traits, factory, with)
         return unless block
-        return if count.nil? && traits.empty? && factory.nil? && overrides.empty?
+        return if count.nil? && traits.empty? && factory.nil? && with.empty?
 
-        raise ArgumentError, 'a block cannot be combined with count:, traits, factory: or attribute overrides'
+        raise ArgumentError, 'a block cannot be combined with count:, traits, factory: or with:'
       end
     end
   end

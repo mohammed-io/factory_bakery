@@ -68,7 +68,7 @@ RSpec.describe 'association options' do
     it 'accepts traits and overrides after the class' do
       author, post = define_author_and_post('AssocPositionalTraits')
       FactoryBakery.define(author) { trait(:senior) { level { 3 } } }
-      FactoryBakery.define(post) { association :author, author, :senior, name: 'Ann' }
+      FactoryBakery.define(post) { association :author, author, :senior, with: { name: 'Ann' } }
 
       child = FactoryBakery.bake(post).author
       expect([child.level, child.name]).to eq([3, 'Ann'])
@@ -97,6 +97,40 @@ RSpec.describe 'association options' do
       FactoryBakery.define(post) { association :author, author, factory: author }
 
       expect { FactoryBakery.bake(post) }.to raise_error(ArgumentError, /positionally or as factory:/)
+    end
+  end
+
+  describe 'with:' do
+    it 'passes attribute overrides to the target' do
+      _author, post = define_author_and_post('AssocWith')
+      FactoryBakery.define(post) { association :author, with: { name: 'Ann', role: 'editor' } }
+
+      expect(FactoryBakery.bake(post).author).to have_attributes(name: 'Ann', role: 'editor')
+    end
+
+    it 'sets a target column that shares a name with an association option' do
+      counter = define_model('AssocWithCounter', count: :integer)
+      owner = define_model('AssocWithOwner', counter_id: :integer) do
+        belongs_to :counter, class_name: 'AssocWithCounter', optional: false
+      end
+      FactoryBakery.define(owner) { association :counter, counter, with: { count: 7 } }
+
+      expect(FactoryBakery.bake(owner).counter.count).to eq(7)
+    end
+
+    it 'rejects overrides passed beside the options, naming the with: spelling' do
+      _author, post = define_author_and_post('AssocWithLoose')
+      FactoryBakery.define(post) { association :author, name: 'Ann' }
+
+      expect { FactoryBakery.bake(post) }
+        .to raise_error(ArgumentError, /unknown association option\(s\) name:; pass attribute overrides as with:/)
+    end
+
+    it 'rejects a with: that is not a Hash' do
+      _author, post = define_author_and_post('AssocWithBad')
+      FactoryBakery.define(post) { association :author, with: 'Ann' }
+
+      expect { FactoryBakery.bake(post) }.to raise_error(ArgumentError, /with: must be a Hash/)
     end
   end
 
@@ -140,6 +174,21 @@ RSpec.describe 'association options' do
       FactoryBakery.define(post) { association :author, author, :named, persist: true }
 
       expect(FactoryBakery.bake(post).author).to have_attributes(name: 'trait', persisted?: true)
+    end
+
+    it "saves the parent's own required graph under plain bake" do
+      team = define_model('AssocPersistGraphTeam', name: :string)
+      author = define_model('AssocPersistGraphAuthor', name: :string, team_id: :integer) do
+        belongs_to :team, class_name: 'AssocPersistGraphTeam', optional: false
+      end
+      post = define_model('AssocPersistGraphPost', author_id: :integer) do
+        belongs_to :author, class_name: 'AssocPersistGraphAuthor', optional: true
+        validate { errors.add(:base, 'author id required') if author_id.nil? }
+      end
+      FactoryBakery.define(post) { association :author, author, persist: true }
+
+      record = FactoryBakery.bake(post)
+      expect([record.valid?, record.author.team.class, record.author.team.persisted?]).to eq([true, team, true])
     end
 
     it 'saves a polymorphic parent' do
@@ -217,7 +266,7 @@ RSpec.describe 'association options' do
     it 'forwards overrides and lets them beat the child factory declarations' do
       author, post = define_author_and_post('AssocOverrideChild')
       FactoryBakery.define(author) { name { 'from-factory' } }
-      FactoryBakery.define(post) { association :author, name: 'from-association' }
+      FactoryBakery.define(post) { association :author, with: { name: 'from-association' } }
 
       expect(FactoryBakery.bake(post).author.name).to eq('from-association')
     end
@@ -226,7 +275,7 @@ RSpec.describe 'association options' do
       author, post = define_author_and_post('AssocCombined')
       register_editor(author)
       FactoryBakery.define(post) do
-        association :author, :senior, factory: :assoc_opt_editor, name: 'Ann'
+        association :author, :senior, factory: :assoc_opt_editor, with: { name: 'Ann' }
       end
 
       child = FactoryBakery.bake(post).author
@@ -240,8 +289,8 @@ RSpec.describe 'association options' do
       author, post = define_author_and_post('AssocRedeclare')
       register_editor(author)
       FactoryBakery.define(post) do
-        association :author, :senior, factory: :assoc_opt_editor, name: 'Ann'
-        trait(:guest) { association :author, name: 'Guest' }
+        association :author, :senior, factory: :assoc_opt_editor, with: { name: 'Ann' }
+        trait(:guest) { association :author, with: { name: 'Guest' } }
       end
 
       expect(FactoryBakery.bake(post).author.name).to eq('Ann')
@@ -252,8 +301,8 @@ RSpec.describe 'association options' do
       author, post = define_author_and_post('AssocWinObject')
       register_editor(author)
       FactoryBakery.define(post) do
-        association :author, factory: :assoc_opt_editor, name: 'Ann'
-        trait(:guest) { association :author, name: 'Guest' }
+        association :author, factory: :assoc_opt_editor, with: { name: 'Ann' }
+        trait(:guest) { association :author, with: { name: 'Guest' } }
       end
       chosen = author.create!(name: 'Chosen')
 
@@ -264,7 +313,7 @@ RSpec.describe 'association options' do
     it 'lets a call-site foreign key beat the declaration' do
       author, post = define_author_and_post('AssocWinFk')
       register_editor(author)
-      FactoryBakery.define(post) { association :author, factory: :assoc_opt_editor, name: 'Ann' }
+      FactoryBakery.define(post) { association :author, factory: :assoc_opt_editor, with: { name: 'Ann' } }
       chosen = author.create!(name: 'Chosen')
 
       baked = FactoryBakery.bake(post, author_id: chosen.id)
@@ -320,7 +369,7 @@ RSpec.describe 'association options' do
       end
       FactoryBakery.define(:assoc_poly_symbol_post, klass: post_model) { title { 'from factory' } }
       FactoryBakery.define(comment_model) do
-        association :commentable, factory: :assoc_poly_symbol_post, title: 'from association'
+        association :commentable, factory: :assoc_poly_symbol_post, with: { title: 'from association' }
       end
 
       comment = FactoryBakery.bake(comment_model)
@@ -358,8 +407,8 @@ RSpec.describe 'association options' do
         belongs_to :editor, class_name: 'AssocMultiPerson', optional: false
       end
       FactoryBakery.define(post) do
-        association :author, name: 'Author'
-        association :editor, name: 'Editor'
+        association :author, with: { name: 'Author' }
+        association :editor, with: { name: 'Editor' }
       end
 
       baked = FactoryBakery.bake(post)
@@ -374,7 +423,7 @@ RSpec.describe 'association options' do
       author, post = define_author_and_post('AssocBangOptions')
       register_editor(author)
       FactoryBakery.define(post) do
-        association :author, :senior, factory: :assoc_opt_editor, name: 'Persisted'
+        association :author, :senior, factory: :assoc_opt_editor, with: { name: 'Persisted' }
       end
 
       baked = FactoryBakery.bake!(post)

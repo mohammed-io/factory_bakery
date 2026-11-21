@@ -91,8 +91,8 @@ RSpec.describe 'in-graph sharing under :reuse_non_unique' do
         belongs_to :editor, class_name: 'DedupPerson', optional: false
       end
       FactoryBakery.define(post) do
-        association :author, strategy: :reuse_non_unique, name: 'Author'
-        association :editor, strategy: :reuse_non_unique, name: 'Editor'
+        association :author, strategy: :reuse_non_unique, with: { name: 'Author' }
+        association :editor, strategy: :reuse_non_unique, with: { name: 'Editor' }
       end
 
       baked = FactoryBakery.bake(post)

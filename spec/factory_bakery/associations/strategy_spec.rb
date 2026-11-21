@@ -64,7 +64,7 @@ RSpec.describe 'association strategies' do
       category, post = define_category_and_post('StrategMatch')
       category.create!(name: 'News')
       sport = category.create!(name: 'Sport')
-      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, name: 'Sport' }
+      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, with: { name: 'Sport' } }
 
       expect(FactoryBakery.bake(post).category).to eq(sport)
     end
@@ -72,7 +72,7 @@ RSpec.describe 'association strategies' do
     it 'builds fresh when an override is not a column' do
       category, post = define_category_and_post('StrategNonColumn')
       existing = category.create!(name: 'News')
-      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, bogus: 'x' }
+      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, with: { bogus: 'x' } }
 
       baked = FactoryBakery.bake(post)
 
@@ -84,7 +84,7 @@ RSpec.describe 'association strategies' do
     it 'builds fresh when an override is not a scalar' do
       category, post = define_category_and_post('StrategNonScalar')
       existing = category.create!(name: 'News')
-      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, name: ['News'] }
+      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, with: { name: ['News'] } }
 
       baked = FactoryBakery.bake(post)
 
@@ -342,8 +342,8 @@ RSpec.describe 'association strategies' do
         belongs_to :editor, class_name: 'StrategMismatchPerson', optional: false
       end
       FactoryBakery.define(post) do
-        association :author, strategy: :reuse_non_unique, name: 'Author'
-        association :editor, strategy: :reuse_non_unique, name: 'Editor'
+        association :author, strategy: :reuse_non_unique, with: { name: 'Author' }
+        association :editor, strategy: :reuse_non_unique, with: { name: 'Editor' }
       end
 
       baked = FactoryBakery.bake(post)
@@ -431,7 +431,7 @@ RSpec.describe 'association strategies' do
         'StrategEncrypted', category_columns: { name: :string, secret: :string }
       )
       category.class_eval { encrypts :secret }
-      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, secret: 'abc' }
+      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, with: { secret: 'abc' } }
 
       expect { FactoryBakery.bake(post) }.to raise_error(ArgumentError, /encrypted/)
     end
@@ -441,7 +441,9 @@ RSpec.describe 'association strategies' do
         'StrategSerialized', category_columns: { name: :string, settings: :text }
       )
       category.class_eval { serialize :settings }
-      FactoryBakery.define(post) { association :category, strategy: :reuse_non_unique, settings: { 'x' => 1 } }
+      FactoryBakery.define(post) do
+        association :category, strategy: :reuse_non_unique, with: { settings: { 'x' => 1 } }
+      end
 
       expect { FactoryBakery.bake(post) }.to raise_error(ArgumentError, /serialized/)
     end

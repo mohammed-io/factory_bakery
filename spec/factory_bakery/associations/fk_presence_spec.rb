@@ -494,7 +494,7 @@ RSpec.describe 'raw-FK presence edges' do
 
     it 'persists the parent for an explicit fresh declaration under bake!' do
       owner_model, child_model = define_fk_edge('FkDeclFresh')
-      FactoryBakery.define(child_model) { association :owner, name: 'declared' }
+      FactoryBakery.define(child_model) { association :owner, with: { name: 'declared' } }
 
       child = FactoryBakery.bake!(child_model)
 

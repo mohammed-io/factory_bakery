@@ -120,7 +120,7 @@ RSpec.describe 'FactoryBakery associations required has_one (issue #53)' do
 
     it 'lets an explicit association declaration win' do
       owner_model, = define_required_pair('ReqHoDeclared')
-      FactoryBakery.define(owner_model) { association :profile, nickname: 'declared' }
+      FactoryBakery.define(owner_model) { association :profile, with: { nickname: 'declared' } }
 
       owner = FactoryBakery.bake(owner_model)
 
