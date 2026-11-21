@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Reproducible seeds and explained rejections
+
+- Every generated value now derives from one seed, resolved on first use: `FACTORY_BAKERY_SEED`, then `FactoryBakery.seed =`, then `FactoryBakery.seed_generator` (a callable returning an Integer), then the test framework's seed (`require 'factory_bakery/rspec'` for RSpec's seed, `require 'factory_bakery/minitest'` for Minitest's), else a random seed per process. Each top-level bake draws from its own generator derived from the seed, the model's class name and its bake count, so a model's values do not depend on which models were baked before it. FFaker is seeded per top-level bake and restored afterwards.
+- Each seed resolution is announced once through `FactoryBakery.logger` (stderr by default; `nil` silences it): INFO when the test framework supplied the seed, WARN otherwise, naming the source and the reproduce command.
+- A `bake!` whose root record fails validation raises the same error class with the explanation appended after Rails' original message: the invalid attributes and errors, the random values FactoryBakery chose, the seed with its reproduce command (`rspec --seed N` under RSpec, `FACTORY_BAKERY_SEED=N` otherwise), and a `FactoryBakery.define` snippet that pins each value. There is no retry.
+- `FactoryBakery.explain(record)` returns the same text for a record built with plain `bake`, after running `valid?`.
+- `bin/rails factory_bakery:doctor` prints the explanation under each failing model. New diagnostics entry: [random-value-rejected-by-app-rule](docs/diagnostics.md#random-value-rejected-by-app-rule).
+- The install generator's initializer requires the test framework's seed integration when it finds a `spec` or `test` directory.
+- **Behavior change:** generated values now differ from earlier releases for the same run, because the gem no longer draws from Ruby's global RNG (`srand` no longer makes baked values repeatable; use the seed settings above). Relative dates are still computed from the clock.
+
 ### Association DSL
 
 - **Breaking:** attribute overrides for an association target go in `with:` (`association :topic, with: { user: admin }`). Passing them beside the options raises `ArgumentError` naming the `with:` spelling. A target column named `count`, `strategy`, `factory` or `persist` can now be overridden.

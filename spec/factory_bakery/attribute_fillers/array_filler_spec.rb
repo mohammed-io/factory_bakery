@@ -80,7 +80,7 @@ RSpec.describe 'array column filler (issue #44)' do
       stub_constraints(forbidden_values: [['alpha'], %w[alpha alpha], %w[alpha alpha alpha]])
       allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
       filler = build_filler
-      allow(filler).to receive(:rand).and_return(1)
+      allow(FactoryBakery::Randomness).to receive(:rand).and_return(1)
 
       value = filler.call
 
@@ -92,7 +92,7 @@ RSpec.describe 'array column filler (issue #44)' do
       stub_constraints(forbidden_values: [['alpha'], %w[alpha alpha], %w[alpha alpha alpha]])
       allow(FFaker::Lorem).to receive(:word).and_return('alpha')
       filler = build_filler
-      allow(filler).to receive(:rand).and_return(1)
+      allow(FactoryBakery::Randomness).to receive(:rand).and_return(1)
 
       expect { filler.call }
         .to raise_error(FactoryBakery::Error, /Object#tags.*exclusion after 10 attempts/)
@@ -102,7 +102,7 @@ RSpec.describe 'array column filler (issue #44)' do
       stub_constraints(column_backed: true, column_backed_target: true)
       allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
       filler = build_filler
-      allow(filler).to receive(:rand).and_return(1)
+      allow(FactoryBakery::Randomness).to receive(:rand).and_return(1)
 
       first = filler.call
       second = filler.call

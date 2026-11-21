@@ -63,7 +63,7 @@ module FactoryBakery
         members = resolve_set(@constraints.allowed_values, context, 'inclusion')
         return nil unless members.is_a?(Array) && members.any?
 
-        Array.new(rand(MIN_ELEMENTS..MAX_ELEMENTS)) { members.sample }
+        Array.new(Randomness.rand(MIN_ELEMENTS..MAX_ELEMENTS)) { Randomness.sample(members) }
       end
 
       # One random seed drives the whole structure. Every value stays JSON-

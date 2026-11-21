@@ -78,8 +78,36 @@ Do not call `reset_plugins!` between examples of an app suite unless you registe
 | --- | --- |
 | `WRITE=1` | `bin/rails factory_bakery:doctor`: also writes a stub definition for each failing model |
 | `NO_FAIL=1` | `bin/rails factory_bakery:doctor`: exits `0` even when models fail (the default exit status is `1`) |
+| `FACTORY_BAKERY_SEED=1234` | The seed for generated values. Takes precedence over `FactoryBakery.seed =` and the test framework. See [Randomness](#randomness) |
 | `SKIP_REGEX_COVERAGE_GATE=1` | The gem's own spec run on a single file. Not for apps |
 
 ## Randomness
 
-FactoryBakery uses Ruby's global RNG (through FFaker for strings). `srand(seed)` makes a run repeatable. Call it yourself in a `before(:suite)` hook if you want baked values to follow a seed you print.
+Every generated value derives from one seed. The gem resolves it on first use, and the first source that answers wins:
+
+| # | Source | How to set it | Announced at |
+| --- | --- | --- | --- |
+| 1 | Environment | `FACTORY_BAKERY_SEED=1234` | WARN |
+| 2 | Explicit | `FactoryBakery.seed = 1234` | WARN |
+| 3 | Generator | `FactoryBakery.seed_generator = -> { MyCI.build_number }` (must return an Integer, else `ArgumentError`) | WARN |
+| 4 | Test framework | `require 'factory_bakery/rspec'` (RSpec's seed) or `require 'factory_bakery/minitest'` (Minitest's seed) | INFO |
+| 5 | Random | Nothing set: one random seed for the process | WARN |
+
+The environment variable outranks `FactoryBakery.seed =` on purpose, so CI can pin a seed without a code change. `FactoryBakery.seed` returns the resolved seed. Setting `seed`, `seed_generator` or the framework source again resolves it again.
+
+Each resolution is announced once through `FactoryBakery.logger` (stderr by default; set it to `nil` to silence):
+
+```
+[FactoryBakery] INFO: using RSpec seed 12345 for generated data (rspec --seed 12345 reproduces it)
+[FactoryBakery] WARN: seed 1234 from FACTORY_BAKERY_SEED (not the test framework's seed); reproduce with FACTORY_BAKERY_SEED=1234
+```
+
+How the seed becomes values:
+
+- Each top-level bake (`bake` or `bake!`) draws from its own generator, derived from the seed, the model's class name, and how many top-level bakes of that class ran earlier in this process. The same seed, model and order of bakes gives the same values. One model's values do not depend on which other models were baked before it.
+- Nested bakes, made by declaration blocks, share their top-level bake's generator.
+- FFaker, which the gem uses for strings, is seeded per top-level bake and restored afterwards.
+- Relative dates (`created_at` a few days ago, `expires_at` in the future) are computed from the clock, so they move from day to day even with a fixed seed.
+- Reproducing a failing record needs its seed and the same earlier bakes. Running one spec file can change the count. The invalid-record message names the bake number it came from.
+
+When a bake produces a record that is invalid, see [Random value rejected by an app rule](../../skills/factory-bakery-diagnostics/references/diagnostics.md#random-value-rejected-by-app-rule) and `FactoryBakery.explain(record)`.

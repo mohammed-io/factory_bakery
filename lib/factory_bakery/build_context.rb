@@ -324,7 +324,7 @@ module FactoryBakery
       end
       private :ancestor_path?
 
-      def push(klass)
+      def push(klass, &block)
         previous = current
         automatic = Fiber[AUTOMATIC_BUILD_KEY]
         top_level = previous.depth.zero?
@@ -333,7 +333,9 @@ module FactoryBakery
         reset_per_bake_caches! if top_level
         Fiber[AUTOMATIC_BUILD_KEY] = nil
         Fiber[STORAGE_KEY] = nested_context(previous, klass, automatic)
-        yield
+        # Only a top-level bake draws its own generator; nested bakes share it,
+        # so the values of one bake depend on that bake alone.
+        top_level ? Randomness.top_level_bake(klass, &block) : yield
       ensure
         Fiber[STORAGE_KEY] = previous
         Fiber[AUTOMATIC_BUILD_KEY] = automatic

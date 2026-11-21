@@ -6,10 +6,14 @@
 
 ```ruby
 # spec/rails_helper.rb (or spec_helper.rb for non-Rails)
+require 'factory_bakery/rspec'
+
 RSpec.configure do |config|
   config.include FactoryBakery::Methods
 end
 ```
+
+`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =`, `FactoryBakery.seed_generator`, or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot.
 
 Use in examples:
 
@@ -27,10 +31,14 @@ Restrict to some groups: `config.include FactoryBakery::Methods, type: :model`.
 
 ```ruby
 # test/test_helper.rb (Rails)
+require 'factory_bakery/minitest'
+
 class ActiveSupport::TestCase
   include FactoryBakery::Methods
 end
 ```
+
+`require 'factory_bakery/minitest'` makes generated values follow Minitest's seed: `bin/rails test --seed 12345` reproduces a run.
 
 Without Rails:
 

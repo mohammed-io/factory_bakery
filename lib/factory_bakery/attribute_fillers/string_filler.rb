@@ -253,7 +253,8 @@ module FactoryBakery
         RegexGeneration.generate(
           @with_regexes.first,
           min_length: lengths.exact || lengths.minimum,
-          max_length: [lengths.exact || lengths.maximum, @db_limit].compact.min
+          max_length: [lengths.exact || lengths.maximum, @db_limit].compact.min,
+          random: Randomness.current
         )
       end
 
@@ -300,7 +301,7 @@ module FactoryBakery
         # Generate random padding characters
         chars = ('a'..'z').to_a + ('0'..'9').to_a
         padding = ''
-        length.times { padding += chars.sample }
+        length.times { padding += Randomness.sample(chars) }
         padding
       end
 

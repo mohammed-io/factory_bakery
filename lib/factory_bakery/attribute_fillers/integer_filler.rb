@@ -115,7 +115,7 @@ module FactoryBakery
         lower, upper = range_window(lower_bound, upper_bound)
         return sample_small_window(lower, upper, context) if small_window?(lower_bound, upper_bound)
 
-        value = rand(lower..upper)
+        value = Randomness.rand(lower..upper)
         apply_odd_even_constraint(value, lower, upper,
                                   lower_explicit: !lower_bound.nil?,
                                   upper_explicit: !upper_bound.nil?)
@@ -136,7 +136,7 @@ module FactoryBakery
       # survivor of `4..5, other_than: 5` is found without retry flake.
       def sample_small_window(lower, upper, context)
         survivors = (lower..upper).select { |value| parity_matches?(value) && numeric_compliant?(value, context) }
-        survivors.sample unless survivors.empty?
+        Randomness.sample(survivors) unless survivors.empty?
       end
 
       def resolved_range_bounds(context)
@@ -198,10 +198,10 @@ module FactoryBakery
           candidates.reject! { |v| @constraints.forbidden_values&.include?(v) } if @constraints.forbidden_values
           candidates.select!(&:odd?) if @odd_only
           candidates.select!(&:even?) if @even_only
-          return candidates.sample unless candidates.empty?
+          return Randomness.sample(candidates) unless candidates.empty?
         end
 
-        value = rand(lower..upper)
+        value = Randomness.rand(lower..upper)
         apply_odd_even_constraint(value, lower, upper,
                                   lower_explicit: lower_explicit && !lower_was_nil,
                                   upper_explicit: upper_explicit && !upper_was_nil)

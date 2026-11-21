@@ -133,21 +133,21 @@ module FactoryBakery
         end
 
         seconds_diff = (upper - lower).to_i
-        TemporalArithmetic.plus_seconds(lower, rand(0..seconds_diff))
+        TemporalArithmetic.plus_seconds(lower, Randomness.rand(0..seconds_diff))
       end
 
       def generate_by_pattern
         case @attr_name
         when /created_at/
-          days_ago(rand(0..30))
+          days_ago(Randomness.rand(0..30))
         when /updated_at/
-          days_ago(rand(0..7))
+          days_ago(Randomness.rand(0..7))
         when /published_at|posted_at/
-          days_ago(rand(0..365))
+          days_ago(Randomness.rand(0..365))
         when /starts_at|begins_at/
-          days_ahead(rand(0..30))
+          days_ahead(Randomness.rand(0..30))
         when /ends_at|finishes_at|expires_at/
-          days_ahead(rand(31..90))
+          days_ahead(Randomness.rand(31..90))
         else
           Time.now
         end

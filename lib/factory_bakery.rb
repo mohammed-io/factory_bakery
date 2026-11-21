@@ -8,6 +8,11 @@ require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/plugin_registry'
 require_relative 'factory_bakery/constraint_set'
 require_relative 'factory_bakery/fill_optional'
+require_relative 'factory_bakery/seed'
+require_relative 'factory_bakery/randomness'
+require_relative 'factory_bakery/provenance'
+require_relative 'factory_bakery/explanation'
+require_relative 'factory_bakery/seed_api'
 require_relative 'factory_bakery/required_attribute'
 require_relative 'factory_bakery/fallback_builder'
 require_relative 'factory_bakery/mapper_registry'
@@ -48,6 +53,8 @@ module FactoryBakery
   class CyclicAssociationError < Error; end
   class IncompletePersistenceError < Error; end
   class ReadOnlyTargetError < Error; end
+
+  extend SeedApi
 
   class << self
     attr_writer :definition_paths, :max_bake_depth
@@ -172,11 +179,13 @@ module FactoryBakery
       FallbackBuilder.new(mode).build(model_klass, definition, overrides, traits)
     end
 
+    # The root save is the one place a bake's record meets validation; a failure
+    # there carries the explanation (see Explanation.around_failed_save).
     def persist_build!(adapter)
       mark = BuildContext.generated_records.length
       record = yield
       ReadOnlyGuard.new(record, adapter, BuildContext.records_in_current_build).call
-      adapter.save!(record)
+      Explanation.around_failed_save(record) { adapter.save!(record) }
       BuildContext.finish_persistence!(mark, adapter)
       PersistenceVerifier.new(record, BuildContext.records_in_current_build, adapter).call
       record
@@ -185,7 +194,7 @@ module FactoryBakery
     def bake_untransactional(target, adapter, overrides, traits, mode)
       object = bake(target, *traits, fill_optional: mode, **overrides)
       ReadOnlyGuard.new(object, adapter, []).call
-      adapter.save!(object)
+      Explanation.around_failed_save(object) { adapter.save!(object) }
       object
     end
   end

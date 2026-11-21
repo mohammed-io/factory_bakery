@@ -98,10 +98,12 @@ RSpec.describe 'entropy for name-like values (issue #58)' do
       allow(FFaker::Lorem).to receive(:word).and_return('voluptas')
     end
 
+    after { FactoryBakery.seed = nil }
+
     it 'produces the same values when the seed is repeated' do
-      srand(20_261_119)
+      FactoryBakery.seed = 20_261_119
       first = FactoryBakery.bake(model, fill_optional: true)
-      srand(20_261_119)
+      FactoryBakery.seed = 20_261_119
       second = FactoryBakery.bake(model, fill_optional: true)
 
       expect([second.name, second.title, second.slug]).to eq([first.name, first.title, first.slug])

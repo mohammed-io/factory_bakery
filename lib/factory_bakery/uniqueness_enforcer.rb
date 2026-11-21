@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require 'securerandom'
-
 module FactoryBakery
   # Makes uniqueness-validated attributes actually unique at bake time.
   #
@@ -28,7 +26,7 @@ module FactoryBakery
     # regenerate-on-collision values.
     ENTROPY_AFTER_ATTEMPTS = 3
 
-    # `SecureRandom.hex(4)`: eight random hex characters behind a dash.
+    # Four random bytes as hex: eight characters behind a dash, drawn from the seeded generator.
     ENTROPY_HEX_BYTES = 4
 
     def initialize(record, heuristic_attribute_names)
@@ -116,7 +114,7 @@ module FactoryBakery
     end
 
     def entropy_suffix
-      "-#{SecureRandom.hex(ENTROPY_HEX_BYTES)}"
+      "-#{FactoryBakery::Randomness.hex(ENTROPY_HEX_BYTES)}"
     end
 
     # The suffix is only safe for a free-form string: a declared shape would

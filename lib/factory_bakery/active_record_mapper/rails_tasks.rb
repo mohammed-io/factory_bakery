@@ -3,7 +3,7 @@
 module FactoryBakery
   module ActiveRecordMapper
     # Selects application models, checks their bakes and writes definition stubs.
-    class RailsTasks
+    class RailsTasks # rubocop:disable Metrics/ClassLength
       DIAGNOSTICS_URL = 'https://github.com/mohammed-io/factory_bakery/blob/main/docs/diagnostics.md'
 
       # Each entry maps a failure to a hint and a heading anchor in docs/diagnostics.md.
@@ -20,6 +20,7 @@ module FactoryBakery
         /NotNullViolation|InvalidForeignKey/ => [
           'Declare values or associations required by the database.', 'db-only-constraints'
         ],
+        /Chosen at random:/ => ['Pin the generated value in a definition.', 'random-value-rejected-by-app-rule'],
         // => [
           'Check the model validations and callbacks, then declare any required overrides.',
           'domain-rules-inference-cannot-know'
@@ -84,7 +85,10 @@ module FactoryBakery
       def check_model(model, pools)
         validation_error = probe(pools) do
           record = FactoryBakery.bake(model)
-          raise FactoryBakery::Error, record.errors.full_messages.first || 'Validation failed' unless record.valid?
+          next if record.valid?
+
+          summary = record.errors.full_messages.first || 'Validation failed'
+          raise FactoryBakery::Error, "#{summary}\n#{FactoryBakery.explain(record)}"
         end
         persistence_error = probe(pools) do
           record = FactoryBakery.bake!(model)
@@ -116,7 +120,9 @@ module FactoryBakery
       def report_failure(model, error)
         message = "#{error.class}: #{error.message}"
         _, (hint, anchor) = HINTS.find { |pattern, _| pattern.match?(message) }
-        puts "#{model.name}: #{error.message.lines.first&.chomp} — #{hint} (#{DIAGNOSTICS_URL}##{anchor})"
+        summary, *details = error.message.lines.map(&:chomp)
+        puts "#{model.name}: #{summary} — #{hint} (#{DIAGNOSTICS_URL}##{anchor})"
+        details.each { |line| puts "  #{line}" }
         write_definition(model, error.message) if ENV['WRITE'] == '1'
       end
     end

@@ -57,7 +57,7 @@ module FactoryBakery
         return @accept_value || '1' if @attr_name.match?(/terms|accepted|agreed/)
 
         # Random boolean
-        [true, false].sample
+        Randomness.sample([true, false])
       end
     end
   end

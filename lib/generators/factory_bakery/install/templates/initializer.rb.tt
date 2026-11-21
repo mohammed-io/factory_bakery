@@ -1,4 +1,10 @@
 # frozen_string_literal: true
+<% if @seed_framework -%>
+
+# Generated values follow the test framework's seed (`rspec --seed N` or
+# `bin/rails test --seed N`). See docs/guide/configuration.md#randomness.
+require 'factory_bakery/<%= @seed_framework %>'
+<% end -%>
 
 Rails.application.config.factory_bakery.tap do |config|
   # config.associations = :required_only

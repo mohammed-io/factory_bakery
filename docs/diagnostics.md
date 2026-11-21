@@ -426,6 +426,20 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
   - Discourse `LlmModel`: `provider { LlmModel::OPEN_AI_PROVIDER_NAME }`
 - Enum and `inclusion:` domains declared on the model are handled. Lists held in constants are handled for polymorphic type columns only.
 
+### random-value-rejected-by-app-rule
+
+- **Symptom:** The same model is valid on some runs and invalid on others. The failure text includes `Chosen at random: provider = "bedrock"` (or another value), followed by a seed line, a `FactoryBakery.define(...)` snippet and an `Agent:` line. `bake!` raises the usual error class (for example `ActiveRecord::RecordInvalid`) with that text appended after the original message.
+- **Cause:** A validator the gem cannot read (a custom `validate` block, or a rule that depends on another attribute or setting) rejects the value FactoryBakery drew at random. FactoryBakery does not retry: the seed reproduces the same value every run.
+- **Fix:** Pin the value in your definitions file, using a value your validations accept. Re-run with the same seed to confirm: `FACTORY_BAKERY_SEED=1234` (or the `rspec --seed` / `bin/rails test --seed` command the message prints). The value the message shows is what was drawn, not a fix.
+
+  ```ruby
+  FactoryBakery.define(LlmModel) do
+    provider { 'open_ai' } # was randomly "bedrock"; use a value your validations accept
+  end
+  ```
+- **Where to look:** `FactoryBakery.explain(record)` prints the same text for a record from plain `bake` after `valid?`. `bin/rails factory_bakery:doctor` prints it under each failing model.
+- **Smallest fix:** A definition line. An override at the call site is the same fix for one test.
+
 ### time-relative-validations
 
 - **Symptom:** A validator compares a time or date to "now" in custom code: `expires_at` must be within 5 minutes to 1 month, a future effective date.

@@ -24,8 +24,13 @@ end
 require 'rails'
 require 'active_record'
 require 'factory_bakery'
+require 'logger'
 require_relative 'support/database'
 require_relative 'support/macros/define_constant'
+
+# The seed announcement is a process-level log line. The suite checks it in
+# seed_spec.rb through its own logger, so the default stderr output stays quiet.
+FactoryBakery.logger = Logger.new(nil)
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure

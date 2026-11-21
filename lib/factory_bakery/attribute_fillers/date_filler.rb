@@ -133,26 +133,26 @@ module FactoryBakery
         end
 
         days_diff = (upper - lower).to_i
-        TemporalArithmetic.date_plus_days(lower, rand(0..days_diff))
+        TemporalArithmetic.date_plus_days(lower, Randomness.rand(0..days_diff))
       end
 
       def generate_by_pattern
         case @attr_name
         when /birth|dob|born/
           # Birthday: 18 to 90 years ago
-          years_ago(rand(18..90))
+          years_ago(Randomness.rand(18..90))
         when /start/
           # Start date: within the past year
-          days_ago(rand(0..365))
+          days_ago(Randomness.rand(0..365))
         when /end|expire|due/
           # End date: within the next year
-          days_ahead(rand(0..365))
+          days_ahead(Randomness.rand(0..365))
         when /created|at/
           # Created at: recent past
-          days_ago(rand(0..30))
+          days_ago(Randomness.rand(0..30))
         when /updated|at/
           # Updated at: recent past
-          days_ago(rand(0..7))
+          days_ago(Randomness.rand(0..7))
         else
           Date.today
         end

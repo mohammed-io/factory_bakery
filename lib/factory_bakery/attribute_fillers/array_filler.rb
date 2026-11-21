@@ -36,7 +36,7 @@ module FactoryBakery
         loop do
           # Each pass builds a genuinely new Array, which is what V1
           # uniqueness regeneration needs when a value collides.
-          value = array_set ? array_set.sample : build_candidate(context)
+          value = array_set ? Randomness.sample(array_set) : build_candidate(context)
           return value unless forbidden_values?(value, context)
 
           attempts += 1
@@ -59,14 +59,14 @@ module FactoryBakery
       end
 
       def build_candidate(context)
-        Array.new(rand(MIN_ELEMENTS..MAX_ELEMENTS)) { element(context) }
+        Array.new(Randomness.rand(MIN_ELEMENTS..MAX_ELEMENTS)) { element(context) }
       end
 
       def element(context)
         case @constraints.array_element_type
-        when :integer then rand(1..100)
-        when :float then rand * 100
-        when :boolean then [true, false].sample
+        when :integer then Randomness.rand(1..100)
+        when :float then Randomness.rand * 100
+        when :boolean then Randomness.sample([true, false])
         else string_element(context)
         end
       end
@@ -78,7 +78,7 @@ module FactoryBakery
       # and should be expressed with an explicit factory definition.
       def string_element(context)
         pool = scalar_inclusion_set(context)
-        return pool.sample unless pool.empty?
+        return Randomness.sample(pool) unless pool.empty?
 
         generate_by_pattern
       end

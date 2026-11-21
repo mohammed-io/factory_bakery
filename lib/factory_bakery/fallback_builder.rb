@@ -45,6 +45,7 @@ module FactoryBakery
       BuildContext.with_record(object) do
         UniquenessEnforcer.new(object, builder.heuristic_attribute_names).call
       end
+      Provenance.record(object, builder.heuristic_attribute_names)
       BuildContext.record_generated(object)
       [object, builder]
     end
@@ -229,7 +230,10 @@ module FactoryBakery
       generated = object.public_send(name) if object.respond_to?(name)
       errors_before = object.errors.size
       assign(object, name, column_default(object, name))
-      return if valid?(object) && object.errors.size < errors_before
+      if valid?(object) && object.errors.size < errors_before
+        Provenance.forget(object, name)
+        return
+      end
 
       assign(object, name, generated)
       valid?(object)

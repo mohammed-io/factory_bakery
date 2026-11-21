@@ -8,10 +8,14 @@ FactoryBakery adds no global methods. `FactoryBakery::Methods` provides bare `ba
 
 ```ruby
 # spec/rails_helper.rb
+require 'factory_bakery/rspec'
+
 RSpec.configure do |config|
   config.include FactoryBakery::Methods
 end
 ```
+
+`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed, so `rspec --seed 12345` reproduces a failing run. The gem logs `using RSpec seed 12345` once when it starts drawing values. To pick the seed yourself instead, assign it before any bake: `FactoryBakery.seed = RSpec.configuration.seed` does the same thing. `FACTORY_BAKERY_SEED` still outranks both.
 
 ```ruby
 RSpec.describe Post do
@@ -33,10 +37,14 @@ end
 
 ```ruby
 # test/test_helper.rb
+require 'factory_bakery/minitest'
+
 class ActiveSupport::TestCase
   include FactoryBakery::Methods
 end
 ```
+
+`require 'factory_bakery/minitest'` makes generated values follow Minitest's seed, so `bin/rails test --seed 12345` reproduces a failing run. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =`, `FactoryBakery.seed_generator`, or a random choice made once per process. See [Randomness](configuration.md#randomness).
 
 ```ruby
 class PostTest < ActiveSupport::TestCase

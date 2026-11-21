@@ -42,15 +42,15 @@ module FactoryBakery
       TYPE_RULES = {
         inet: [nil, -> { generate_ip }, nil],
         cidr: [nil, -> { '192.0.2.0/24' }, nil],
-        tsvector: [nil, -> { LOREM_WORDS.sample(rand(4..8)).join(' ') }, nil]
+        tsvector: [nil, -> { Randomness.sample(LOREM_WORDS, Randomness.rand(4..8)).join(' ') }, nil]
       }.freeze
 
       # Name- and title-like values are what apps derive slugs and normalized
       # keys from, and that derivation is invisible to validator-based
       # uniqueness. A six-digit random suffix gives ~1000 bakes of one model
       # distinct derived values ("Voluptas 482193" / "voluptas-482193") while
-      # keeping the value readable. It uses the global RNG, so `srand` keeps a
-      # seeded run deterministic.
+      # keeping the value readable. It draws from the bake's seeded generator,
+      # so a seeded run repeats the same suffixes.
       ENTROPY_SUFFIX = 100_000..999_999
 
       # Ordered from most specific to least specific: the generic /name/ rule
@@ -65,13 +65,13 @@ module FactoryBakery
         [IP_PATTERN, -> { generate_ip }, nil],
         [HOST_PATTERN, -> { generate_host }, nil],
         [FILENAME_PATTERN, -> { generate_filename }, nil],
-        [TIMEZONE_PATTERN, -> { TIMEZONES.sample }, nil],
+        [TIMEZONE_PATTERN, -> { Randomness.sample(TIMEZONES) }, nil],
         [/phone/, -> { FFaker::PhoneNumber.phone_number }, nil],
         [/address|street|city/, -> { FFaker::Address.street_address }, nil],
         [URL_PATTERN, -> { generate_url }, nil],
         [TITLE_PATTERN, -> { generate_title }, ' '],
         [BODY_PATTERN, -> { generate_paragraph }, nil],
-        [/priority/, -> { rand(1..5).to_s }, nil],
+        [/priority/, -> { Randomness.rand(1..5).to_s }, nil],
         [/name/, -> { FFaker::Name.name }, ' '],
         [/slug|key/, -> { FFaker::Lorem.word }, '-'],
         [/label/, -> { FFaker::Lorem.word }, ' ']
@@ -113,7 +113,7 @@ module FactoryBakery
       end
 
       def generate_ip
-        "192.0.2.#{rand(1..254)}"
+        "192.0.2.#{Randomness.rand(1..254)}"
       end
 
       def generate_host
@@ -125,21 +125,21 @@ module FactoryBakery
       end
 
       def generate_url
-        "https://#{RESERVED_URL_HOSTS.sample}/#{FFaker::Lorem.word}"
+        "https://#{Randomness.sample(RESERVED_URL_HOSTS)}/#{FFaker::Lorem.word}"
       end
 
       # 4-8 distinct real-ish words (>= 20 chars), so a "min 15 chars, at
       # least 3 distinct words" check passes before the entropy suffix is
       # appended. Sampling without replacement is what guarantees distinctness.
       def generate_title
-        TITLE_WORDS.sample(rand(4..8)).join(' ').capitalize
+        Randomness.sample(TITLE_WORDS, Randomness.rand(4..8)).join(' ').capitalize
       end
 
       # Several sentences of real-ish words: comfortably over the 60-char
       # minimum for body-like attributes.
       def generate_paragraph
-        Array.new(rand(3..4)) do
-          "#{LOREM_WORDS.sample(rand(6..9)).join(' ').capitalize}."
+        Array.new(Randomness.rand(3..4)) do
+          "#{Randomness.sample(LOREM_WORDS, Randomness.rand(6..9)).join(' ').capitalize}."
         end.join(' ')
       end
 
@@ -158,7 +158,7 @@ module FactoryBakery
       end
 
       def entropy_suffix
-        rand(ENTROPY_SUFFIX).to_s
+        Randomness.rand(ENTROPY_SUFFIX).to_s
       end
 
       # Derive a plausible handle from a name but guarantee /\A[a-z][a-z0-9_]{2,19}\z/
@@ -168,7 +168,7 @@ module FactoryBakery
         slug = name.gsub(/[^a-z0-9_]+/, '_').sub(/\A[^a-z]+/, '')
         slug = 'user' if slug.empty?
 
-        "#{slug}#{rand(10..99)}"[0, 20]
+        "#{slug}#{Randomness.rand(10..99)}"[0, 20]
       end
     end
   end

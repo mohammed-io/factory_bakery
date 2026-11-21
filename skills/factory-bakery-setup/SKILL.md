@@ -97,13 +97,16 @@ Opt in to `bake` and `bake!` helpers. Details: [`references/test-wiring.md`](ref
 
 ```ruby
 # spec/rails_helper.rb
+require 'factory_bakery/rspec' # generated values follow RSpec's seed (rspec --seed N)
 RSpec.configure { |config| config.include FactoryBakery::Methods }
 
-# test/test_helper.rb
+# test/test_helper.rb (Minitest apps instead: require 'factory_bakery/minitest')
 class ActiveSupport::TestCase
   include FactoryBakery::Methods
 end
 ```
+
+The seed is one of: `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =`, `FactoryBakery.seed_generator`, the framework's seed above, or a random one per process. The gem logs which one it used. See [Randomness](../../docs/guide/configuration.md#randomness).
 
 ### 7. Generators and rake tasks
 

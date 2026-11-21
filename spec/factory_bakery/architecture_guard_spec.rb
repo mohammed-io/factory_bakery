@@ -14,9 +14,14 @@ RSpec.describe 'framework-agnostic core architecture guard' do
     [
       %r{\Alib/factory_bakery/active_record_mapper(?:\.rb|/|\z)},
       %r{\Alib/factory_bakery/associations(?:/|\z)},
+      %r{\Alib/factory_bakery/(?:rspec|minitest)\.rb\z},
       %r{\Alib/generators/factory_bakery/}
     ]
   end
+
+  # The optional test-framework integrations (lib/factory_bakery/rspec.rb and
+  # minitest.rb) are the only files that name a test framework.
+  let(:forbidden_test_framework_references) { /\b(?:RSpec|Minitest)\b/ }
 
   # Constant references, including name-string matching (validator classes
   # are matched by name in the mapper, never in the core) and any textual
@@ -82,6 +87,21 @@ RSpec.describe 'framework-agnostic core architecture guard' do
     violations = violations_in(core_files, forbidden_constant_references)
 
     message = "framework constants leaked into the framework-agnostic core:\n#{violations.join("\n")}"
+    expect(violations).to be_empty, message
+  end
+
+  it 'keeps test-framework names out of the core set' do
+    # Comments may show RSpec or Minitest usage (the public mixin's docs), so
+    # only code lines are checked.
+    violations = core_files.flat_map do |path|
+      File.readlines(path).each_with_index.filter_map do |line, index|
+        next if line.lstrip.start_with?('#')
+
+        "#{path}:#{index + 1}: #{line.strip}" if line.match?(forbidden_test_framework_references)
+      end
+    end
+
+    message = "test-framework names leaked into the framework-agnostic core:\n#{violations.join("\n")}"
     expect(violations).to be_empty, message
   end
 

@@ -15,9 +15,9 @@ module FactoryBakery
       def pick_from(values, context = nil)
         case values
         when Array
-          values.sample
+          Randomness.sample(values)
         when Range
-          values.to_a.sample
+          Randomness.sample(values.to_a)
         when Proc, Symbol
           pick_from(resolve_set(values, context, 'inclusion'), context)
         else

@@ -41,7 +41,7 @@ module FactoryBakery
       def pick_from_enum
         return nil if @enum_values.empty?
 
-        @enum_values.sample
+        Randomness.sample(@enum_values)
       end
     end
   end

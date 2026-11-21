@@ -92,10 +92,10 @@ module FactoryBakery
         # Handle both integer and float ranges
         # Float ranges can't use .to_a directly
         if range.first.is_a?(Float) || range.last.is_a?(Float)
-          rand(range.first.to_f..range.last.to_f)
+          Randomness.rand(range.first.to_f..range.last.to_f)
         else
           values = range.to_a
-          value = values.sample
+          value = Randomness.sample(values)
           value.to_f
         end
       end
@@ -118,7 +118,7 @@ module FactoryBakery
           end
         end
 
-        rand(lower..upper)
+        Randomness.rand(lower..upper)
       end
 
       def generate_by_pattern
@@ -130,7 +130,7 @@ module FactoryBakery
         when /price/
           generate_in_bounds(1.0, 1000.0)
         else
-          rand(0.0..100.0)
+          Randomness.rand(0.0..100.0)
         end
       end
 

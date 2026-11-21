@@ -124,6 +124,21 @@ RSpec.describe 'FactoryBakery rake tasks' do
     expect([audit.count, good.count, failed_save.count]).to eq([0, 1, 0])
   end
 
+  it 'explains a random value that an app rule rejects, with its pinning hint and docs link' do
+    rejected = define_model('RakeRandomProvider', provider: :string) do
+      validate { errors.add(:provider, 'is not supported by this app') unless provider == 'open_ai' }
+    end
+    report = Regexp.new(
+      ['RakeRandomProvider: Provider is not supported by this app', link('random-value-rejected-by-app-rule'),
+       'Chosen at random: provider = ', 'Agent: edit '].join('.*'),
+      Regexp::MULTILINE
+    )
+
+    expect do
+      expect { invoke(:doctor, rejected.name) }.to raise_error(SystemExit) { |error| expect(error.status).to eq(1) }
+    end.to output(report).to_stdout
+  end
+
   it 'can write failing stubs without exiting nonzero or overwriting an existing stub' do
     bad = define_model('RakeBroken') do
       validate { errors.add(:base, "First line\nsecond line") }
