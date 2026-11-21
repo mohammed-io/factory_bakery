@@ -56,6 +56,50 @@ RSpec.describe 'association options' do
     end
   end
 
+  describe 'positional target class' do
+    it "bakes the target through the class's definition" do
+      author, post = define_author_and_post('AssocPositional')
+      FactoryBakery.define(author) { role { 'positional' } }
+      FactoryBakery.define(post) { association :author, author }
+
+      expect(FactoryBakery.bake(post).author.role).to eq('positional')
+    end
+
+    it 'accepts traits and overrides after the class' do
+      author, post = define_author_and_post('AssocPositionalTraits')
+      FactoryBakery.define(author) { trait(:senior) { level { 3 } } }
+      FactoryBakery.define(post) { association :author, author, :senior, name: 'Ann' }
+
+      child = FactoryBakery.bake(post).author
+      expect([child.level, child.name]).to eq([3, 'Ann'])
+    end
+
+    it 'persists the target with bake!' do
+      author, post = define_author_and_post('AssocPositionalPersist')
+      FactoryBakery.define(post) { association :author, author }
+
+      expect(FactoryBakery.bake!(post).author).to be_persisted
+    end
+
+    it 'names the target of a polymorphic belongs_to' do
+      post_model = define_model('AssocPositionalPolyPost', title: :string)
+      comment_model = define_model('AssocPositionalPolyComment', commentable_type: :string, commentable_id: :integer) do
+        belongs_to :commentable, polymorphic: true, optional: false
+      end
+      FactoryBakery.define(comment_model) { association :commentable, post_model }
+
+      expect(FactoryBakery.bake(comment_model).commentable).to be_a(post_model)
+    end
+
+    it 'rejects a class given both positionally and as factory:' do
+      author, post = define_author_and_post('AssocPositionalBoth')
+
+      FactoryBakery.define(post) { association :author, author, factory: author }
+
+      expect { FactoryBakery.bake(post) }.to raise_error(ArgumentError, /positionally or as factory:/)
+    end
+  end
+
   describe 'factory:' do
     it 'uses a registered symbol factory and its declarations for the target' do
       author, post = define_author_and_post('AssocSymbolFactory')

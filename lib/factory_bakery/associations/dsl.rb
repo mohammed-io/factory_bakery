@@ -9,7 +9,12 @@ module FactoryBakery
       # Explicit keywords keep the public DSL contract in one place. It is
       # exempt from the parameter-count cop because every keyword is part of
       # that contract.
+      #
+      # The target class may lead the positional arguments instead of being
+      # passed as factory: (`association :post, Post, :published`); traits are
+      # always symbols, so a Class there is unambiguous.
       def association(name, *traits, factory: nil, strategy: nil, count: nil, **overrides, &block) # rubocop:disable Metrics/ParameterLists
+        factory, traits = positional_target(traits, factory)
         Associations.validated_strategy!(strategy) unless strategy.nil?
         validate_count!(count)
         validate_block!(block, count, traits, factory, overrides)
@@ -28,6 +33,13 @@ module FactoryBakery
       end
 
       private
+
+      def positional_target(traits, factory)
+        return [factory, traits] unless traits.first.is_a?(Class)
+        raise ArgumentError, 'pass the target class positionally or as factory:, not both' unless factory.nil?
+
+        [traits.first, traits.drop(1)]
+      end
 
       def validate_count!(count)
         return if count.nil? || (count.is_a?(Integer) && count >= 0)
