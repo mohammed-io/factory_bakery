@@ -37,13 +37,13 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | `factory :admin, parent: :user` / nested `factory` | No inheritance. A trait on the parent, or a second definition |
 | `aliases: [:author]` | A second `define(:author, klass: User, &same_block)` |
 | `name { 'Ada' }` | `name { 'Ada' }` (same) |
-| `name 'Ada'` (static) | `name { 'Ada' }`. The static form does nothing |
+| `name 'Ada'` (static) | `name { 'Ada' }`. The static form raises with the block syntax |
 | Attribute that inference already produces | Delete the line |
 | `trait :admin do ... end` | `trait :admin do ... end` (same, local to the definition) |
 | `traits_for_enum :status` | Delete (enum inference), or one trait per state a test needs |
 | `sequence(:email) { \|n\| ... }` | A counter local at the top of the file, or `SecureRandom`. Or delete if the column is unique-validated |
 | `transient do ... end` | A local variable inside `define`. See the limits below |
-| Attribute referring to another attribute | Not supported. See the limits below |
+| `email { "#{name}@x.com" }` | Same block. The resolved `name` includes call-site overrides and applied traits |
 | `association :author` | `association :author` (plugin loaded) |
 | `association :author, factory: :editor` | `association :author, factory: :editor` |
 | `association :author, :admin, name: 'Ann'` | `association :author, :admin, with: { name: 'Ann' }` |
@@ -54,11 +54,11 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | `to_create`, `skip_create` | Not needed. `bake` never saves |
 | `build(:post)` | `FactoryBakery.bake(Post)` |
 | `create(:post)` | `FactoryBakery.bake!(Post)` |
+| `build(:post) { \|post\| ... }` / `create(:post) { \|post\| ... }` | Keep the block on `bake` / `bake!`. `bake!` yields after its transaction or savepoint finishes |
 | `build_stubbed(:post)` | No equivalent |
 | `attributes_for(:post)` | No built-in. A [thin helper](testing-recipes.md#attribute-hash-for-a-request-spec) |
 | `create_list(:post, 3)`, `build_list`, `create_pair` | `Array.new(3) { FactoryBakery.bake!(Post) }` (or `bake`) |
 | `create(:post, :published, title: 'x')` | `FactoryBakery.bake!(Post, :published, title: 'x')` |
-| `create(:post) { \|p\| ... }` | The block is **ignored**. See the limits below |
 | `use_parent_strategy` | The default: `bake` builds the whole graph unsaved, `bake!` saves it in one transaction |
 | `FactoryBot.lint` | `bin/rails factory_bakery:doctor`. It checks models, not named factories or traits |
 | `include FactoryBot::Syntax::Methods` | `FactoryBakery::Methods` gives bare `bake` and `bake!`. The migration uses the fully qualified form so call sites stay explicit |
@@ -93,7 +93,7 @@ List what exists. Count the factories, the call-site forms, and anything unusual
 | `sequence`, `transient`, `after(`, `before(`, `callback(` | Not supported or needs care |
 | Attributes that read other attributes | Not supported |
 | `build_stubbed`, `attributes_for`, `create_list` | Special call-site handling |
-| `create(:x) { \|x\| ... }` blocks | Ignored by `bake!` |
+| `create(:x) { \|x\| ... }` blocks | Keep the block on `bake!` |
 | `initialize_with { ... }` blocks | Hash only |
 | Nested factories and `parent:` | No inheritance |
 | `FactoryBot.lint` | Replaced by doctor |
@@ -312,11 +312,9 @@ Real examples with the reason for each are in `docs/reports/smoke/20261119-final
 | factory_bot feature | Problem | What to do |
 | --- | --- | --- |
 | `build_stubbed` | No stubbed-persisted object exists. `bake` gives `persisted? == false` and `id == nil` | Report. If a test only needs a plausible object, `bake` may do, but that is a test change, so ask |
-| Attribute reading another attribute (`email { "#{name}@x.com" }`) | Blocks cannot see siblings. A local variable only works if the source block runs, and a call-site override of the source skips it | Report if tests override the source. Otherwise use a local variable shared between blocks |
 | `transient` attributes | No transient DSL. Locals work only inside `define`, not as call-site parameters (`create(:user, with_posts: 3)` has no parameter) | Report. A trait or `association :posts, count: 3` may replace a specific use |
-| `after(:build)` / `after(:create)` / `before(:create)` | Callbacks are not shipped | A declaration block can do pre-save work. Post-save work needs a helper or a test change: report |
+| `after(:build)` / `after(:create)` / `before(:create)` | Definitions have no callback DSL | Report hooks that must run for every call. A single call can use a `bake` or `bake!` block after construction or persistence |
 | `initialize_with { ... }` block | Only a Hash is accepted | A Hash if the block is simple. Otherwise report |
-| `create(:x) { \|x\| ... }` | The block is ignored | Report. Moving the block body would change the test |
 | `create_list(:x, 3) { \|x, i\| ... }` (a block that uses the index) | `Array.new(3) { }` can express it, but moving the block body is more than a rename | Report |
 | Nested `factory` / `parent:` inheritance | No inheritance | Traits or repeated lines |
 | `FactoryBot.create(:x)` inside `before(:all)` or seeds | Data outlives the example | Same behavior, but check |

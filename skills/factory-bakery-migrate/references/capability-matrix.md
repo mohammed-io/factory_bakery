@@ -87,10 +87,8 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | `build_stubbed` | No stubbed-persisted object. `bake` returns `persisted? == false`, `id == nil` | **Blocker.** Report |
 | `build_stubbed_list` | Same | Blocker |
 | `attributes_for` | No built-in | A thin helper that keeps call sites a rename ([testing recipes](../../../docs/guide/testing-recipes.md#attribute-hash-for-a-request-spec)). Its keys are strings and it omits associations. If a test needs symbol keys or associations, blocker |
-| `create(:x) { \|x\| ... }` | The block is **ignored** by `bake`/`bake!` | Blocker. Moving the block changes the test |
-| Attribute reading a sibling (`email { "#{name}@x.com" }`) | Blocks cannot see siblings. A local only works if the source block runs, and a call-site override of the source skips it | If no test overrides the source, share a local. Otherwise blocker |
 | Transient attributes as **call-site parameters** (`create(:user, with_posts: 3)`) | No transient DSL | Blocker. A trait or `association :posts, count: 3` may replace a specific use, but the call changes |
-| `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Callbacks are not shipped (README: "Not supported yet") | Pre-save work: a declaration block. Post-save work: blocker, or a named helper if the call site stays a rename |
+| `after(:build)`, `after(:create)`, `before(:create)`, `callback` | No definition callback DSL | Report hooks that must run for every call. Individual calls can pass a block to `bake` or `bake!` |
 | `initialize_with { ... }` block with logic | A Hash only | Hash if simple. Otherwise blocker |
 | `FactoryBot.generate(:seq)`, global sequences | No sequence registry | Helper with a counter, or blocker |
 | Trait that applies another trait | A trait cannot call a trait | Repeat the lines, or pass both traits at the call site (call changes: blocker if many) |

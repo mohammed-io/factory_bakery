@@ -35,11 +35,11 @@ Use a **class** key when the factory name equals the class (`:post` and `Post`).
 | factory_bot | FactoryBakery | Note |
 | --- | --- | --- |
 | `title { 'x' }` | `title { 'x' }` | Same |
-| `title 'x'` | `title { 'x' }` | The static form does nothing in FactoryBakery |
+| `title 'x'` | `title { 'x' }` | The static form raises with the block syntax |
 | `title { Faker::Lorem.sentence }` | `title { Faker::Lorem.sentence }` (1:1) | Droppable later: inference covers it |
 | `created_at { 1.day.ago }` | `created_at { 1.day.ago }` | Keep if a test depends on it |
 | `title { nil }` | `title { nil }` | Explicit `nil` is honored |
-| `email { "#{name}@x.com" }` | See caveat: sibling reads | Blocker if a test overrides `name` |
+| `email { "#{name}@x.com" }` | Same block | Resolves the winning `name` for each build attempt |
 | `skip_create` | Delete | `bake` never saves |
 
 ## Sequences
@@ -110,7 +110,7 @@ association(:comments) { |post| Array.new(2) { |i| FactoryBakery.bake(Comment, p
 | --- | --- |
 | `transient do foo { 1 } end` used only to compute attributes | A local inside `define`: `foo = 1` |
 | `transient` passed at the call site | Not supported. Blocker |
-| `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Not supported. Pre-save record work can be an `association` block. Otherwise a blocker |
+| `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Report definition callbacks. Keep existing call-site blocks on `bake` or `bake!` |
 | `initialize_with { new(a: 1) }` | `initialize_with(a: 1)` |
 | `initialize_with { new(a: name) }` | Blocker (a block, and it reads a sibling) |
 
@@ -132,7 +132,7 @@ Only the factory call changes. Arguments after the name carry over unchanged.
 | `create_pair(:post)` | `Array.new(2) { FactoryBakery.bake!(Post) }` |
 | `attributes_for(:post)` | `attributes_for(Post)` through a helper (see below) |
 | `build_stubbed(:post)` | Blocker |
-| `create(:post) { \|p\| ... }` | Blocker (the block is ignored) |
+| `create(:post) { \|p\| ... }` | `FactoryBakery.bake!(Post) { \|p\| ... }` |
 
 Which spelling for the name? A symbol name maps to the class (`:post` to `Post`). If the factory was registered under a different name than the class, keep the symbol (`bake!(:admin)`) and register it with `klass:`.
 

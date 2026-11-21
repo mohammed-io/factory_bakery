@@ -517,6 +517,13 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 ---
 
+## Factory attribute errors
+
+| Message | Cause | Fix |
+| --- | --- | --- |
+| `Static attributes are unsupported` | A value was passed to the declaration as an argument | Use a value block such as `name { 'Ada' }` |
+| `Cyclic attribute dependency` | The displayed chain of sibling reads returns to an attribute already being resolved | Change one declaration to break the cycle, or pass a call-site value for one attribute in the chain |
+
 ## Silent failures
 
 These raise nothing. The result is wrong. Look here when a value is missing or odd.
@@ -525,9 +532,6 @@ These raise nothing. The result is wrong. Look here when a value is missing or o
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| An attribute stays `nil`, even though it is NOT NULL | Declared as `name 'Ada'` (no block). A declaration with no block suppresses inference and assigns nothing | `name { 'Ada' }` |
-| `label { "#{name}-x" }` gives a string with `[[:label, #<Proc ...` in it | A block cannot read sibling attributes. `name` was read as a new empty declaration | A local variable in the `define` block, or an override |
-| A block passed to `bake!` never runs | `bake`/`bake!` do not yield | Do the work after the call |
 | A typo in an attribute name does nothing | Values are assigned through setters. A missing setter is skipped | Fix the name |
 | A plugin DSL method does nothing | The plugin is unregistered (or never loaded). Only `association` raises | Register the plugin |
 | An optional column is `nil` | Expected. Only required attributes are filled | `fill_optional:` or a definition line |

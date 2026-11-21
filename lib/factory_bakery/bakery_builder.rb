@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 module FactoryBakery
-  class BakeryBuilder
+  # Collects a factory's DSL declarations and populates one model instance.
+  class BakeryBuilder # rubocop:disable Metrics/ClassLength
     class BuildingInProgress < StandardError; end
 
     # Sentinel stored in the declaration stream for `skip :attribute`. It wins
@@ -10,10 +11,19 @@ module FactoryBakery
 
     attr_reader :heuristic_attribute_names
 
+    def unchecked_heuristic_names
+      heuristic_attribute_names - @read_heuristic_names
+    end
+
     # Names filled only because optional filling was asked for: not required
     # for a valid record, not declared and not overridden. The verified
     # fallback reads it to tell a fill it may undo from one the caller decided.
     attr_reader :optional_candidates
+
+    # Resetting a consumed fill would leave its dependent attributes stale.
+    def resettable_optional_candidates
+      Array(@optional_candidates) - @read_heuristic_names
+    end
 
     # Signals for the verified fallback: an optional column was left to
     # heuristics, and leaving it unset could plausibly matter.
@@ -80,7 +90,8 @@ module FactoryBakery
         Object.const_get(name)
       rescue NameError
         raise FactoryBakery::Error,
-              "Could not resolve a class for factory #{symbol.inspect} (tried #{name.inspect}); pass klass: when defining it"
+              "Could not resolve a class for factory #{symbol.inspect} (tried #{name.inspect}); " \
+              'pass klass: when defining it'
       end
     end
 
@@ -110,6 +121,8 @@ module FactoryBakery
     # Explicit form for an attribute whose name collides with a DSL method
     # (notably `skip`). It records exactly the same declaration as `name { }`.
     def add_attribute(name, &block)
+      raise FactoryBakery::Error, "Use add_attribute(#{name.to_sym.inspect}) { ... } to declare a value" unless block
+
       @methods_to_be_called_on_object << [name, block]
     end
 
@@ -118,6 +131,8 @@ module FactoryBakery
 
       # Prevent recursive calls to build method.
       @build_is_in_progress = true
+      @sibling_reads = {}
+      @read_heuristic_names = []
 
       evaluate_declarations(traits)
 
@@ -131,11 +146,22 @@ module FactoryBakery
       @build_is_in_progress = false
     end
 
-    def method_missing(method_name, *, &block)
+    # Declaration syntax accepts arbitrary names with blocks; it does not
+    # expose those names as callable methods for introspection.
+    def method_missing(method_name, *args, &block) # rubocop:disable Style/MissingRespondToMissing
       # A DSL name owned by an unloaded plugin must fail loudly rather than be
       # captured as an attribute declaration with a nil block.
       message = PluginRegistry.reserved_error_message(method_name)
       raise FactoryBakery::Error, message if message
+
+      unless args.empty?
+        example = args.length == 1 ? args.first.inspect : args.inspect
+        raise FactoryBakery::Error, "Static attributes are unsupported; use #{method_name} { #{example} }"
+      end
+
+      unless block
+        raise FactoryBakery::Error, "Use #{method_name} { ... } to declare a value, or skip #{method_name.inspect}"
+      end
 
       # Defer attribute blocks so they run once per build, after the whole
       # definition block has registered traits and initialize_with.
@@ -201,9 +227,7 @@ module FactoryBakery
     end
 
     def symbolized_initialize_with
-      @initialize_with_attributes.each_with_object({}) do |(name, value), attributes|
-        attributes[name.to_sym] = value
-      end
+      @initialize_with_attributes.transform_keys(&:to_sym)
     end
 
     # POROs whose constructor takes no arguments receive their initialize_with
@@ -231,50 +255,103 @@ module FactoryBakery
     # before any block runs. Groups are derived from reflections at bake time so
     # definition files can still load before their models.
     def resolved_values(overrides, object)
-      # Bind the in-progress record for the whole resolution pass: declarations,
-      # overrides and initialize_with are already on it, so mapper rules that
-      # depend on live state see their final values when heuristics run.
+      # Keep the in-progress record available to conditions and value fillers
+      # while the explicit and generated values are resolved.
       BuildContext.with_record(object) { compute_resolved_values(overrides, object) }
     end
 
     def compute_resolved_values(overrides, object)
-      normalized_overrides = normalize_keys(overrides)
+      overrides = normalize_keys(overrides)
       groups = alias_groups
-      winning_declarations = declared_values(normalized_overrides, groups)
-      taken = taken_names(normalized_overrides, groups)
-      # Share the decided names with after_instantiate hooks so object-level
-      # plugin auto-builders (e.g. required has_one) honour declarations,
-      # overrides and `skip` just like the heuristic layer does.
-      BuildContext.current.taken_names = taken
-      BuildContext.current.explicit_names = raw_taken_names(normalized_overrides)
-      plugin_values = plugin_heuristic_values(taken, groups)
+      layer = nil
+      heuristics = -> { layer ||= prepare_heuristics(overrides, groups, object) }
+      declarations = resolve_declarations(overrides, groups, object, heuristics)
+      finish_values(object, declarations, overrides, heuristics.call)
+    end
 
-      # A plugin-supplied group member suppresses every other member of that
-      # group in the heuristic layer, so a nil FK cannot clobber the object.
-      plugin_skip = plugin_values.keys.flat_map { |name| groups.fetch(name, [name]) }
-      skip = (suppressed_names(normalized_overrides, groups) + plugin_skip).uniq
+    def resolve_declarations(overrides, groups, object, heuristics)
+      blocks = winning_blocks(overrides, groups)
+      declarations = DeclarationValues.new(self, object, blocks, sibling_names(overrides)) do |name, resolved|
+        next overrides[name] if overrides.key?(name)
 
-      counter_values = counter_cache_values
-      # Initialize_with values are already on the object (possibly transformed
-      # by a custom constructor), so they are bound inputs but are never
-      # re-applied through setters.
-      bound_values = counter_values
-                     .merge(normalize_keys(@initialize_with_attributes))
-                     .merge(plugin_values)
-                     .merge(winning_declarations)
-                     .merge(normalized_overrides)
-      assign_values(object, counter_values.merge(plugin_values).merge(winning_declarations).merge(normalized_overrides))
+        resolver, supplemental, skip = heuristics.call
+        read_sibling(name, resolver, skip) do
+          assign_values(object, supplemental.merge(resolved).merge(overrides))
+          resolver.bind(resolved)
+          declarations.bind_to(resolver)
+        end
+      end
+      declarations.resolve_all
+    end
 
-      resolver = AttributeFillers::BakeTimeValues.new(
-        @model_klass, bound_values, skip.compact, object
-      )
+    def sibling_names(overrides)
+      candidate_attribute_names + raw_taken_names(overrides)
+    end
+
+    def finish_values(object, declarations, overrides, layer)
+      resolver, supplemental, skip = layer
+      explicit = supplemental.merge(declarations).merge(overrides)
+      assign_values(object, explicit)
+      resolver.bind(declarations)
       generated = heuristic_values(skip, resolver)
       @heuristic_attribute_names = generated.keys
-      generated
-        .merge(counter_values)
-        .merge(plugin_values)
-        .merge(winning_declarations)
-        .merge(normalized_overrides)
+      generated.merge(explicit)
+    end
+
+    def prepare_heuristics(overrides, groups, object)
+      supplemental, skip = heuristic_inputs(overrides, groups)
+      # Constructor values are already assigned, and may have been transformed.
+      bound_values = normalize_keys(@initialize_with_attributes).merge(supplemental).merge(overrides)
+      resolver = AttributeFillers::BakeTimeValues.new(@model_klass, bound_values, skip, object)
+      [resolver, supplemental, skip]
+    end
+
+    def heuristic_inputs(overrides, groups)
+      taken = publish_taken_names(overrides, groups)
+      plugin_values = plugin_heuristic_values(taken, groups)
+      plugin_skip = plugin_values.keys.flat_map { |name| groups.fetch(name, [name]) }
+      skip = (suppressed_names(overrides, groups) + plugin_skip).uniq
+      [counter_cache_values.merge(plugin_values), skip.compact]
+    end
+
+    def publish_taken_names(overrides, groups)
+      taken = taken_names(overrides, groups)
+      context = BuildContext.current
+      context.explicit_names = raw_taken_names(overrides)
+      context.taken_names = taken
+      taken
+    end
+
+    def read_sibling(name, resolver, skip)
+      return @sibling_reads[name] if @sibling_reads.key?(name)
+
+      yield
+      resolver.value_for(name) if fill_sibling?(name, skip)
+      stabilize_generated_sibling(name, resolver) if resolver.values.key?(name)
+
+      value = sibling_value(name, resolver)
+      resolver.bind(name => value)
+      @sibling_reads[name] = value
+    end
+
+    def stabilize_generated_sibling(name, resolver)
+      UniquenessEnforcer.new(resolver.object, [name]).call
+      @read_heuristic_names << name
+      value = resolver.object.public_send(name) if resolver.object.respond_to?(name)
+      resolver.values[name] = value if FactoryBakery::MapperRegistry.uniqueness_validated?(@model_klass, name)
+    end
+
+    def sibling_value(name, resolver)
+      return resolver.object.public_send(name) if resolver.object.respond_to?(name)
+
+      resolver.assigned_value(name)
+    end
+
+    def fill_sibling?(name, skip)
+      return false unless candidate_attribute_names.include?(name) && !skip.include?(name)
+
+      FillOptional.full?(@fill_optional) || FillOptional.includes?(@fill_optional, name) ||
+        RequiredAttribute.call(constraints_for(name))
     end
 
     def primary_key_name
@@ -318,6 +395,10 @@ module FactoryBakery
         end
       end
 
+      suppress_plugin_aliases(supplied, groups)
+    end
+
+    def suppress_plugin_aliases(supplied, groups)
       association_names = belongs_to_association_names
       groups.each_value do |members|
         present = members.select { |member| supplied.key?(member) }
@@ -370,7 +451,9 @@ module FactoryBakery
     end
 
     def heuristic_values(skip, resolver)
-      partition_candidates(skip).each { |attribute_name| resolver.value_for(attribute_name) }
+      partition_candidates(skip).each do |name|
+        resolver.value_for(name) unless @sibling_reads.key?(name)
+      end
       resolver.values
     end
 
@@ -451,15 +534,14 @@ module FactoryBakery
     # discarded, and the block may have side effects (e.g. an INSERT via bake!).
     # Declaration order is base, then traits in application order, so the last
     # declaration in a group wins. A call-site override of any group member
-    # suppresses every declaration in that group. Plain declarations without a
-    # block carry no value, so they never shadow an earlier block.
-    def declared_values(overrides, groups)
+    # suppresses every declaration in that group.
+    def winning_blocks(overrides, groups)
       overridden_groups = overrides.keys.map { |name| groups.fetch(name, [name]) }.uniq
 
       declaration_winners(overridden_groups, groups).each_with_object({}) do |(_group, (name, block)), values|
         next if block.equal?(OMITTED)
 
-        values[name] = block.call
+        values[name] = block
       end
     end
 
@@ -467,8 +549,6 @@ module FactoryBakery
     # declaration in a group is its winner.
     def declaration_winners(overridden_groups, groups)
       @methods_to_be_called_on_object.each_with_object({}) do |(name, block), result|
-        next unless block
-
         group = groups.fetch(name.to_s, [name.to_s])
         next if overridden_groups.include?(group)
 

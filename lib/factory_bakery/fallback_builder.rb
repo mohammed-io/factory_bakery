@@ -43,7 +43,7 @@ module FactoryBakery
       builder = BakeryBuilder.new(model_klass, definition, fill_optional: mode)
       object = builder.build(overrides: overrides, traits: traits)
       BuildContext.with_record(object) do
-        UniquenessEnforcer.new(object, builder.heuristic_attribute_names).call
+        UniquenessEnforcer.new(object, builder.unchecked_heuristic_names).call
       end
       Provenance.record(object, builder.heuristic_attribute_names)
       BuildContext.record_generated(object)
@@ -99,7 +99,7 @@ module FactoryBakery
     # discovered constraint does (Discourse's `PostValidator`). `probe_errors`
     # are the names read while the lean record still carried them, because
     # `valid?` clears `errors` on its next run.
-    def rebuild(model_klass, definition, overrides, traits, adapter, probe_errors)
+    def rebuild(model_klass, definition, overrides, traits, adapter, probe_errors) # rubocop:disable Metrics/ParameterLists
       with_rebuild_errors(probe_errors) do
         transaction(adapter, model_klass) do
           build_object(model_klass, definition, overrides, traits, true)
@@ -214,7 +214,7 @@ module FactoryBakery
       return object if valid?(object)
 
       errored = error_attributes(object)
-      candidates = builder.optional_candidates
+      candidates = builder.resettable_optional_candidates
       (candidates.select { |name| errored.include?(name) } + (candidates - errored)).each do |name|
         reset_optional_fill(object, name)
       end

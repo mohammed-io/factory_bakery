@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Factory DSL and bake blocks
+
+- Static attribute declarations raise with the replacement block syntax. Use `name { 'Ada' }` to assign a value or `skip :name` to omit it.
+- Attribute blocks resolve sibling values lazily, honoring overrides, traits, declarations, and inference. Dependency cycles raise with the attribute chain.
+- `bake` and `bake!` yield and return the resulting record. `bake!` yields after persistence verification and after leaving its transaction or savepoint.
+
 ### Reproducible seeds and explained rejections
 
 - Every generated value now derives from one seed, resolved on first use: `FACTORY_BAKERY_SEED`, then `FactoryBakery.seed =` (one setting: an Integer, or a callable such as `-> { MyCI.build_number }` that returns one, called lazily when the seed is resolved; anything else raises `ArgumentError`), then the test framework's seed (`require 'factory_bakery/rspec'` for RSpec's seed, `require 'factory_bakery/minitest'` for Minitest's), else a random seed per process. Each top-level bake draws from its own generator derived from the seed, the model's class name and its bake count, so a model's values do not depend on which models were baked before it. FFaker is seeded per top-level bake and restored afterwards.

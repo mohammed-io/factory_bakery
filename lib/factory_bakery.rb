@@ -16,6 +16,7 @@ require_relative 'factory_bakery/seed_api'
 require_relative 'factory_bakery/required_attribute'
 require_relative 'factory_bakery/fallback_builder'
 require_relative 'factory_bakery/mapper_registry'
+require_relative 'factory_bakery/declaration_values'
 require_relative 'factory_bakery/bakery_builder'
 require_relative 'factory_bakery/build_context'
 require_relative 'factory_bakery/persistence_verifier'
@@ -47,7 +48,8 @@ require_relative 'factory_bakery/attribute_fillers/filler_selector'
 require_relative 'factory_bakery/uniqueness_enforcer'
 
 # Builds model instances from factory definitions and model validation rules.
-module FactoryBakery
+# Builds test records from factory declarations and model metadata.
+module FactoryBakery # rubocop:disable Metrics/ModuleLength
   class Error < StandardError; end
   class NestingTooDeepError < Error; end
   class CyclicAssociationError < Error; end
@@ -112,7 +114,7 @@ module FactoryBakery
 
     def bake(target, *traits, fill_optional: nil, **overrides)
       mode = resolve_fill_optional(fill_optional)
-      FillOptional.for_bake_at(BuildContext.current.depth) do
+      record = FillOptional.for_bake_at(BuildContext.current.depth) do
         FillOptional.with(mode) do
           model_klass, definition = BakeryBuilder.resolve(target)
           BuildContext.push(model_klass) do
@@ -120,7 +122,17 @@ module FactoryBakery
           end
         end
       end
+      yield record if block_given?
+      record
     end
+
+    def bake!(target, *traits, fill_optional: nil, **overrides)
+      record = build_and_persist(target, overrides, traits, resolve_fill_optional(fill_optional))
+      yield record if block_given?
+      record
+    end
+
+    private
 
     # `bake!` has a persistence contract: graph building (including nested
     # `bake!` calls from declaration blocks), the root `save!` and the
@@ -130,8 +142,7 @@ module FactoryBakery
     # disturbing the caller's transaction. The transaction, save and
     # persistence check are performed through the mapper's persistence adapter;
     # a target no mapper claims keeps plain build-and-save semantics.
-    def bake!(target, *traits, fill_optional: nil, **overrides)
-      mode = resolve_fill_optional(fill_optional)
+    def build_and_persist(target, overrides, traits, mode)
       # FK-column-validated edges insert their parent while the graph is being
       # built, so the flag must cover graph building too, not just the save.
       BuildContext.with_persistence do
@@ -153,8 +164,6 @@ module FactoryBakery
         end
       end
     end
-
-    private
 
     def normalize_fill_optional(value)
       return FillOptional.current if value.nil?

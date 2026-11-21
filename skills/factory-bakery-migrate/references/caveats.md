@@ -14,7 +14,7 @@ The standing rule for every caveat: **do not fix a caveat by editing a test.** F
 | **Faker vs FFaker** | Locale-sensitive assertions on Faker values | Keep the line |
 | **`FactoryBot.use_parent_strategy = false`** | `build` created parents. `bake` leaves parents unsaved | `association :x, persist: true` on the edges tests expect saved |
 | **Callbacks that depend on `create` vs `build`** | `after_create`/`after_commit` timing is the same for `bake!` as `create` (it calls `save!`). `bake` never saves | A rename of `build` to `bake` is exact. Check any `after_commit` reliance |
-| **Ordering** | `let!` order and definition order | Definitions are independent files. Order inside a definition is declaration order |
+| **Ordering** | `let!` order and definition order | Winning declarations run in order unless a sibling read resolves a later declaration first |
 | **Tests that call `attributes_for`** | No built-in | Helper, or blocker |
 
 ## Associations
@@ -90,7 +90,7 @@ If a test overrides `user:`, the `user` block does not run and `owner` stays `ni
 
 ### Callbacks
 
-`after(:build)`, `after(:create)`, `before(:create)` have no equivalent. Pre-save record preparation can be a block. Post-save work cannot. Report the file and line.
+`after(:build)`, `after(:create)`, and `before(:create)` have no definition-level equivalent. Report the file and line if a hook must run for every call. An existing call-site block can stay on `bake` or `bake!`. The latter yields after its transaction or savepoint finishes.
 
 ### JSON and YAML in text columns
 
@@ -124,14 +124,14 @@ Check constraints, composite unique indexes and triggers are invisible. A block 
 
 | Caveat | Detail |
 | --- | --- |
-| **No static shorthand** | `name 'Ada'` assigns nothing and suppresses inference. Rewrite to `name { 'Ada' }` |
-| **Blocks cannot read siblings** | No evaluator. Use locals in `define` |
+| **Static declarations raise** | Rewrite `name 'Ada'` to `name { 'Ada' }` |
+| **Sibling reads** | Keep `label { "#{name}-x" }`. Overrides and traits change the value it sees. Reads honor `fill_optional` and `skip` |
 | **Declarations may run twice** | The verified fallback can rebuild. Blocks with non-database side effects can repeat |
 | **A typo in an attribute name is silent** | Values go through setters. A missing setter is skipped |
 | **Definitions are global** | No per-example factory change. Use call-site overrides |
 | **Class-keyed definitions go stale on reload** | Tests do not reload. Symbol factories re-resolve |
 | **`define` replaces silently** | A second `define(User)` replaces the first. Two files defining the same model: the last loaded wins (sorted path order) |
-| **`bake!` ignores a block** | `create(:x) { |x| ... }` cannot be renamed |
+| **Call-site blocks** | Keep the block on `bake!`. It runs after the save is verified and the transaction or savepoint finishes |
 
 ## Environment
 

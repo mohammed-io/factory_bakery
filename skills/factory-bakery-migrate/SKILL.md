@@ -57,7 +57,7 @@ Search the repository and write down:
 
 - Factory files and the number of factories (`FactoryBot.define`, `factory :`), fabricators, machinist blueprints, fixture directories, hand-rolled `create!` helpers.
 - Call-site forms: `create(`, `build(`, `build_stubbed(`, `create_list(`, `build_list(`, `create_pair(`, `attributes_for(`, with block form `create(:x) { |x| ... }`.
-- Constructs with no equivalent: `sequence`, `transient`, `after(`, `before(`, `callback(`, `initialize_with { }`, attributes that read siblings, nested `factory`/`parent:`, `aliases:`, `traits_for_enum`.
+- Constructs with no equivalent: `sequence`, `transient`, `after(`, `before(`, `callback(`, `initialize_with { }`, nested `factory`/`parent:`, `aliases:`, `traits_for_enum`.
 - Config: `FactoryBot.use_parent_strategy`, `FactoryBot.lint`, `definition_file_paths`.
 
 Classify each finding with the [capability matrix](references/capability-matrix.md). Anything **not supported** that a test uses is a **blocker**. Write the blocker list now (file, line, reason). Show it to the user before spending effort on the rest.
@@ -114,7 +114,7 @@ Rewrite the call sites in small batches, one commit per batch, using the table i
 - `build(:post, ...)` to `FactoryBakery.bake(Post, ...)`
 - `create_list(:post, n, ...)` to `Array.new(n) { FactoryBakery.bake!(Post, ...) }`
 - `attributes_for(:post)` to `attributes_for(Post)` via a thin helper in `spec/support` (a new file)
-- `build_stubbed`, `create(:x) { block }`, call-site transients: **blockers**. Do not rewrite them.
+- `build_stubbed` and call-site transients are **blockers**. Keep existing `create(:x) { block }` blocks on `bake!`.
 
 Rules while rewriting:
 

@@ -21,15 +21,30 @@ module FactoryBakery
 
       def initialize(model_class, explicit_values, skipped_names, object)
         @model_class = model_class
-        @explicit_values = stringify_keys(explicit_values)
+        @explicit_values = (explicit_values || {}).transform_keys(&:to_s)
         @skipped_names = skipped_names.map(&:to_s).freeze
         @object = object
         @values = {}
         @resolving = []
       end
 
+      def bind(values)
+        @explicit_values.merge!(values)
+      end
+
+      # A heuristic may refer to a declaration that has not run yet.
+      def bind_declarations(names, &resolve)
+        @declaration_names = names
+        @resolve_declaration = resolve
+      end
+
+      def assigned_value(name)
+        @values.fetch(name) { @explicit_values[name] }
+      end
+
       def value_for(name)
         key = name.to_s
+        return @resolve_declaration.call(key) if @declaration_names&.include?(key)
         return @explicit_values[key] if @explicit_values.key?(key)
         return @values[key] if @values.key?(key)
         return nil if @skipped_names.include?(key)
@@ -57,11 +72,7 @@ module FactoryBakery
 
       def assign_to_object(key, value)
         setter = "#{key}="
-        @object.public_send(setter, value) if @object&.respond_to?(setter)
-      end
-
-      def stringify_keys(hash)
-        (hash || {}).each_with_object({}) { |(key, value), result| result[key.to_s] = value }
+        @object.public_send(setter, value) if @object.respond_to?(setter)
       end
     end
   end

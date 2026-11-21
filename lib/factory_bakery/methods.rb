@@ -14,13 +14,13 @@ module FactoryBakery
   module Methods
     # Builds an unsaved object. Accepts the same target, traits and overrides
     # as FactoryBakery.bake.
-    def bake(target, *traits, **overrides)
-      FactoryBakery.bake(target, *traits, **overrides)
+    def bake(target, *traits, **overrides, &block)
+      FactoryBakery.bake(target, *traits, **overrides, &block)
     end
 
     # Builds and persists the object when it responds to +save!+.
-    def bake!(target, *traits, **overrides)
-      FactoryBakery.bake!(target, *traits, **overrides)
+    def bake!(target, *traits, **overrides, &block)
+      FactoryBakery.bake!(target, *traits, **overrides, &block)
     end
   end
 end

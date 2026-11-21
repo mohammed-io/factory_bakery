@@ -31,26 +31,28 @@ An attribute is declared with a name and a block:
 name { 'Ada Lovelace' }
 ```
 
-The block runs once per bake, so repeated bakes get fresh values. That is how uniqueness-validated columns stay unique.
+Each winning block runs once per build attempt. A verified fallback rebuild evaluates the blocks again for its new record.
 
-There is **no static shorthand**. `name 'Ada'` is accepted but does nothing: the attribute is not assigned, and inference is suppressed for it too, so it stays `nil` (verified: a NOT NULL `name` came back `nil`). Always use a block.
+Static declarations such as `name 'Ada'` raise `FactoryBakery::Error` when the factory is evaluated. Use `name { 'Ada' }` to assign a value or `skip :name` to omit the attribute.
 
 ### What a block can see
 
-Blocks run with the definition as `self`. They are not given an evaluator. Two consequences:
-
-- A block cannot read another attribute by name. Writing `label { "#{name}-x" }` does not raise. `name` is caught as a new, empty declaration and returns an array, so you get a garbage string. This is easy to miss.
-- A block can use anything in scope: constants, `SecureRandom`, `Time.current`, and `FactoryBakery.bake` / `bake!`.
-
-To share a value between blocks, use a **local variable inside the `define` block**. The block body is re-evaluated on every bake, so the local is fresh each time, and blocks run in declaration order:
+An attribute block can read a sibling by name, including one declared later:
 
 ```ruby
-FactoryBakery.define(AccountPin) do
-  pin_account = nil
-  account        { pin_account = FactoryBakery.bake!(Account) }
-  target_account { FactoryBakery.bake!(Account, also_known_as: [pin_account.uri]) }
+FactoryBakery.define(User) do
+  label { "#{name}-x" }
+  name  { 'Ada' }
 end
+
+FactoryBakery.bake(User, name: 'Grace').label # => "Grace-x"
 ```
+
+Call-site overrides (including `nil` and `false`) win, followed by the last applicable trait or factory declaration, then inference. A read can use a plugin's heuristic value. Explicit `association` declarations and other plugin hooks that populate the finished object run after the attribute blocks. To use such an association as an input, supply it as an override or declare it directly with an attribute block.
+
+Reads respect `skip` and `fill_optional`. An optional attribute left unfilled reads as its current default or `nil`. The verifier keeps generated optional values consumed by a declaration so the record and derived attributes stay consistent. Cycles raise `FactoryBakery::Error` with the chain, for example `label -> name -> label`.
+
+Blocks can still use constants, lexical locals, and calls such as `FactoryBakery.bake!`. They run in an attribute scope, which resolves sibling reads on demand. Blocks with no dependencies run in declaration order.
 
 A local declared **outside** `define` (at the top of the file) is shared across bakes. That is how you build a counter:
 
@@ -73,7 +75,11 @@ FactoryBakery.define(Account) do
 end
 ```
 
-For other names Ruby already owns (`alias`, `class`), call it with `public_send(:alias) { 'x' }`.
+Use `add_attribute(:class) { 'premium' }` for names Ruby already owns. For reserved syntax such as `alias`, use the explicit declaration form as well.
+
+## Blocks passed to `bake` and `bake!`
+
+Both methods yield the resulting record once and return that same record. `bake` yields after the build and any verified fallback. `bake!` yields after saving, verifying persistence, and leaving its transaction or savepoint. A block exception propagates to the caller. The bake's own transaction has already finished, and any enclosing transaction still applies.
 
 ### Declaring an attribute the model does not have
 
