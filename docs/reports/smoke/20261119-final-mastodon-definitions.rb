@@ -170,8 +170,11 @@ end
 # Remaining :all-mode cycle breakers belong on the collection side so that a
 # standalone child still auto-builds its own required parent.
 FactoryBakery.define(Collection) do
-  # user_does_not_exceed_limit reads account.user.role (collection.rb:118-122).
-  account { FactoryBakery.bake!(User).account }
+  # user_does_not_exceed_limit reads account.user.role.collection_limit
+  # (collection.rb:118-122). A local account backed by a user with no role
+  # resolves to UserRole.everyone, so the limit is always satisfiable.
+  local { true }
+  account { FactoryBakery.bake!(User, role: nil).account }
   skip :collection_items
 end
 FactoryBakery.define(List) do
@@ -220,6 +223,18 @@ FactoryBakery.define(AccountConversation) do
     FactoryBakery::Associations.with(mode: :required_only) { [FactoryBakery.bake!(Status).id] }
   end
 end
+# validate_status_access (custom_filter_status.rb) runs StatusPolicy#show? for the
+# filter's account. One persisted account owns both the filter and a public
+# status, so the status is visible to the account that applies the filter.
+FactoryBakery.define(CustomFilterStatus) do
+  association(:custom_filter) do |_custom_filter_status|
+    FactoryBakery.bake!(CustomFilter, account: FactoryBakery.bake!(Account))
+  end
+  association(:status) do |custom_filter_status|
+    FactoryBakery.bake!(Status, account: custom_filter_status.custom_filter.account, reblog: nil, visibility: :public)
+  end
+end
+
 FactoryBakery.define(StatusPin) do
   pin_account = nil
   account { pin_account = FactoryBakery.bake!(Account) }

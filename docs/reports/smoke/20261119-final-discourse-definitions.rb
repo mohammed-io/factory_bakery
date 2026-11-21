@@ -7,31 +7,6 @@
 require 'securerandom'
 require 'factory_bakery/attachments'
 
-# Deterministic OpenAI provider setup shared by all LLM models.
-# Bakes a fresh, valid LlmModel (open_ai, vision disabled) inside the current
-# bake graph. Avoids flaky random providers (bedrock/vertex) that require
-# region/project_id, and avoids vision / legacy-user validations.
-def smoke_llm_model
-  LlmModel.create!(
-    provider: LlmModel::OPEN_AI_PROVIDER_NAME,
-    name: "smoke_llm_#{SecureRandom.hex(4)}",
-    display_name: 'Smoke LLM',
-    tokenizer: 'DiscourseAi::Tokenizer::OpenAiTokenizer',
-    url: 'https://example.com/v1/chat/completions',
-    api_key: 'test-key',
-    max_prompt_tokens: 4096,
-    max_output_tokens: 1000,
-    input_cost: 0,
-    output_cost: 0,
-    cached_input_cost: 0,
-    provider_params: {},
-    ai_secret_id: nil,
-    user_id: nil,
-    vision_llm_model_id: nil,
-    vision_enabled: false,
-  )
-end
-
 # Discourse sets belongs_to_required_by_default = false, so UserEmail#user is
 # optional. Break the User -> primary_email -> UserEmail -> User cycle.
 FactoryBakery.define(UserEmail) do
@@ -339,14 +314,7 @@ end
 # required_provider_params and valid_vision_configuration run when the quota's model saves.
 FactoryBakery.define(LlmQuotaUsage) do
   user { Discourse.system_user }
-  llm_quota do
-    llm = LlmModel.create!(provider: 'open_ai', name: 'gpt-4o-mini', display_name: 'Smoke LLM',
-                           tokenizer: 'DiscourseAi::Tokenizer::OpenAiTokenizer',
-                           url: 'https://example.com/v1/chat/completions',
-                           api_key: 'test-key', max_prompt_tokens: 4096)
-    LlmQuota.create!(llm_model: llm, group: Group.find(Group::AUTO_GROUPS[:everyone]),
-                     duration_seconds: 3600, max_tokens: 1000)
-  end
+  llm_quota { FactoryBakery.bake!(LlmQuota) }
 end
 
 # Deterministic open_ai LlmModel shared by all LLM credit models. Forces the
@@ -354,6 +322,9 @@ end
 # are never picked. Disables vision and legacy user association so "all" mode
 # (passes C/D) stays valid.
 FactoryBakery.define(LlmModel) do
+  # :all mode would auto-build these children; the vision dependents validator
+  # then rejects the parent (vision_dependents_require_native_vision).
+  skip :vision_dependents, :llm_quotas, :llm_credit_allocation, :llm_feature_credit_costs
   provider { LlmModel::OPEN_AI_PROVIDER_NAME }
   name { "smoke_llm_#{SecureRandom.hex(4)}" }
   display_name { 'Smoke LLM' }
@@ -374,7 +345,7 @@ end
 
 # LlmQuota belongs_to llm_model + group; needs at least one limit (max_tokens).
 FactoryBakery.define(LlmQuota) do
-  llm_model { smoke_llm_model }
+  llm_model { FactoryBakery.bake!(LlmModel) }
   group { Group.find(Group::AUTO_GROUPS[:everyone]) }
   duration_seconds { 3600 }
   max_tokens { 1000 }
@@ -382,21 +353,21 @@ end
 
 # LlmCreditAllocation: llm_model unique, daily_credits > 0, soft_limit 0..100.
 FactoryBakery.define(LlmCreditAllocation) do
-  llm_model { smoke_llm_model }
+  llm_model { FactoryBakery.bake!(LlmModel) }
   daily_credits { 1000 }
   soft_limit_percentage { 80 }
 end
 
 # LlmCreditDailyUsage: llm_model + usage_date + credits_used >= 0.
 FactoryBakery.define(LlmCreditDailyUsage) do
-  llm_model { smoke_llm_model }
+  llm_model { FactoryBakery.bake!(LlmModel) }
   usage_date { Date.current }
   credits_used { 0 }
 end
 
 # LlmFeatureCreditCost: llm_model + feature_name unique per model, credits_per_token >= 0.
 FactoryBakery.define(LlmFeatureCreditCost) do
-  llm_model { smoke_llm_model }
+  llm_model { FactoryBakery.bake!(LlmModel) }
   feature_name { "smoke_feature_#{SecureRandom.hex(4)}" }
   credits_per_token { 1 }
 end
@@ -537,14 +508,15 @@ FactoryBakery.define(PostReply) do
   end
 end
 
-# The sharing API requires a Topic and the model validates nonempty context.
-# State is scoped to one bake (fresh post each time) so rolled-back post IDs
-# are never reused across passes.
+# publicly_visible? requires every context post to belong to the target topic.
+# One post is baked per bake: its topic is the target and the post is the only
+# context entry. The target association receives the record being built, so
+# context is filled from that same post. Nothing is memoized across bakes.
 FactoryBakery.define(SharedAiConversation) do
-  target { FactoryBakery.bake!(Post).topic }
-  user { Discourse.system_user }
-  context do
+  association(:target) do |conversation|
     post = FactoryBakery.bake!(Post)
-    [{ 'id' => post.id, 'user_id' => post.user_id, 'created_at' => post.created_at.iso8601, 'cooked' => post.cooked }]
+    conversation.context = [{ 'id' => post.id, 'user_id' => post.user_id, 'created_at' => post.created_at.iso8601, 'cooked' => post.cooked }]
+    post.topic
   end
+  user { Discourse.system_user }
 end
