@@ -295,6 +295,8 @@ Use a block scope rather than a kwarg: `**overrides` shares its namespace with m
 
 ### 4.4 The `association` DSL
 
+> Historical design. The shipped API passes target overrides in `with:` (`association :author, with: { name: 'Ann' }`), adds `persist:` and a positional target class, and names the strategy `:reuse_non_unique`. See the README's `association` DSL section.
+
 ```ruby
 FactoryBakery.define(Post) do
   title { 'Hello' }

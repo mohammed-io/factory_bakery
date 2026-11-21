@@ -1,5 +1,11 @@
 ## [Unreleased]
 
+### Association DSL
+
+- **Breaking:** attribute overrides for an association target go in `with:` (`association :topic, with: { user: admin }`). Passing them beside the options raises `ArgumentError` naming the `with:` spelling. A target column named `count`, `strategy`, `factory` or `persist` can now be overridden.
+- `association :post, Post` names the target class positionally, same as `factory: Post`. Giving both raises.
+- `persist: true` bakes a `belongs_to` target with `bake!` before the owner is validated, even under plain `bake`, for validators that read the parent's id (FactoryBot's `strategy: :create` on an association). Refused on `has_one`/`has_many` and with a block.
+
 ### Association strategies
 
 - Renamed the `belongs_to` association strategy `:reuse` to `:reuse_non_unique` (no backwards-compatible alias; `strategy: :reuse` now raises `ArgumentError`). The strategy now reuses an existing target only when the edge has no uniqueness: if the owner's foreign key carries a uniqueness validator or a unique index (single or composite), or the target's inverse association is a `has_one`, the edge builds a fresh target exactly as `:fresh` does — skipping both the in-graph cache and the database lookup, and not remembering that fresh object for reuse.
