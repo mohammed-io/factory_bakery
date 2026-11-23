@@ -34,7 +34,7 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | --- | --- |
 | `FactoryBot.define { factory :user { ... } }` | `FactoryBakery.define(User) { ... }` |
 | `factory :admin, class: 'User'` | `FactoryBakery.define(:admin, klass: User) { ... }` |
-| `factory :admin, parent: :user` / nested `factory` | No inheritance. A trait on the parent, or a second definition |
+| `factory :admin, parent: :user` / nested `factory` | A trait on the parent, or a second definition. A subclass with no definition of its own (`Admin < User`) already uses `User`'s |
 | `aliases: [:author]` | A second `define(:author, klass: User, &same_block)` |
 | `name { 'Ada' }` | `name { 'Ada' }` (same) |
 | `name 'Ada'` (static) | `name { 'Ada' }`. The static form raises with the block syntax |
@@ -91,11 +91,11 @@ List what exists. Count the factories, the call-site forms, and anything unusual
 | --- | --- |
 | `factory :` / `FactoryBot.define` files | What to translate |
 | `sequence`, `transient`, `after(`, `before(`, `callback(` | Not supported or needs care |
-| Attributes that read other attributes | Not supported |
+| Attributes that read other attributes | Supported: `email { "#{name}@example.com" }` |
 | `build_stubbed`, `attributes_for`, `create_list` | Special call-site handling |
 | `create(:x) { \|x\| ... }` blocks | Keep the block on `bake!` |
 | `initialize_with { ... }` blocks | Hash only |
-| Nested factories and `parent:` | No inheritance |
+| Nested factories and `parent:` | A subclass inherits its parent class's definition; otherwise a trait or a second definition |
 | `FactoryBot.lint` | Replaced by doctor |
 | Custom validators, registries, callbacks on models | Likely definitions that must stay |
 
@@ -300,7 +300,7 @@ Keep a line when a test asserts on it, or when the model cannot validate without
 | A cross-record rule (a follow exists, the voter is not the author) | App-specific setup |
 | A validator reads a parent's **id** | `association :x, persist: true` |
 | Edge that must not reuse the owner's own parent | `strategy: :fresh` |
-| A side-effecting setter (`avatar_remote_url=`) | `skip :avatar_remote_url` |
+| A side-effecting setter other than `*_remote_url` (those are left blank automatically, with a WARN) | `skip :setter_name` |
 | A read-only view as a parent | `skip :instance`, set the natural key |
 | A structured JSON payload | A block with the right shape |
 | Cycle breakers in `:all` | `skip :children`, `owner { nil }` |
@@ -316,7 +316,7 @@ Real examples with the reason for each are in `docs/reports/smoke/20261119-final
 | `after(:build)` / `after(:create)` / `before(:create)` | Definitions have no callback DSL | Report hooks that must run for every call. A single call can use a `bake` or `bake!` block after construction or persistence |
 | `initialize_with { ... }` block | Only a Hash is accepted | A Hash if the block is simple. Otherwise report |
 | `create_list(:x, 3) { \|x, i\| ... }` (a block that uses the index) | `Array.new(3) { }` can express it, but moving the block body is more than a rename | Report |
-| Nested `factory` / `parent:` inheritance | No inheritance | Traits or repeated lines |
+| Nested `factory` / `parent:` inheritance | A subclass uses its parent class's definition when it has none. A definition of its own replaces it (no merge) | Traits, or repeat the lines the subclass still needs |
 | `FactoryBot.create(:x)` inside `before(:all)` or seeds | Data outlives the example | Same behavior, but check |
 | Uniqueness through a literal in the factory | Literal values are not regenerated | Use a block, or inference |
 

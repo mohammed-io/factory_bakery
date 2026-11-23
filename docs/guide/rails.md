@@ -43,7 +43,7 @@ Only the chosen directory is loaded. If it does not exist, nothing is loaded and
 - Loading a definition that names a model (`FactoryBakery.define(User)`) autoloads that model during boot. Use a bare symbol (`define(:user)`) if you need the file to load before the model exists: the class is resolved at the first bake. `klass: User` references the constant at load time.
 - Class-keyed definitions refer to the class object that existed when the file loaded. With code reloading, that object goes stale. Tests normally do not reload. Symbol factories without `klass:` re-resolve on every bake. (Read from the code, not run.)
 - `config.factory_bakery.definition_paths` reads the value at boot. Setting it in an initializer is fine because the hook runs after initializers.
-- RSpec and Minitest behave identically. Neither needs a `require`.
+- RSpec and Minitest behave identically. To make generated values follow the framework's seed (`rspec --seed N`, `bin/rails test --seed N`), require `factory_bakery/rspec` or `factory_bakery/minitest`; `bin/rails g factory_bakery:install` writes that require into the initializer. See [Randomness](configuration.md#randomness).
 
 ## Definitions directory when factory_bot is present
 

@@ -36,7 +36,7 @@ cat.class # => Cat
 cat.name  # => "Milo"
 ```
 
-Trade-off: an STI subclass with stricter or different validations receives values meant for its parent. Give it its own definition in that case. factory_bot makes inheritance explicit instead (`factory :cat, parent: :animal`, or a nested factory).
+Definitions do not merge: a subclass with its own definition replaces the inherited one, traits included, so repeat the lines it still needs. Trade-off: an STI subclass with stricter or different validations receives values meant for its parent. Give it its own definition in that case. factory_bot makes inheritance explicit instead (`factory :cat, parent: :animal`, or a nested factory).
 
 ## Attribute blocks
 
@@ -106,11 +106,11 @@ Nothing happens. Values are assigned through setters, and a setter that does not
 
 ```ruby
 FactoryBakery.define(Account) do
-  skip :avatar_remote_url, :header_remote_url
+  skip :moved_to_account
 end
 ```
 
-Use it for setters with side effects, and to stop the association plugin from building an edge. `skip :account` suppresses the association, its foreign key and its polymorphic type column together.
+Use it for setters with side effects (a `*_remote_url` writer is already left blank for you), and to stop the association plugin from building an edge. `skip :account` suppresses the association, its foreign key and its polymorphic type column together.
 
 `skip` takes names only. With a block (or no names) it raises:
 

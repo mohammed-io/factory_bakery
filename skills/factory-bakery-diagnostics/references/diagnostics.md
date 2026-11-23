@@ -51,6 +51,12 @@ Conventions:
 | `Items is invalid` with several literal children | [#literal-override-uniqueness](#literal-override-uniqueness) |
 | `PG::UniqueViolation` / `RecordNotUnique` on a has_one | [#has-one-created-by-callback](#has-one-created-by-callback) |
 | `NotNullViolation`, `InvalidForeignKey` *(Rails)* | [#db-only-constraints](#db-only-constraints) |
+| `Chosen at random:` or `FactoryBakery could not produce a valid` after a validation error | [#random-value-rejected-by-app-rule](#random-value-rejected-by-app-rule) |
+| `Static attributes are unsupported` | [#factory-attribute-errors](#factory-attribute-errors) |
+| `Cyclic attribute dependency` | [#factory-attribute-errors](#factory-attribute-errors) |
+| `to declare a value` (`Use name { ... }`, `Use add_attribute(:x) { ... }`) | [#factory-attribute-errors](#factory-attribute-errors) |
+| `FACTORY_BAKERY_SEED must be an integer`, `FactoryBakery.seed must be an Integer` | [#configuration-errors](#configuration-errors) |
+| A subclass bakes with its parent's values | [#subclass-uses-parent-definition](#subclass-uses-parent-definition) |
 | Record invalid, validator reads a registry or setting | [#registry-and-inclusion-lists](#registry-and-inclusion-lists) |
 | Record invalid, a time rule | [#time-relative-validations](#time-relative-validations) |
 | A text column parsed as JSON or YAML | [#structured-text-columns](#structured-text-columns) |
@@ -58,7 +64,7 @@ Conventions:
 
 ## Choosing the fix
 
-Reproduce in a console first: `FactoryBakery.bake(Model)`, then `.valid?`, `.errors.full_messages`, then `FactoryBakery.bake!(Model)`.
+Reproduce first, with the seed the failure printed (`Seed N from <source>. Reproduce: <command>`): replay the failing spec with `rspec --seed N` (Minitest: `bin/rails test --seed N`), or set `FACTORY_BAKERY_SEED=N` in a console. Then `FactoryBakery.bake(Model)`, `FactoryBakery.explain(record)` (it runs `valid?`), `.errors.full_messages`, then `FactoryBakery.bake!(Model)`. See [Randomness](https://github.com/mohammed-io/factory_bakery/blob/main/docs/guide/configuration.md#randomness).
 
 | The cause is | Smallest fix |
 | --- | --- |
@@ -101,7 +107,7 @@ Never change the model, its validations or the schema to make baking easier. Tha
 ### unknown-trait
 
 - **Message:** `Trait :nope is not declared for User`
-- **Cause:** The trait is absent from **the bake target's own definition**. Also raised for a class with no definition, for a trait forwarded to a child (`association :author, :admin`) the child's definition lacks, and for a trait called from inside another trait.
+- **Cause:** The trait is absent from **the definition the bake target uses**: its own, or its nearest ancestor class's when it has none (traits are inherited with it). Also raised for a class with no definition of its own or from an ancestor, for a trait forwarded to a child (`association :author, :admin`) the child's definition lacks, and for a trait called from inside another trait.
 - **Fix:** Declare the trait in that class's definition, or fix the name.
 
 ### association-plugin-not-loaded
@@ -149,8 +155,11 @@ Never change the model, its validations or the schema to make baking easier. Tha
   - `unknown associations config option :x; expected one of [...]`
   - `associations config must be a Hash, true, false or a mode symbol, got ...`
   - `fill_optional must be true, false, or an array of attribute names, got "true"`
-- **Where to look:** gem `associations/configuration.rb`, `associations/rail_config.rb`, `FactoryBakery.normalize_fill_optional`. App: `config/application.rb`, initializers, `Associations.with(...)` calls.
-- **Fix:** Use a listed value. `strategy: :reuse` was renamed `:reuse_non_unique` with no alias.
+  - `FACTORY_BAKERY_SEED must be an integer, got "abc"`
+  - `FactoryBakery.seed must be an Integer, a callable returning an Integer, or nil, got "x"`
+  - `FactoryBakery.seed callable must return an Integer, got "x"` (also `RSpec seed must be an Integer, got ...`, `Minitest seed must be an Integer, got ...`)
+- **Where to look:** gem `associations/configuration.rb`, `associations/rail_config.rb`, `FactoryBakery.normalize_fill_optional`, `seed.rb`. App: `config/application.rb`, initializers, `Associations.with(...)` calls, the `FACTORY_BAKERY_SEED` environment variable.
+- **Fix:** Use a listed value. `strategy: :reuse` was renamed `:reuse_non_unique` with no alias. A seed is a base-10 Integer, or a callable returning one. `nil` clears the `seed =` setting.
 
 ---
 
@@ -436,9 +445,9 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 ### random-value-rejected-by-app-rule
 
-- **Symptom:** The same model is valid on some runs and invalid on others. The failure text includes `Chosen at random: provider = "bedrock"` (or another value), followed by a seed line, a `FactoryBakery.define(...)` snippet and an `Agent:` line. `bake!` raises the usual error class (for example `ActiveRecord::RecordInvalid`) with that text appended after the original message.
+- **Symptom:** The same model is valid on some runs and invalid on others. The failure text starts its explanation with `FactoryBakery could not produce a valid X. Invalid attributes:` and includes `Chosen at random: provider = "bedrock"` (or another value), followed by a seed line (`Seed N from <source>. Reproduce: <command>`), a `FactoryBakery.define(...)` snippet and an `Agent:` line. `bake!` raises the usual error class (for example `ActiveRecord::RecordInvalid`) with that text appended after the original message.
 - **Cause:** A validator the gem cannot read (a custom `validate` block, or a rule that depends on another attribute or setting) rejects the value FactoryBakery drew at random. FactoryBakery does not retry: the seed reproduces the same value every run.
-- **Fix:** Pin the value in your definitions file, using a value your validations accept. Re-run with the same seed to confirm: `FACTORY_BAKERY_SEED=1234` (or the `rspec --seed` / `bin/rails test --seed` command the message prints). The value the message shows is what was drawn, not a fix.
+- **Fix:** Pin the value in your definitions file, using a value your validations accept. The snippet's `{ nil }` is a placeholder: replace it. Re-run with the same seed to confirm: `FACTORY_BAKERY_SEED=1234` (or the `rspec --seed` / `bin/rails test --seed` command the message prints). The value the message shows is what was drawn, not a fix.
 
   ```ruby
   FactoryBakery.define(LlmModel) do
@@ -521,8 +530,8 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 ### subclass-uses-parent-definition
 
 - **Symptom:** A subclass bakes with values from its parent's definition, and a stricter validation on the subclass rejects them (common with STI).
-- **Cause:** A class with no definition of its own uses the nearest ancestor class's definition. `Object` and `BasicObject` are never inherited from.
-- **Fix:** Give the subclass its own definition. An exact definition always wins over an inherited one.
+- **Cause:** A class with no definition of its own uses the nearest ancestor class's definition, traits included. `Object` and `BasicObject` are never inherited from, and modules and symbol factories are not searched.
+- **Fix:** Give the subclass its own definition. An exact definition always wins over an inherited one and **replaces** it (definitions do not merge), so repeat the parent's lines and traits the subclass still needs. When the parent's definition already bakes the subclass, write none.
 - **Example (Discourse):** `Chat::NullUser < User` needs no definition: it uses `User`'s.
 
 ### stale-class-definitions
@@ -543,8 +552,10 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 | Message | Cause | Fix |
 | --- | --- | --- |
-| `Static attributes are unsupported` | A value was passed to the declaration as an argument | Use a value block such as `name { 'Ada' }` |
-| `Cyclic attribute dependency` | The displayed chain of sibling reads returns to an attribute already being resolved | Change one declaration to break the cycle, or pass a call-site value for one attribute in the chain |
+| `Static attributes are unsupported; use name { "Ada" }` | A value was passed to the declaration as an argument (`name 'Ada'`) | Use a value block such as `name { 'Ada' }`, or `skip :name` to omit it |
+| `Cyclic attribute dependency: a -> b -> a` | The displayed chain of sibling reads returns to an attribute already being resolved | Change one declaration to break the cycle, or pass a call-site value for one attribute in the chain |
+| `Use name { ... } to declare a value, or skip :name` | An attribute declared with neither a block nor an argument | Give it a block, or `skip :name` |
+| `Use add_attribute(:skip) { ... } to declare a value` | `add_attribute` called without a block | Pass the value block |
 
 ## Silent failures
 

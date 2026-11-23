@@ -25,6 +25,7 @@ end
 | `factory :post` (class `Post`) | `FactoryBakery.define(Post)` |
 | `factory :admin, class: 'User'` | `FactoryBakery.define(:admin, klass: User)` |
 | `factory :admin, class: User` | `FactoryBakery.define(:admin, klass: User)` |
+| `factory :admin, class: 'Admin'` where `Admin < User` | Nothing: `bake!(Admin)` uses `User`'s definition. `define(Admin)` only when a test depends on a value that differs (it replaces the inherited definition, so repeat the lines it needs) |
 | `factory :post` where call sites only use `create(:post)` | `define(Post)` and the call becomes `bake!(Post)` |
 | One file, many factories | One definition per model, in one file per model |
 
@@ -35,11 +36,11 @@ Use a **class** key when the factory name equals the class (`:post` and `Post`).
 | factory_bot | FactoryBakery | Note |
 | --- | --- | --- |
 | `title { 'x' }` | `title { 'x' }` | Same |
-| `title 'x'` | `title { 'x' }` | The static form raises with the block syntax |
+| `title 'x'` | `title { 'x' }` | The static form raises: `Static attributes are unsupported; use title { "x" }` |
 | `title { Faker::Lorem.sentence }` | `title { Faker::Lorem.sentence }` (1:1) | Droppable later: inference covers it |
 | `created_at { 1.day.ago }` | `created_at { 1.day.ago }` | Keep if a test depends on it |
 | `title { nil }` | `title { nil }` | Explicit `nil` is honored |
-| `email { "#{name}@x.com" }` | Same block | Resolves the winning `name` for each build attempt |
+| `email { "#{name}@x.com" }` | Same block | Resolves the winning `name` (call-site override, trait, declaration or inference). A cycle (`a { b }`, `b { a }`) raises `Cyclic attribute dependency: a -> b -> a` |
 | `skip_create` | Delete | `bake` never saves |
 
 ## Sequences
@@ -72,8 +73,10 @@ If the column is `uniqueness`-validated and no test checks the shape, the 1:1 tr
 | `association :author, strategy: :build` | `association :author` |
 | bare `author` (implicit association) | `association :author`, or nothing when the edge is required |
 | `author { association :user }` | `association :author, User` |
-| `author { create(:user) }` | `author { FactoryBakery.bake!(User) }` |
-| `author { build(:user) }` | `author { FactoryBakery.bake(User) }` |
+| `author { create(:user) }` | `association :author, User, persist: true` |
+| `author { build(:user) }` | `association :author, User` |
+| `author { create(:user, name: 'Ann') }` | `association :author, User, persist: true, with: { name: 'Ann' }` |
+| An association the DSL refuses (`has_many :through`, HABTM), a registry lookup, a cross-record rule, a Sequel model | `tags { [FactoryBakery.bake(Tag)] }`: a block that bakes |
 | `comments { build_list(:comment, 3) }` | `association :comments, count: 3` |
 | `after(:build) { \|p\| p.comments << build(:comment) }` | Not supported (callback) |
 | polymorphic `commentable { association :post }` | `association :commentable, Post` |
@@ -99,8 +102,10 @@ association(:comments) { |post| Array.new(2) { |i| FactoryBakery.bake(Comment, p
 | --- | --- |
 | `trait :admin do ... end` | `trait :admin do ... end` (same) |
 | trait using another trait (`admin` inside a trait body) | Repeat the lines. A trait cannot call a trait |
-| `factory :admin, parent: :user` | A trait on the parent: `trait :admin do role { 'admin' } end`. The call becomes `bake!(User, :admin)` |
-| `factory :admin, parent: :user do ... end` with `class: 'Admin'` | A second definition: `define(:admin, klass: Admin)` with the parent's lines repeated |
+| `factory :admin, parent: :user` (same class) | A trait on the parent: `trait :admin do role { 'admin' } end`. The call becomes `bake!(User, :admin)` |
+| `factory :admin, parent: :user, class: 'Admin'` with `Admin < User` | Nothing, if `User`'s definition already bakes an `Admin`: a class without a definition uses its nearest ancestor's, traits included. The call becomes `bake!(Admin)` |
+| The same, and a test depends on a value that differs | `define(Admin)` with the lines it needs. It **replaces** the inherited definition (no merge), so repeat the parent's lines it still needs and its traits |
+| `parent:` across unrelated classes | A second definition with the parent's lines repeated. Only ancestor classes are searched |
 | `traits_for_enum :status` | A trait per state a test uses, or none (enum inference) |
 | `trait :x` with `transient` | See transients |
 
@@ -108,7 +113,7 @@ association(:comments) { |post| Array.new(2) { |i| FactoryBakery.bake(Comment, p
 
 | factory_bot | FactoryBakery |
 | --- | --- |
-| `transient do foo { 1 } end` used only to compute attributes | A local inside `define`: `foo = 1` |
+| `transient do foo { 1 } end` used only to compute attributes | A local inside `define`: `foo = 1`. Or declare it and read it from a sibling block |
 | `transient` passed at the call site | Not supported. Blocker |
 | `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Report definition callbacks. Keep existing call-site blocks on `bake` or `bake!` |
 | `initialize_with { new(a: 1) }` | `initialize_with(a: 1)` |
@@ -132,7 +137,8 @@ Only the factory call changes. Arguments after the name carry over unchanged.
 | `create_pair(:post)` | `Array.new(2) { FactoryBakery.bake!(Post) }` |
 | `attributes_for(:post)` | `attributes_for(Post)` through a helper (see below) |
 | `build_stubbed(:post)` | Blocker |
-| `create(:post) { \|p\| ... }` | `FactoryBakery.bake!(Post) { \|p\| ... }` |
+| `create(:post) { \|p\| ... }` | `FactoryBakery.bake!(Post) { \|p\| ... }` (yields after the save is verified and the transaction or savepoint finished) |
+| `build(:post) { \|p\| ... }` | `FactoryBakery.bake(Post) { \|p\| ... }` (yields after the build) |
 
 Which spelling for the name? A symbol name maps to the class (`:post` to `Post`). If the factory was registered under a different name than the class, keep the symbol (`bake!(:admin)`) and register it with `klass:`.
 

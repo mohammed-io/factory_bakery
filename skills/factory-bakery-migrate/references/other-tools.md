@@ -9,7 +9,8 @@ The FactoryBakery side of every table below is verified against this gem. The Fa
 | Fabrication | FactoryBakery |
 | --- | --- |
 | `Fabricator(:user) { name 'Ada' }` | `FactoryBakery.define(User) { name { 'Ada' } }` (note the block) |
-| `Fabricator(:admin, from: :user) { ... }` | A trait: `trait :admin do ... end`, or `define(:admin, klass: User)` with repeated lines |
+| `Fabricator(:admin, from: :user) { ... }` (same class) | A trait: `trait :admin do ... end`, or `define(:admin, klass: User)` with repeated lines |
+| `Fabricator(:admin, from: :user, class_name: 'Admin')` with `Admin < User` | Nothing, if `User`'s definition bakes an `Admin` (a class without a definition uses its nearest ancestor's). `define(Admin)` replaces it, so repeat the lines it needs |
 | `Fabricator(:user, class_name: 'Ns::User')` | `define(:user, klass: Ns::User)` |
 | `Fabricate(:user)` | `FactoryBakery.bake!(User)` |
 | `Fabricate(:user, name: 'x')` | `FactoryBakery.bake!(User, name: 'x')` |
@@ -87,7 +88,7 @@ def create_user(attrs = {})
 end
 ```
 
-Values the helper set that a test asserts on go into a definition:
+`bake!` also accepts a block that yields the saved record, so a helper that did `User.create!(attrs).tap { ... }` keeps its shape. Values the helper set that a test asserts on go into a definition:
 
 ```ruby
 FactoryBakery.define(User) do

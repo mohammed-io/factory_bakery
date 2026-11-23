@@ -10,17 +10,17 @@ A default bake fills only what a valid record needs. Use `fill_optional: true` o
 **Why does `bake` return an invalid record?**
 `bake` does not validate overrides, and it probes validity only when it has a reason. Call `valid?`. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
 
-**Why did `name 'Ada'` leave `name` nil?**
-There is no static shorthand. A declaration without a block carries no value and also suppresses inference. Write `name { 'Ada' }`. See [Definitions](definitions.md#attribute-blocks).
+**Why does `name 'Ada'` raise?**
+There is no static shorthand: a declaration without a block would assign nothing and suppress inference, so the gem raises and names the fix. Write `name { 'Ada' }`, or `skip :name` to omit it. See [Definitions](definitions.md#attribute-blocks).
 
-**Why does `label { "#{name}-x" }` produce a strange string?**
-Blocks have no access to sibling attributes. `name` inside the block is read as a new empty declaration. Use a local variable in the `define` block, or an override. See [Definitions](definitions.md#what-a-block-can-see).
+**Can a block read another attribute?**
+Yes. `label { "#{name}-x" }` reads `name` (declared in the definition, passed as an override, or generated), including one declared later. A cycle raises `Cyclic attribute dependency: a -> b -> a`. See [Definitions](definitions.md#what-a-block-can-see).
 
 **Is there `sequence`, `transient`, `after(:create)`, `build_stubbed`?**
 No. Sequences: a counter local at the top of the file, or `SecureRandom`. Transients: locals inside `define`. Callbacks: do the work in a block, or after the `bake!` call. `build_stubbed`: no equivalent. See [Migrating from factory_bot](migrating-from-factory-bot.md).
 
-**Can I pass a block to `bake!`?**
-You can; it is ignored.
+**Can I pass a block to `bake` or `bake!`?**
+Yes. The block receives the record once (`bake!` yields it after it is saved and verified) and the call still returns the record. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
 
 **Where are definitions loaded from?**
 `config.factory_bakery.definition_paths` when set. Otherwise `spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`. See [Rails](rails.md#configuration).
@@ -46,7 +46,7 @@ Inference cannot see it. Declare a value from the registry. See [Heuristics](heu
 A text column cast to JSON by an index gets a JSON string. Other structured payloads need a block that returns the right shape. See [diagnostics](../../skills/factory-bakery-diagnostics/references/diagnostics.md#structured-text-columns).
 
 **Can I make values repeatable?**
-`srand(seed)`.
+Yes: set a seed. `FACTORY_BAKERY_SEED=1234`, `FactoryBakery.seed = 1234` (or a callable), or `require 'factory_bakery/rspec'` / `'factory_bakery/minitest'` to follow the test framework's seed. `srand` has no effect. See [Randomness](configuration.md#randomness).
 
 ## Associations
 

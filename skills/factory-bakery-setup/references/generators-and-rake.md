@@ -60,6 +60,7 @@ bin/rails g factory_bakery:install
 Creates `config/initializers/factory_bakery.rb` (an existing one is skipped, `--force` overwrites) and the definitions directory.
 
 - The initializer sets `Rails.application.config.factory_bakery` and lists `associations`, `definition_paths`, `fill_optional`, `generators` as commented examples. Nothing is on until a line is uncommented.
+- It also writes `require 'factory_bakery/rspec'` when `spec/` exists, else `require 'factory_bakery/minitest'` when `test/` exists, so generated values follow the framework's seed. With neither directory it writes no require.
 - **factory_bot detected** (same test as above): creates `spec/bakery` (`test/bakery`) and writes an active `config.definition_paths = ["spec/bakery"]`. The two gems then never load each other's files.
 - **Otherwise**: creates the directory Rails would load (first `definition_paths` entry, else the default above) and leaves `definition_paths` commented.
 
@@ -97,7 +98,7 @@ Quote the bracketed form in zsh. Arguments are Active Record class names, comma 
 
 - Per model: `bake` plus `valid?` first, then `bake!`, which must persist the record. The first error found is kept (validation before persistence).
 - Each probe, and the whole run, is rolled back on every Active Record connection pool registered for the current role. Rows already in the database are untouched. Model callbacks still run, so a job, an HTTP call or a file write they make is **not** rolled back.
-- Each failure prints one line: `Model: <first line of the error> — <hint> (<link>)`. The link is `https://github.com/mohammed-io/factory_bakery/blob/main/docs/diagnostics.md#<anchor>`.
+- Each failure prints one line: `Model: <first line of the error> — <hint> (<link>)`. The link is `https://github.com/mohammed-io/factory_bakery/blob/main/docs/diagnostics.md#<anchor>`. The rest of the error follows, indented by two spaces. For an invalid record that includes the explanation: the invalid attributes, `Chosen at random: ...`, the seed with its reproduce command, and a definition snippet (same text as `FactoryBakery.explain(record)`).
 - The last line is `N valid, M needs definition`.
 
 | Control | Effect |
@@ -110,7 +111,7 @@ Run `doctor` in the **test** environment (`RAILS_ENV=test`). It writes rows (rol
 
 ## Reading doctor output
 
-Doctor emits only these anchors (published at `docs/diagnostics.md`, same text as the [catalog](../../factory-bakery-diagnostics/references/diagnostics.md)):
+Doctor emits only these six anchors (published at `docs/diagnostics.md`, same text as the [catalog](../../factory-bakery-diagnostics/references/diagnostics.md)). The first pattern that matches the message wins, in this order:
 
 | Anchor | Triggered by | Usual fix |
 | --- | --- | --- |
@@ -118,8 +119,9 @@ Doctor emits only these anchors (published at `docs/diagnostics.md`, same text a
 | `#no-polymorphic-target-discovered` | `no target discovered` | `association :x, SomeClass`, or `skip :x` |
 | `#incomplete-persistence` | `IncompletePersistenceError` | Persist the named record, or fix `autosave`/`validate` |
 | `#db-only-constraints` | `NotNullViolation`, `InvalidForeignKey` | A definition line giving a value the database accepts |
+| `#random-value-rejected-by-app-rule` | `Chosen at random:` in the message | Pin the value in a definition, using one your validations accept |
 | `#domain-rules-inference-cannot-know` | Any other error | Catch-all. Read the message and classify it with the diagnostics skill |
 
 A `domain-rules-inference-cannot-know` link does not mean the error is a domain rule. Other kinds (`#cyclic-association`, `#read-only-target`, `#id-reading-custom-validator`) land there too. Use the printed message and the catalog's [index by message](../../factory-bakery-diagnostics/references/diagnostics.md#index-by-message).
 
-Do not write definitions for models that bake fine. A model that passes `doctor` needs no definition.
+Do not write definitions for models that bake fine. A model that passes `doctor` needs no definition ([bad pattern](bad-patterns.md#13-generating-stubs-for-every-model)).

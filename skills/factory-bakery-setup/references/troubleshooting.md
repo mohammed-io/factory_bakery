@@ -8,7 +8,7 @@ For an error raised by a bake, use the [`factory-bakery-diagnostics`](../../fact
 | `cannot load such file -- factory_bakery/associations` | Old gem version, or not bundled | `bundle update factory_bakery`. Check `bundle exec` |
 | `` `association` requires the associations plugin: require 'factory_bakery/associations' `` | Plugin not enabled | Add `config.factory_bakery.associations = {...}` (Rails) or the require |
 | Definitions never apply | Wrong directory. `FactoryBakery.definition_paths` is empty or points elsewhere | Print it. Create the directory. Set `config.factory_bakery.definition_paths` |
-| Definitions apply twice or `NoMethodError` at boot | factory_bot and FactoryBakery both load `spec/factories` | Separate directory: `bin/rails g factory_bakery:install`, or `spec/bakery` plus `definition_paths`. Rails defaults to `spec/bakery` only when it detects factory_bot |
+| Definitions apply twice or `NoMethodError` at boot | factory_bot and FactoryBakery both load `spec/factories` | Separate directory: `bin/rails g factory_bakery:install`, or `spec/bakery` plus `definition_paths`. Rails defaults to `spec/bakery` only when it detects factory_bot ([bad pattern](bad-patterns.md#2-factorybakery-and-factory_bot-loading-one-directory)) |
 | `bake` is undefined in tests | `FactoryBakery::Methods` not included | See [test-wiring.md](test-wiring.md), or call `FactoryBakery.bake` |
 | Attachments are not attached | Attachments plugin not required | `require 'factory_bakery/attachments'` |
 | Sequel model gets no auto-built associations | Not supported for Sequel | Assign in an attribute block |
@@ -18,8 +18,14 @@ For an error raised by a bake, use the [`factory-bakery-diagnostics`](../../fact
 | `factory_bakery:doctor` or `definitions` prints `Unknown concrete Active Record model: X` | The name is not a concrete Active Record class (a typo, an abstract class, a non-model) | Fix the name. With no names the task skips abstract classes itself |
 | Boot is slow or loads all models | A polymorphic edge triggered `eager_load!` | Set `eager_load: false`, or declare the polymorphic target |
 | Definitions are ignored after reload | Class-keyed definitions go stale | Re-run `FactoryBakery.find_definitions`, or use a symbol factory |
-| Plugins vanish between examples | Something calls `FactoryBakery.reset_plugins!` | Do not call it in an app suite, or register again after |
+| Plugins vanish between examples | Something calls `FactoryBakery.reset_plugins!` | Do not call it in an app suite, or register again after ([bad pattern](bad-patterns.md#7-factorybakeryreset_plugins-in-an-app-suite)) |
 | `ArgumentError` at boot naming an associations option | Wrong key or value in `config.factory_bakery.associations` | Valid keys: `mode`, `strategy`, `max_depth`, `default_count`, `eager_load` |
+| `` `association` requires the associations plugin `` at **boot**, though a helper requires the plugin | The plugin is enabled only in a spec helper, which runs after `config/environment` loaded the definitions | Enable it in `config.factory_bakery.associations` ([bad pattern](bad-patterns.md#4-requiring-factory_bakeryassociations-by-hand-in-rails)) |
+| `[FactoryBakery] WARN: seed N from a random choice for this process` | No seed source set and no framework integration required | Add `require 'factory_bakery/rspec'` or `'/minitest'`. The line is informational |
+| Generated values differ on every run, and `rspec --seed N` does not repeat them | The framework integration is not required, or `FACTORY_BAKERY_SEED` / `FactoryBakery.seed =` outranks it | Require the integration. Check `FactoryBakery.seed` and `ENV['FACTORY_BAKERY_SEED']` |
+| `ArgumentError: FACTORY_BAKERY_SEED must be an integer, got "..."` | The variable is not a base-10 integer | Fix the value, or unset it |
+| `ArgumentError: FactoryBakery.seed must be an Integer, a callable returning an Integer, or nil` | Wrong type assigned | Assign an Integer or `-> { 1234 }`. `nil` clears it |
+| `[FactoryBakery] WARN: left Account#avatar_remote_url blank on purpose` | A `*_remote_url` writer would download the URL, so the gem leaves it blank (once per model and attribute) | Nothing to fix. A definition, an override or `skip` fills it or silences it |
 
 ## Quick health check
 

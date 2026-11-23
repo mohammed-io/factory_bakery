@@ -13,7 +13,7 @@ RSpec.configure do |config|
 end
 ```
 
-`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer or a callable), or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot.
+`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer or a callable), or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot, and the last require wins. `bin/rails g factory_bakery:install` already writes the require into `config/initializers/factory_bakery.rb` (RSpec when `spec/` exists, else Minitest when `test/` exists). If the initializer has it, add only the `include` in the helper. The seed is announced once, at INFO when it comes from the framework and at WARN otherwise ([Randomness](../../../docs/guide/configuration.md#randomness)).
 
 Use in examples:
 
@@ -63,7 +63,7 @@ Without the include, call `FactoryBakery.bake(...)` and `FactoryBakery.bake!(...
 
 - Transactional tests (the Rails default) roll back every `bake!` row. `bake` rows from raw-FK presence edges and `persist: true` roll back too, because they are written inside the test transaction.
 - For non-transactional tests (system tests), use `DatabaseCleaner` or an `after` hook, as for any data.
-- Bake inside examples (`let`, `before(:each)`), not at file load.
+- Bake inside examples (`let`, `before(:each)`), not at file load ([bad pattern](bad-patterns.md#11-baking-at-file-load)).
 
 ## Isolation in your own specs
 
@@ -73,7 +73,7 @@ If specs of your own register plugins or change settings:
 config.after { FactoryBakery::Associations.reset_configuration! }   # restores plugin defaults
 ```
 
-`FactoryBakery.reset_plugins!` removes **all** plugins. Do not use it in an app suite unless you register them again.
+`FactoryBakery.reset_plugins!` removes **all** plugins. Do not use it in an app suite unless you register them again ([bad pattern](bad-patterns.md#7-factorybakeryreset_plugins-in-an-app-suite)).
 
 ## Speed
 

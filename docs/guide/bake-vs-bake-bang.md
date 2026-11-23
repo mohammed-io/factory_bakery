@@ -73,7 +73,7 @@ bake! did not persist all generated records: Member (assigned to members). Persi
 
 The error class is `FactoryBakery::IncompletePersistenceError`. The whole bake is rolled back first. See [diagnostics](../../skills/factory-bakery-diagnostics/references/diagnostics.md#incomplete-persistence).
 
-Known limit (observed, not documented elsewhere): the check is scoped by the **class path** of the nested bake. If a nested `bake!(User)` runs (from `persist: true` or a declaration block) while a sibling edge of the same class `User` was auto-built and is still unsaved, the check sees that sibling and raises. Persist both edges, or declare the sibling. See the [sibling case](../../skills/factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class).
+A nested `bake!` (from `persist: true` or a declaration block) verifies only the records of its own build. An unsaved sibling of the same class, auto-built by the outer bake, is not its concern. See the [sibling case](../../skills/factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class).
 
 ### Read-only models
 
@@ -89,7 +89,7 @@ If no mapper claims the class, `bake!` is `bake` plus `save!` when the object re
 
 ## Things that surprise people
 
-- A block passed to `bake!` is **ignored**. `FactoryBakery.bake!(User) { |u| u.admin! }` runs the block never. Do the work after the call.
+- A block passed to `bake!` runs once, after the record is saved and verified, and receives the record: `FactoryBakery.bake!(User) { |u| u.admin! }`. A block passed to `bake` receives the unsaved record.
 - `bake!` returns the object with in-memory state. Call `reload` if a test needs database state.
 - Depth is capped. Nested bakes deeper than `FactoryBakery.max_bake_depth` (default 10) raise `FactoryBakery::NestingTooDeepError`:
   ```

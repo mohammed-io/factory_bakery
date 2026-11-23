@@ -66,6 +66,8 @@ The gem should be in `group :development, :test` or `group :test`. Definitions l
 
 ## Things to know
 
+Common mistakes with these options are in [bad-patterns.md](bad-patterns.md).
+
 - Only one directory is loaded when `definition_paths` is unset (see the table). `definition_paths` itself may list several. Missing directories are skipped.
 - Generator behavior, `--skip-factory-bakery`, `--force`, and the rake tasks: [generators-and-rake.md](generators-and-rake.md).
 - A definition naming a model (`define(User)`) autoloads it during boot. A bare symbol (`define(:user)`) resolves at the first bake.

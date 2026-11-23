@@ -24,6 +24,8 @@ If the baseline has failures, **stop and tell the user**. The target is "the sam
 
 Run once more with the same seed to confirm the baseline is stable (flaky tests are listed and excluded from judgment, not fixed).
 
+After the migration, the same `--seed N` also fixes FactoryBakery's generated values for the same bakes in the same order, provided `factory_bakery/rspec` (or `/minitest`) is required. Without it, each process draws a random seed and logs it at WARN. `FACTORY_BAKERY_SEED=N` pins it either way and outranks the framework seed.
+
 ## 2. After each batch
 
 1. Run the affected files, then the full suite.
@@ -44,10 +46,10 @@ Run once more with the same seed to confirm the baseline is stable (flaky tests 
 Every changed test line must be a factory-call rename. The helper [`check_renames.rb`](check_renames.rb) reads a unified diff and judges it. It is read-only.
 
 ```sh
-git diff -U0 --no-color <base-branch>...HEAD -- spec test | ruby skills/factory-bakery-migrate/references/check_renames.rb
+git diff -U0 --no-color <base-branch>...HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb
 ```
 
-Run it from the worktree. Use the gem's path to the script, or copy it to the scratchpad. Replace `<base-branch>` with the branch the worktree started from (often `main`).
+Run it from the worktree. `<skill-dir>` is the absolute path of the `factory-bakery-migrate` skill directory (the script is not in the project). Replace `<base-branch>` with the branch the worktree started from (often `main`).
 
 | Output | Meaning | Action |
 | --- | --- | --- |
@@ -95,7 +97,7 @@ Remove lines **one factory at a time**, not in bulk.
 4. If a test now fails, **restore the line** and note the reason ("a test depends on this value" or "the model cannot bake without it").
 5. Repeat for the next model.
 
-Run the whole suite at the end, twice with different seeds.
+Run the whole suite at the end, twice with different seeds (`bundle exec rspec --seed 1`, then `--seed 2`). If a run fails, replay it with the seed it printed (or the one in the FactoryBakery log line or error text) before changing anything, and use the [`factory-bakery-diagnostics`](../../factory-bakery-diagnostics/SKILL.md) skill.
 
 ## 5. Final checks (before asking about the old factories)
 

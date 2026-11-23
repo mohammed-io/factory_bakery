@@ -1,6 +1,6 @@
 # Capability matrix
 
-Everything a factory_bot (or similar) factory can express, sorted into three classes. Each row has the reason. Verified against the code on `v0.0.2`. Rows marked *(not run)* were read from the code, not exercised.
+Everything a factory_bot (or similar) factory can express, sorted into three classes. Each row has the reason. Verified against the code on branch `v0.0.2` (inheritance, sibling reads and the `static name` error were also run). Rows marked *(not run)* were read from the code, not exercised.
 
 - **Automatic**: inference or the associations plugin handles it. Write nothing. Drop the old line.
 - **Needs a definition**: FactoryBakery can do it, but you must say so in a definition (or association option).
@@ -37,6 +37,10 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | Diamond graphs (`comment.user` is `comment.post.user`) | In-graph identity |
 | Required file attachments (Active Storage `has_one_attached`, Paperclip) | Attachments plugin, bundled fixtures |
 | STI | The `type` column is left to Rails. Bake the subclass |
+| A subclass with no definition of its own (`Admin < User`) | Uses the nearest ancestor class's definition, traits included. `Object` is never searched |
+| `*_remote_url` writers (`avatar_remote_url=`) | Left blank, with one WARN per model and attribute. Assigning them would download the URL |
+| `belongs_to` naming a class that has no constant | Resolved through the owner's `polymorphic_class_for` mapping, else the database foreign key constraint on its column |
+| Polymorphic `belongs_to` with a database foreign key on its id column | Candidates narrowed to the referenced table's model |
 | Counter caches | Left to Rails (`0` for NOT NULL with no default) |
 | Text columns cast to JSON by an index | A JSON object string |
 | Models whose `new` raises | `unscoped` then callback-free construction |
@@ -60,7 +64,10 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | Validator reads a parent's **id** | `association :x, persist: true` | Unsaved parents have nil ids |
 | Reuse picks the owner's own parent | `strategy: :fresh` | The rule is in a custom validator the gem cannot see |
 | Literal child values under uniqueness | A block with distinct values, or leave to inference | Literals are not regenerated |
-| Side-effecting setter | `skip :attr` | Heuristics must not call it |
+| Side-effecting setter that is not a `*_remote_url` writer | `skip :attr` | Heuristics must not call it. `*_remote_url` writers are already left blank |
+| A custom validator rejects the generated enum member, boolean or STI type | A block declaring the value | The gem does not search for a value that passes. The user declares it ([ADR-0008](../../../docs/adr/0008-user-chooses-domain-values.md)) |
+| An attribute computed from another (`email { "#{name}@x.com" }`) | The same block | Blocks read siblings, honoring overrides, traits and `skip`. A cycle raises `Cyclic attribute dependency: a -> b -> a` |
+| `author { create(:user) }` or `author { build(:user) }` | `association :author, User, persist: true` or `association :author, User` | The DSL checks the edge and takes `with:`, traits and `count:`. A block that bakes is for what the DSL refuses |
 | Read-only view as a parent | `skip :edge` and set the natural key | A view cannot be inserted |
 | Cycle under `:all` | `skip :edge` or `edge { nil }` | Required cycles raise |
 | Owner callback creates the has_one | Remove your declaration, or `skip` | Both would insert the row |
@@ -69,10 +76,12 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | `has_many :through`, HABTM | An attribute block | `association` refuses them |
 | Several has_many children | `association :x, count: n` | One child by default |
 | `class: 'Ns::Model'` or a factory name differing from the class | `define(:name, klass: Ns::Model)` | Names resolve by camelizing |
-| Factory inheritance (`parent:`, nested `factory`) | A trait, or a second definition | No inheritance |
+| Factory inheritance (`parent:`, nested `factory`), same class | A trait on the parent | One definition per class. Traits are the only way to vary a class |
+| Factory inheritance with a subclass (`class: 'Admin'`, `Admin < User`) | Nothing if the parent's definition bakes the subclass. Otherwise `define(Admin)` with the lines it needs | A class with no definition uses its nearest ancestor's. An exact definition replaces it, so definitions do not merge |
+| Factory inheritance across unrelated classes | A second definition, lines repeated | Only ancestor classes are searched, never modules or `Object` |
 | `aliases:` | A second `define(:alias, klass: X, &same_block)` | One key per `define` |
 | `sequence` | A counter local at the top of the file | There is no `sequence` DSL |
-| `transient` used only inside the factory | A local inside `define` | Locals are fresh per bake |
+| `transient` used only inside the factory | A local inside `define`, or a sibling read | Locals inside `define` are fresh per bake. A read of a declared attribute also follows overrides |
 | `association :x, strategy: :create` | `association :x, persist: true` | Same intent |
 | `initialize_with { ... }` that builds from a simple hash | `initialize_with(a: 1)` | A Hash only |
 | DB-only constraint (check constraint, composite unique index, trigger) | A block giving an accepted value | Not visible to the mapper |
