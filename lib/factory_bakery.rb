@@ -49,7 +49,6 @@ require_relative 'factory_bakery/attribute_fillers/acceptance_filler'
 require_relative 'factory_bakery/attribute_fillers/confirmation_filler'
 require_relative 'factory_bakery/attribute_fillers/filler_selector'
 require_relative 'factory_bakery/uniqueness_enforcer'
-require_relative 'factory_bakery/uniqueness_retry'
 
 # Builds model instances from factory definitions and model validation rules.
 # Builds test records from factory declarations and model metadata.
@@ -124,12 +123,10 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
 
     def bake(target, *traits, fill_optional: nil, **overrides)
       mode = resolve_fill_optional(fill_optional)
-      record = FillOptional.for_bake_at(BuildContext.current.depth) do
-        FillOptional.with(mode) do
-          model_klass, definition = BakeryBuilder.resolve(target)
-          BuildContext.push(model_klass) do
-            build_with_fallback(model_klass, definition, overrides, traits, mode)
-          end
+      record = FillOptional.around_bake(BuildContext.current.depth, mode) do
+        model_klass, definition = BakeryBuilder.resolve(target)
+        BuildContext.push(model_klass) do
+          build_with_fallback(model_klass, definition, overrides, traits, mode)
         end
       end
       yield record if block_given?
@@ -156,21 +153,20 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
       # FK-column-validated edges insert their parent while the graph is being
       # built, so the flag must cover graph building too, not just the save.
       BuildContext.with_persistence do
-        FillOptional.for_bake_at(BuildContext.current.depth) do
-          FillOptional.with(mode) do
-            model_klass, definition = BakeryBuilder.resolve(target)
-            adapter = MapperRegistry.persistence_adapter(model_klass)
+        FillOptional.around_bake(BuildContext.current.depth, mode) do
+          model_klass, definition = BakeryBuilder.resolve(target)
+          adapter = MapperRegistry.persistence_adapter(model_klass)
+          return bake_untransactional(target, adapter, overrides, traits, mode) unless adapter.transactional?
 
-            return bake_untransactional(target, adapter, overrides, traits, mode) unless adapter.transactional?
-
-            # A proc: the transaction yields its own argument, which is unused.
-            build = proc do
-              BuildContext.push(model_klass) do
-                persist_build!(adapter) { build_with_fallback(model_klass, definition, overrides, traits, mode) }
-              end
+          # The transaction's return value may not be the block's: capture it.
+          object = nil
+          build = proc do
+            object = BuildContext.push(model_klass) do
+              persist_build!(adapter) { build_with_fallback(model_klass, definition, overrides, traits, mode) }
             end
-            savepoints? ? adapter.transaction(model_klass, &build) : build.call
           end
+          savepoints? ? adapter.transaction(model_klass, &build) : build.call
+          object
         end
       end
     end
@@ -200,11 +196,11 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
 
     # The root save is the one place a bake's record meets validation; a failure
     # there carries the explanation (see Explanation.around_failed_save).
-    def persist_build!(adapter, &build)
+    def persist_build!(adapter)
       mark = BuildContext.generated_records.length
-      record = BuildContext.with_persist_root(&build)
+      record = yield
       ReadOnlyGuard.new(record, adapter, BuildContext.records_in_current_build).call
-      Explanation.around_failed_save(record) { UniquenessRetry.save!(record, adapter) }
+      Explanation.around_failed_save(record) { adapter.save!(record) }
       BuildContext.finish_persistence!(mark, adapter)
       PersistenceVerifier.new(record, BuildContext.records_in_current_build, adapter).call
       record

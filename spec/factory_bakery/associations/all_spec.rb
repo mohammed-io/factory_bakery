@@ -198,6 +198,27 @@ RSpec.describe 'FactoryBakery associations :all mode' do
       expect(author.posts.map(&:position).uniq.size).to eq(3)
     end
 
+    it 'does not freeze a method-style default_scope across a collection' do
+      # `def self.default_scope` (instead of the macro) leaves `default_scopes`
+      # empty, so only the owner check on Rails' own method lets the collection
+      # share a scope; here it must not.
+      define_model('AllMethodScopePost', title: :string, author_id: :integer, position: :integer) do
+        belongs_to :author, class_name: 'AllMethodScopeAuthor', optional: true
+
+        def self.default_scope
+          where(position: (@position = (@position || 0) + 1))
+        end
+      end
+      author_model = define_model('AllMethodScopeAuthor', name: :string) do
+        has_many :posts, class_name: 'AllMethodScopePost', inverse_of: :author
+      end
+      FactoryBakery::Associations.default_count = 3
+
+      author = FactoryBakery.bake(author_model)
+
+      expect(author.posts.map(&:position).uniq.size).to eq(3)
+    end
+
     it 'skips optional polymorphic belongs_to' do
       define_model('AllPolyTarget', name: :string)
       comment_model = define_model('AllPolyComment',

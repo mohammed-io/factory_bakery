@@ -79,6 +79,21 @@ RSpec.describe 'framework-managed timestamps' do
     expect(FactoryBakery.bake!(demanded).reload.created_at).to be_present
   end
 
+  it 'still fills a timestamp a before_validation callback reads' do
+    # Rails stamps the timestamps after validation, so a `before_validation`
+    # that reads created_at would raise NoMethodError on a bake! if the gem
+    # left the column nil.
+    reader = define_model('TsCallbackReader', created_at: timestamps.dup, expires_on: :date) do
+      before_validation { self.expires_on = created_at.to_date + 30 }
+    end
+
+    expect { FactoryBakery.bake(reader) }.not_to raise_error
+
+    saved = FactoryBakery.bake!(reader)
+    expect(saved.reload.created_at).to be_present
+    expect(saved.expires_on).to eq(saved.reload.created_at.to_date + 30)
+  end
+
   it 'fills a NOT NULL timestamp again once a baked model turns record_timestamps off' do
     toggled = define_model('TsToggled', created_at: timestamps.dup)
 

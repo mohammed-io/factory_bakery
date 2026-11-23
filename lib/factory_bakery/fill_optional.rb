@@ -88,6 +88,12 @@ module FactoryBakery
         Fiber[SCOPE_KEY] = previous
       end
 
+      # The scope stack every public bake runs under: the rebuild scoping for
+      # the bake's depth plus the resolved mode.
+      def around_bake(depth, mode, &block)
+        for_bake_at(depth) { with(mode, &block) }
+      end
+
       def full?(mode)
         mode == true
       end

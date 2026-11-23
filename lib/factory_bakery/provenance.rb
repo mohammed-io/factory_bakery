@@ -7,7 +7,6 @@ module FactoryBakery
   # never persisted and never shows up in attribute reads.
   module Provenance
     IVAR = :@factory_bakery_provenance
-    DEFERRED_IVAR = :@factory_bakery_deferred
     Origin = Data.define(:filled, :seed, :model, :ordinal)
 
     class << self
@@ -23,21 +22,6 @@ module FactoryBakery
 
       def of(object)
         object.instance_variable_get(IVAR)
-      end
-
-      # Attributes whose database uniqueness check a `bake!` root left to its
-      # own save (UniquenessEnforcer#taken_in_database?). Kept in a second
-      # instance variable beside the origin, so the retry can tell a check
-      # that was actually handed to the save from a value the gem generated.
-      def defer(object, name)
-        return if object.frozen?
-
-        object.instance_variable_set(DEFERRED_IVAR, deferred(object) + [name.to_s])
-      end
-
-      def deferred(object)
-        stored = object.instance_variable_get(DEFERRED_IVAR)
-        stored.is_a?(Array) ? stored : []
       end
 
       # A fill that was undone (reset to its column default) is no longer a

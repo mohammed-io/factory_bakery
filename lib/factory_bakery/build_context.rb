@@ -60,7 +60,6 @@ module FactoryBakery
     # flag tells the associations plugin which contract is active without
     # coupling it to factory_bakery's public methods.
     PERSIST_PARENTS_KEY = :factory_bakery_persist_fk_parents
-    PERSIST_ROOT_KEY = :factory_bakery_persist_root_depth
     # Objects whose own build has not returned yet (the owner a child is being
     # built for, and every owner above it). Replaced, never mutated, so nested
     # bakes and child fibers cannot corrupt it.
@@ -234,23 +233,6 @@ module FactoryBakery
         yield
       ensure
         Fiber[PERSIST_PARENTS_KEY] = previous
-      end
-
-      # The record a `bake!` is building is saved by that same call, so its own
-      # `save!` validates it. Marks the bake at the current depth as that root
-      # while its block runs; a bake nested inside it is one level deeper and
-      # is not the root. The uniqueness enforcer reads it to leave a value the
-      # save will check anyway to the save (see UniquenessRetry).
-      def with_persist_root
-        previous = Fiber[PERSIST_ROOT_KEY]
-        Fiber[PERSIST_ROOT_KEY] = current.depth
-        yield
-      ensure
-        Fiber[PERSIST_ROOT_KEY] = previous
-      end
-
-      def persist_root?
-        Fiber[PERSIST_ROOT_KEY] == current.depth
       end
 
       # The object currently being filled, or nil outside value generation.

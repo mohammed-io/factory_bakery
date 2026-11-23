@@ -130,10 +130,11 @@ module FactoryBakery
       # framework-owned, so the cache key reads the live setting: flipping
       # `record_timestamps` after a first bake must not serve the stale guard.
       def guard_columns(klass)
-        key = klass.respond_to?(:record_timestamps) && klass.record_timestamps ? :guard_columns : :guard_columns_untimed
+        timestamps = klass.respond_to?(:record_timestamps) && klass.record_timestamps
+        key = timestamps ? :guard_columns : :guard_columns_untimed
         class_memo(klass, key) do
           FactoryBakery::MapperRegistry::GuardColumns.new(
-            names: guard_names(klass).freeze, counter_names: counter_names(klass).freeze
+            names: guard_names(klass, timestamps).freeze, counter_names: counter_names(klass).freeze
           )
         end
       end
@@ -210,28 +211,6 @@ module FactoryBakery
           unique_index_columns(klass).include?(attr_name.to_s)
       end
 
-      # The options a uniqueness validator may carry and still be left to the
-      # save: the save runs the validator whatever these do. Any other option
-      # (a condition, an `on:` / `except_on:` context, `allow_nil` /
-      # `allow_blank`, `strict`, `conditions:`) can make the save skip the
-      # check or fail it differently, and then a taken value would reach the
-      # database's own constraint instead.
-      DEFERRED_UNIQUENESS_OPTIONS = %i[case_sensitive message scope].freeze
-      private_constant :DEFERRED_UNIQUENESS_OPTIONS
-
-      # True when the attribute has at least one uniqueness validator and
-      # every one of them is plain in this sense: an unconditional validator
-      # runs on every `save!` and reports `:taken` on the attribute, so the
-      # value can be left to the save.
-      def save_validates_uniqueness?(klass, attr_name)
-        return false unless active_record_class?(klass) && klass.respond_to?(:validators_on)
-
-        validators = uniqueness_validators_for(klass, attr_name)
-        return false if validators.empty?
-
-        validators.all? { |validator| (validator.options.keys - DEFERRED_UNIQUENESS_OPTIONS).empty? }
-      end
-
       # Unique indexes as column-name arrays, composite included. The
       # associations strategy asks whether any index covers one of an edge's
       # foreign keys: any uniqueness there makes a reused row wrong, even when
@@ -271,16 +250,7 @@ module FactoryBakery
 
         validators.any? do |validator|
           probe = build_probe(record, attr_name, value)
-          begin
-            validator.validate_each(probe, attr_name, value)
-          rescue ::ActiveModel::StrictValidationFailed
-            # A `validates!` uniqueness validator reports a taken value by
-            # raising from the probe's errors object instead of adding to it.
-            # Raising is that validator's only taken answer, so the probe
-            # reads it as taken too.
-            next true
-          end
-
+          validator.validate_each(probe, attr_name, value)
           taken_error?(probe.errors, attr_name)
         end
       end
@@ -361,10 +331,10 @@ module FactoryBakery
         end
       end
 
-      def guard_names(klass)
+      def guard_names(klass, timestamps)
         names = belongs_to_guard_names(klass)
         names.concat(counter_names(klass))
-        names.concat(framework_timestamp_names(klass))
+        names.concat(framework_timestamp_names(klass, timestamps))
         names << sti_discriminator_name(klass)
         names << primary_key_name(klass)
         names.compact.uniq
@@ -380,16 +350,33 @@ module FactoryBakery
       # framework writes "now" on `bake!`, and an unsaved `bake` leaves them
       # nil, as `FactoryBot.build` does. A column the app validates (for
       # example `validates :created_at, presence: true`) keeps being filled,
-      # and so does every column of a model that turned timestamps off. A
-      # model with validation the gem cannot read keeps them too: Rails stamps
-      # the timestamps AFTER validation, so a `validate` method demanding
-      # `created_at` would fail the save if the column were left nil.
-      def framework_timestamp_names(klass)
+      # and so does every column of a model that turned timestamps off. Rails
+      # stamps the timestamps AFTER validation, so a model with app
+      # before/after-validation callbacks (a `before_validation` may read
+      # `created_at`) or with validation the gem cannot read keeps them too: a
+      # `validate` method demanding `created_at` would fail the save if the
+      # column were left nil.
+      def framework_timestamp_names(klass, timestamps)
         return [] unless klass.respond_to?(:all_timestamp_attributes_in_model)
-        return [] unless klass.record_timestamps
+        return [] unless timestamps
         return [] if custom_validation?(klass)
+        return [] if app_validation_callbacks?(klass)
 
         klass.all_timestamp_attributes_in_model.reject { |name| klass.validators_on(name).any? }
+      end
+
+      # True when the model runs its own before/after-validation callbacks.
+      # Rails adds only one before-validation callback of its own,
+      # `:normalize_changed_in_place_attributes` (ActiveModel's attribute
+      # normalization, included in every ActiveRecord model), so any other
+      # entry is app logic that may read a timestamp before Rails stamps it.
+      FRAMEWORK_VALIDATION_CALLBACKS = %i[normalize_changed_in_place_attributes].freeze
+
+      def app_validation_callbacks?(klass)
+        klass.respond_to?(:_validation_callbacks) &&
+          klass._validation_callbacks.any? do |callback|
+            %i[before after].include?(callback.kind) && !FRAMEWORK_VALIDATION_CALLBACKS.include?(callback.filter)
+          end
       end
 
       # Columns behind a belongs_to cannot be guessed: a random FK dangles

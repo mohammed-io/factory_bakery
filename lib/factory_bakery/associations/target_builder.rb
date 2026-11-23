@@ -68,9 +68,9 @@ module FactoryBakery
           end
 
           klass = target_klass(object, declaration, entry)
-          if klass.respond_to?(:default_scopes) && klass.default_scopes.empty?
-            shared_scope = create_scope(object, entry)
-          end
+          # A method-style `def self.default_scope` would be frozen into the
+          # shared scope like any per-evaluation scope, so it is not shared.
+          shared_scope = create_scope(object, entry) if collection_scope_shareable?(klass)
           children = Array.new(count) do
             bake_child(object, declaration, entry, automatic: automatic, shared_scope: shared_scope)
           end
@@ -85,6 +85,18 @@ module FactoryBakery
         # are exactly what `association.build` writes to a new record.
         def create_scope(object, entry)
           object.association(entry.name.to_sym).send(:scope_for_create)
+        end
+
+        # A per-evaluation default scope (a method-style `def self.default_scope`
+        # rather than the macro) leaves `default_scopes` empty but would be
+        # frozen into the shared scope attributes, so sharing only applies when
+        # the class has no default scopes and its `default_scope` method is
+        # Rails' own.
+        def collection_scope_shareable?(klass)
+          return false unless klass.respond_to?(:default_scopes) && klass.default_scopes.empty?
+          return false unless klass.respond_to?(:default_scope)
+
+          klass.method(:default_scope).owner == ::ActiveRecord::Scoping::Default::ClassMethods
         end
 
         def child_overrides(object, entry, shared_scope = nil)

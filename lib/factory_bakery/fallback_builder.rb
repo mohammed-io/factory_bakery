@@ -43,11 +43,7 @@ module FactoryBakery
       builder = BakeryBuilder.for_current_plugins.new(model_klass, definition, fill_optional: mode)
       object = builder.build(overrides: overrides, traits: traits)
       BuildContext.with_record(object) do
-        # No probe or verification will `valid?` the record before it is saved
-        # when the builder needs none, so a `bake!` root may leave its
-        # database uniqueness check to that save.
-        UniquenessEnforcer.new(object, builder.unchecked_heuristic_names,
-                               defer_to_save: !builder.verification_needed?).call
+        UniquenessEnforcer.new(object, builder.unchecked_heuristic_names).call
       end
       Provenance.record(object, builder.heuristic_attribute_names)
       BuildContext.record_generated(object)

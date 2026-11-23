@@ -38,11 +38,6 @@ module FactoryBakery
   #   uniqueness_validated?(klass, attr_name) => bool
   #       Does the attribute carry a uniqueness constraint the mapper can
   #       check?
-  #   save_validates_uniqueness?(klass, attr_name) => bool
-  #       Does saving a record validate this attribute's uniqueness itself,
-  #       unconditionally and with a `:taken` error naming the attribute? Then
-  #       a `bake!` leaves a generated root value to its own save. Optional;
-  #       the registry answers false.
   #   uniqueness_check(record, attr_name, value) => bool
   #       Is the value taken? (Only called when uniqueness_validated?.)
   #   uniqueness_case_insensitive?(klass, attr_name) => bool
@@ -297,18 +292,6 @@ module FactoryBakery
 
       def uniqueness_validated?(klass, attr_name)
         mapper_for(klass)&.uniqueness_validated?(klass, attr_name) || false
-      end
-
-      # Does saving a record validate this attribute's uniqueness itself, with
-      # an error naming the attribute (`errors.details` kind `:taken`)? Then a
-      # `bake!` can leave a generated value to its own save. A column guarded
-      # only by a unique index raises from the database instead, so it is not
-      # one. Mappers without the notion answer false.
-      def save_validates_uniqueness?(klass, attr_name)
-        mapper = mapper_for(klass)
-        return false unless mapper.respond_to?(:save_validates_uniqueness?)
-
-        mapper.save_validates_uniqueness?(klass, attr_name.to_s)
       end
 
       # Unique indexes as column-name arrays, composite included. Mappers that
