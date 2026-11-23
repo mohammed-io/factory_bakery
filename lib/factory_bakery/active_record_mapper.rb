@@ -29,6 +29,7 @@ if defined?(::ActiveRecord::Base)
   require_relative 'active_record_mapper/polymorphic_target_discovery'
   require_relative 'active_record_mapper/construction'
   require_relative 'active_record_mapper/persistence_adapter'
+  require_relative 'active_record_mapper/uniqueness_probe'
   require_relative 'active_record_mapper/mapper'
 
   FactoryBakery::MapperRegistry.register(FactoryBakery::ActiveRecordMapper::Mapper.new)
