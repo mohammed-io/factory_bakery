@@ -30,6 +30,9 @@ You can; it is ignored.
 **Why do two bakes collide on a unique column?**
 Either a literal value was passed for several records, or the uniqueness is only enforced in a callback, a composite index or the database. Inference regenerates on a collision it can see: a `uniqueness` validator or a single-column unique index. See [Heuristics](heuristics.md#uniqueness).
 
+**Why doesn't FactoryBakery pick an enum value that passes my validator?**
+Enum and other domain values can change behavior, so FactoryBakery leaves that choice to your definition and does not search alternatives. The error and `FactoryBakery.explain(record)` show a copy-pasteable snippet naming the attribute. For example: `FactoryBakery.define(WebHook) { wildcard_web_hook { true } }`. See [ADR-0008](../adr/0008-user-chooses-domain-values.md).
+
 **A column derived from another (a slug from a title) collides.**
 The source must be filled. If `title` is optional with no validator, it is `nil` and every slug is `''`. Fill it (`fill_optional: [:title]`, or a definition). Name- and title-like strings already get a random suffix.
 

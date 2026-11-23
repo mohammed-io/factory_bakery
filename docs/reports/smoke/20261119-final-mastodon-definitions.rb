@@ -10,9 +10,7 @@ require 'base64'
 require 'factory_bakery/attachments'
 
 FactoryBakery.define(Account) do
-  # Remotable attachment setters perform a live HTTP fetch (app/models/concerns/remotable.rb).
-  avatar_remote_url { nil }
-  header_remote_url { '' } # NOT NULL default '' in db/schema.rb; blank skips the fetch
+  # *_remote_url writers fetch over HTTP; the gem leaves them blank and warns.
   avatar { nil }
   header { nil }
   # Local accounts avoid the remote-uri/inbox_url requirements. NOT NULL columns
@@ -43,10 +41,7 @@ FactoryBakery.define(Backup) do
 end
 
 FactoryBakery.define(Doorkeeper::Application) do
-  # Polymorphic owner has a real DB FK to users; an Account breaks that FK.
-  owner_id { nil }
-  owner_type { nil }
-  association :owner, User
+  # The polymorphic owner is narrowed to User by the owner_id -> users DB FK.
   redirect_uri { 'https://example.com/callback' }
 end
 
@@ -58,7 +53,6 @@ FactoryBakery.define(CustomEmoji) do
   image_file_name { 'emoji.png' }
   image_content_type { 'image/png' }
   image_file_size { 1024 }
-  image_remote_url { nil } # remotable_attachment setter would fetch (custom_emoji.rb:60)
 end
 
 FactoryBakery.define(AnnouncementReaction) do

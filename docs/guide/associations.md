@@ -225,7 +225,11 @@ A required polymorphic `belongs_to` with no declaration discovers its target:
 2. **Inverse `as:` reflections on loaded models** whose `class_name` matches the class being baked (an ancestor or descendant counts).
 3. **One `Rails.application.eager_load!` per process**, only when the first two found nothing, then a second inverse scan.
 
+A database foreign key constraint on the `*_id` column narrows the candidates to classes stored in the referenced table (Doorkeeper's `owner_id` references `users`, so `Account` is never picked). When no source found a candidate, the single model stored in that table is used.
+
 Candidates are ordered: non-abstract first, then classes whose table exists, then by name. The first that bakes cleanly wins. The result is cached per (class, association).
+
+A non-polymorphic `belongs_to` whose `class_name` has no constant is resolved the same way: first through the owner's `polymorphic_class_for` mapping, then through the foreign key constraint on its column. The foreign key column is assigned directly. Without either, the original `NameError` surfaces.
 
 Disable the eager load when your tests manage loading:
 

@@ -13,7 +13,8 @@ FactoryBakery.define(UserEmail) do
   user { nil }
 end
 
-user_definition = proc do
+# Chat::NullUser < User has no definition of its own, so it uses this one.
+FactoryBakery.define(User) do
   # Default username filler violates Discourse's alphanumeric/20-char validator.
   username { "fb_#{SecureRandom.hex(5)}" }
   password { 'SmokePass123!' }
@@ -23,11 +24,6 @@ user_definition = proc do
     FactoryBakery.bake(UserEmail, email: "fb_#{SecureRandom.hex(5)}@example.com", primary: true)
   end
 end
-
-FactoryBakery.define(User, &user_definition)
-# Definitions are keyed by exact class, so the Chat::NullUser subclass needs
-# the same block for its primary email.
-FactoryBakery.define(Chat::NullUser, &user_definition)
 
 FactoryBakery.define(AdPlugin::AdImpression) do
   # AdPlugin::AdType enum: house / adsense / dfp / amazon / carbon / adbutler.
@@ -63,7 +59,8 @@ FactoryBakery.define(CompletionPrompt) do
   messages { [] }
 end
 
-# The chat_message reflection names a missing ChatMessage class; use the FK directly.
+# The chat_message reflection names a missing ChatMessage class, and the table
+# has no DB foreign key to resolve it from; set the FK directly.
 FactoryBakery.define(Chat::MessageSearchData) do
   chat_message_id { FactoryBakery.bake!(Chat::Message).id }
   search_data { "'smoke':1" }

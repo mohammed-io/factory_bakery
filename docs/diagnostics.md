@@ -24,6 +24,8 @@ Conventions:
 | `bake nesting exceeded max_bake_depth` | [#nesting-too-deep](#nesting-too-deep) |
 | `declare one side (e.g. ... { nil })` | [#cyclic-association](#cyclic-association) |
 | `has no association :` | [#unknown-association](#unknown-association) |
+| `uninitialized constant` naming a `belongs_to` class | [#missing-association-class](#missing-association-class) |
+| `left X#y_remote_url blank on purpose` *(WARN log)* | [#remote-url-left-blank](#remote-url-left-blank) |
 | `is not supported; assign via an attribute block` | [#unsupported-association-shape](#unsupported-association-shape) |
 | `unknown association option(s)`, `count:`, `persist:`, `with:` ArgumentErrors | [#association-option-errors](#association-option-errors) |
 | `has a polymorphic association` | [#polymorphic-factory-required](#polymorphic-factory-required) |
@@ -161,7 +163,14 @@ Never change the model, its validations or the schema to make baking easier. Tha
 - **Message:** `Post has no association :nope`. It may end with ` (could not be introspected: ...)` when the class's reflections could not be read.
 - **Cause:** `association :nope` names no reflection of the owner. Checked at bake time.
 - **Fix:** Fix the name. For the "could not be introspected" suffix, the model has an unloadable sibling association: look at the named failure (a stale `class_name`).
-- **Example (Discourse):** `Chat::MessageSearchData`'s `chat_message` names a missing `ChatMessage` class. The definition uses the foreign key `chat_message_id { FactoryBakery.bake!(Chat::Message).id }` instead.
+
+### missing-association-class
+
+- **Message:** `NameError: uninitialized constant ChatMessage` (or `Owner#edge: ...`) while baking a model whose `belongs_to` names a class that does not exist.
+- **Cause:** The declared `class_name` has no constant. FactoryBakery first asks the owner's `polymorphic_class_for` (an app mapping such as Discourse's `"ChatMessage"` to `Chat::Message`), then reads the database foreign key constraint on the edge's column and uses the single model stored in the referenced table. It assigns the foreign key column directly, because the association writer cannot run. The error surfaces only when neither finds a class (no mapping and no foreign key constraint, or several models share the referenced table).
+- **Where to look:** gem `ActiveRecordMapper::AssociationIntrospection#resolve_target`, `ActiveRecordMapper::ForeignKeyTargets`. App: the `belongs_to` declaration and `db/schema.rb` `add_foreign_key` lines.
+- **Fix:** Set the foreign key in the definition: `chat_message_id { FactoryBakery.bake!(Chat::Message).id }`, or fix the `class_name`.
+- **Example (Discourse):** `Chat::MessageSearchData belongs_to :chat_message` names a missing `ChatMessage`, and `chat_message_search_data` has no foreign key constraint, so it keeps `chat_message_id { FactoryBakery.bake!(Chat::Message).id }`.
 
 ### unsupported-association-shape
 
@@ -206,7 +215,7 @@ All are `ArgumentError` raised when the declaration is evaluated or at bake time
   ```
   Note#noteable is a required polymorphic association; no target discovered from: inclusion validator on noteable_type; inverse as: reflections on loaded models; Rails.application.eager_load! (disabled by config). Declare it (e.g. association :noteable, factory: SomeClass) or pass noteable: to name its target
   ```
-- **Cause:** A required polymorphic `belongs_to` with no `inclusion` validator on the type column and no loaded `as:` inverse. The last source reads `(disabled by config)` when `eager_load` is false.
+- **Cause:** A required polymorphic `belongs_to` with no `inclusion` validator on the type column and no loaded `as:` inverse. The last source reads `(disabled by config)` when `eager_load` is false. A database foreign key constraint on the `<name>_id` column narrows candidates to the referenced table (Mastodon's `Doorkeeper::Application#owner` resolves to `User` this way), and supplies its model when no other source found one.
 - **Where to look:** gem `ActiveRecordMapper::PolymorphicTargetDiscovery`, `BelongsToBuilder#raise_unresolved!`. App: the owner's validators.
 - **Fix:** `association :noteable, Topic` in the definition, or `noteable:` at the call site, or `skip :noteable`. If `eager_load` is off, the `as:` owners may simply be unloaded: enable it, or require the models.
 - **Example (Discourse):**
@@ -425,6 +434,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
   - Mastodon `Follow`: `languages { [] }` (the language validator rejects random words)
   - Discourse `LlmModel`: `provider { LlmModel::OPEN_AI_PROVIDER_NAME }`
 - Enum and `inclusion:` domains declared on the model are handled. Lists held in constants are handled for polymorphic type columns only.
+- When a custom validator rejects the drawn enum value, boolean or STI type, the gem does not try the others: which one to use is a domain decision ([ADR-0008](https://github.com/mohammed-io/factory_bakery/blob/main/docs/adr/0008-user-chooses-domain-values.md)). Pin it in the definition.
 
 ### random-value-rejected-by-app-rule
 
@@ -462,7 +472,14 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 - **Symptom:** A network call, a job, or a file write happens while baking.
 - **Cause:** A setter with side effects received a value. The gem never fills `*_remote_url`-style writers, but other setters (for example one that fetches a URL) are filled when required.
 - **Fix:** `skip :setter_name`, or a definition returning a safe value.
-- **Example (Mastodon):** `Account`: `avatar_remote_url { nil }`, or `skip :avatar_remote_url`. `AccountAlias`: use a local account so no WebFinger request is made.
+- **Example (Mastodon):** `AccountAlias`: use a local account so no WebFinger request is made. `Account#avatar_remote_url` needs nothing: see [#remote-url-left-blank](#remote-url-left-blank).
+
+### remote-url-left-blank
+
+- **Message (WARN log, once per model and attribute per process):** `left Account#avatar_remote_url blank on purpose: assigning it downloads the URL. Set it in a definition or pass it as an override to fill it.`
+- **Cause:** The attribute matches `*_remote_url` (Mastodon's `Remotable`, Paperclip-style URL fetchers). Assigning it downloads the URL, so the gem never generates a value for it. The bake still succeeds.
+- **Where to look:** gem `ActiveRecordMapper::ConstraintReader::REMOTE_URL_WRITER_PATTERN`, `AttributeFillers::GuardedWriterFiller`, `RemoteUrlNotice`.
+- **Fix:** Nothing, when blank is fine. To fill it, set it in a definition or pass it as an override (stub the HTTP call in the test). A definition, an override or `skip` also silences the warning.
 
 ### derived-values-need-the-source
 
@@ -502,6 +519,13 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 - **Symptom:** A counter, a log line, an HTTP stub or a setting changes twice per bake.
 - **Cause:** The verified fallback discarded the lean attempt and rebuilt. Database writes are rolled back, other side effects are not.
 - **Fix:** Make the block idempotent, or guard it. Give the model's custom validation what it needs in the definition so the lean attempt is valid.
+
+### subclass-uses-parent-definition
+
+- **Symptom:** A subclass bakes with values from its parent's definition, and a stricter validation on the subclass rejects them (common with STI).
+- **Cause:** A class with no definition of its own uses the nearest ancestor class's definition. `Object` and `BasicObject` are never inherited from.
+- **Fix:** Give the subclass its own definition. An exact definition always wins over an inherited one.
+- **Example (Discourse):** `Chat::NullUser < User` needs no definition: it uses `User`'s.
 
 ### stale-class-definitions
 

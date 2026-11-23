@@ -1,5 +1,17 @@
 ## [Unreleased]
 
+### Added
+
+- Subclasses without their own definition use their nearest ancestor's definition (never `Object`).
+- A `belongs_to` whose class has no constant resolves through the owner table's database foreign key.
+- A polymorphic `belongs_to` with a database foreign key on its id column only picks targets stored in the referenced table.
+- Leaving a `*_remote_url` attribute blank logs one WARN per model and attribute.
+- ADR-0008: the user, not the gem, chooses domain values such as enum members.
+
+### Changed
+
+- `logger` is a runtime dependency (Ruby 4.0 no longer ships it as a default gem).
+
 ### Factory DSL and bake blocks
 
 - Static attribute declarations raise with the replacement block syntax. Use `name { 'Ada' }` to assign a value or `skip :name` to omit it.

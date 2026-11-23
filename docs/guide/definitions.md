@@ -23,6 +23,21 @@ FactoryBakery.define(target, klass: nil, &block)
 - Registering the same target again replaces the previous definition silently (last one wins). This makes reloading safe.
 - A class definition applies when you bake that class: `bake(User)`.
 
+### Subclasses use their parent's definition
+
+A class with no definition of its own uses the nearest ancestor class's definition. Modules, `Object` and `BasicObject` are never searched. An exact definition always wins, and the subclass is still what gets instantiated:
+
+```ruby
+class Cat < Animal; end
+
+FactoryBakery.define(Animal) { name { 'Milo' } }
+cat = FactoryBakery.bake(Cat)
+cat.class # => Cat
+cat.name  # => "Milo"
+```
+
+Trade-off: an STI subclass with stricter or different validations receives values meant for its parent. Give it its own definition in that case. factory_bot makes inheritance explicit instead (`factory :cat, parent: :animal`, or a nested factory).
+
 ## Attribute blocks
 
 An attribute is declared with a name and a block:

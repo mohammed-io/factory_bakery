@@ -101,6 +101,8 @@ Not covered: a unique **composite** index, a unique rule enforced in a callback,
 | Optional columns (default mode) | Nothing needs them | `fill_optional` |
 | `has_many_attached` | No single file to pick | Declare it |
 
+A remote URL writer left blank logs one WARN per model and attribute per process: `left Account#avatar_remote_url blank on purpose: assigning it downloads the URL. Set it in a definition or pass it as an override to fill it.` A definition, an override or `skip` silences it.
+
 ## `fill_optional`
 
 ```ruby
