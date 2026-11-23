@@ -63,13 +63,27 @@ Measured honestly, FactoryBakery is 4–10x slower than factory_bot for unsaved 
 - One probe copy per record instead of per check: no measurable gain (one check per column anyway).
 - Savepoints as a database cost: they are lazy and free unless a query runs inside them.
 
-## Before / after (to fill in after Phase 3)
+## What we shipped, and what we learned doing it
 
-| scenario (SQLite) | before µs | after µs | vs factory_bot before → after |
+- **One RNG per bake instead of three** (FFaker shares the bake's generator): flat bake −20 µs.
+- **Timestamps left to ActiveRecord**: −23 µs per record. It also exposes a trap: random past `created_at` values had been hiding per-day unique indexes in real apps.
+- **Savepoints as a setting, off by default (factory_bot-style).** Lesson: not every savepoint is optional. The ones around best-effort children *must* stay, because on PostgreSQL one failed statement outside a savepoint aborts the whole transaction (`PG::InFailedSqlTransaction`). The Mastodon smoke caught it; the unit suite (SQLite) did not.
+- **Uniqueness: one query instead of a record copy plus a validator**, and for a `bake!` root, **no pre-check at all**: let `save!` find a taken value and retry. Validated `bake!` went from 4 SELECTs to 2, the same as factory_bot. Lesson: a deferred check interacts with every other `valid?` the gem runs. A first version silently replaced a colliding value with the column default, because the fallback's own verification read the unchecked duplicate as an invalid record. It is now skipped whenever a verification pass will run.
+- **Benchmark honesty:** our first harness made savepoints look free. Use the transaction shape your users run in.
+
+### Before / after (SQLite, µs per call, Ruby 4.0.1)
+
+| scenario | before | after | vs factory_bot before → after |
 |---|---:|---:|---|
-| flat bake | 186.2 | | 4.43x → |
-| validated bake | 506.3 | | 9.91x → |
-| validated bake! | 752.9 | | 2.25x → |
-| belongs_to chain x3 bake | 465.1 | | 4.40x → |
-| has_many x3 bake | 770.5 | | 3.56x → |
-| fallback rebuild bake | 357.3 | | 8.26x → |
+| flat bake | 186.2 | 110.0 | 4.4x → 2.7x |
+| validated bake | 506.3 | 326.4 | 9.9x → 6.7x |
+| validated bake! | 752.9 | 452.3 | 2.25x → 1.43x |
+| belongs_to chain x3 bake | 465.1 | 320.9 | 4.4x → 3.1x |
+| has_many x3 bake | 770.5 | 503.3 | 3.6x → 2.4x |
+| fallback rebuild bake | 357.3 | 200.1 | 8.3x → 4.9x |
+
+On Ruby 4.0.10 with YJIT: flat bake 98 → 51 µs; validated bake! 322 → 210 µs. Full tables for SQLite, Postgres and YJIT are in [20261123-results.md](20261123-results.md).
+
+### Still open
+
+Validated unsaved `bake` is 6.7x factory_bot: it must ask the database once per unique column and synthesize values from regexes. Next candidates: one shared parent per class within a bake (about 3x on Discourse `Post`), compiling regex generation plans once.
