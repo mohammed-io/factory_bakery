@@ -40,6 +40,7 @@ Conventions:
 | `could not generate a value satisfying the numeric constraints` | [#numeric-constraint-exhaustion](#numeric-constraint-exhaustion) |
 | `could not generate a value ... that satisfies exclusion` | [#exclusion-exhaustion](#exclusion-exhaustion) |
 | `length :minimum ... resolved to` | [#length-resolution-error](#length-resolution-error) |
+| `length :maximum ... raised` | [#length-option-raised](#length-option-raised) |
 | `:in proc raised` | [#inclusion-proc-raised](#inclusion-proc-raised) |
 | `(FactoryBakery also tried ... construction)` | [#construction-failed](#construction-failed) |
 | `no bundled attachment fixture matches` | [#attachment-fixture-missing](#attachment-fixture-missing) |
@@ -64,7 +65,7 @@ Conventions:
 
 ## Choosing the fix
 
-Reproduce first, with the seed the failure printed (`Seed N from <source>. Reproduce: <command>`): replay the failing spec with `rspec --seed N` (Minitest: `bin/rails test --seed N`), or set `FACTORY_BAKERY_SEED=N` in a console. Then `FactoryBakery.bake(Model)`, `FactoryBakery.explain(record)` (it runs `valid?`), `.errors.full_messages`, then `FactoryBakery.bake!(Model)`. See [Randomness](https://github.com/mohammed-io/factory_bakery/blob/main/docs/guide/configuration.md#randomness).
+Reproduce first, with the seed the failure printed (`Seed N from <source>. Reproduce: <command>`): replay the failing spec with `rspec --seed N` (Minitest: `bin/rails test --seed N`), or set `FACTORY_BAKERY_SEED=N` in a console, in the test environment. Then, inside `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }` — `bake!` commits, and the wrapper covers one connection pool, so writes on other pools survive — run `FactoryBakery.bake(Model)`, `FactoryBakery.explain(record)` (it runs `valid?`), `.errors.full_messages`, then `FactoryBakery.bake!(Model)`. See [Randomness](../../../docs/guide/configuration.md#randomness).
 
 | The cause is | Smallest fix |
 | --- | --- |
@@ -135,7 +136,7 @@ Never change the model, its validations or the schema to make baking easier. Tha
 
 - **Message:** `No plugin DSL call is in progress`
 - **Cause:** A plugin called `record_plugin_declaration` outside one of its own DSL methods, or from a method that is not defined directly on its `dsl_module`.
-- **Fix:** Define the method on the DSL module itself. See [Plugins](https://github.com/mohammed-io/factory_bakery/blob/main/docs/guide/plugins.md).
+- **Fix:** Define the method on the DSL module itself. See [Plugins](../../../docs/guide/plugins.md).
 
 ### nesting-too-deep
 
@@ -281,7 +282,7 @@ All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reu
 
 ### nested-bake-sibling-of-same-class
 
-If `IncompletePersistenceError` names the sibling, `bundle update factory_bakery`. Nested `bake!` used to raise `IncompletePersistenceError` when an unsaved sibling shared its class path. It now checks records by build lineage. For example, `association :user, persist: true` on `Invite` saves `user` while a plain `bake` can leave the auto-built `invited_by` unsaved. An enclosing `bake!` verifies the whole invite graph after it saves the invite.
+If `IncompletePersistenceError` names the sibling, the fix is in the current source (0.0.2.0, still Unreleased in CHANGELOG.md; nothing is on rubygems.org). A path: checkout has it; on git:, move `ref:`. Nested `bake!` used to raise `IncompletePersistenceError` when an unsaved sibling shared its class path. It now checks records by build lineage. For example, `association :user, persist: true` on `Invite` saves `user` while a plain `bake` can leave the auto-built `invited_by` unsaved. An enclosing `bake!` verifies the whole invite graph after it saves the invite.
 
 ### read-only-target
 
@@ -356,7 +357,7 @@ If `IncompletePersistenceError` names the sibling, `bundle update factory_bakery
 - **Where to look:** gem `UniquenessEnforcer`. App: the validators and the definition for that column.
 - **Fix:** Override with a generator, or widen the rule. Regeneration applies only to values the gem generated: after two collisions it appends an entropy suffix unless the column has a `format`, `inclusion`, `enum`, numericality rule, exact length, or a cap with no room.
 - **Literals:** a value a definition or an override sets literally is not regenerated. Two bakes that collide with each other usually mean a literal was set. See [literal-override-uniqueness](#literal-override-uniqueness).
-- **Example (Mastodon):** `Account#username`: two mutually constraining format regexes. A literal wins: `username { "fb_#{SecureRandom.hex(5)}" }`.
+- **Example (Mastodon):** `Account#username`: two mutually constraining format regexes. A declared value wins: `username { "fb_#{SecureRandom.hex(5)}" }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which replays with the seed).
 
 ### format-exhaustion
 
@@ -364,7 +365,7 @@ If `IncompletePersistenceError` names the sibling, `bundle update factory_bakery
 - **Cause:** The regex cannot be satisfied (`/\Afoo(?=bar)\z/`), exceeds the generator's bounds (256 characters, depth), uses a construct `regexp_parser` cannot parse, or clashes with a `length` rule or a second regex.
 - **Where to look:** gem `AttributeFillers::StringFiller`, `RegexGeneration`. App: the `format:` options.
 - **Fix:** Give the value: a definition line or an override.
-- **Example (Mastodon):** `Account#username` (two regexes). Discourse `Group#name`: `name { "smoke_group_#{SecureRandom.hex(4)}" }`.
+- **Example (Mastodon):** `Account#username` (two regexes). Discourse `Group#name`: `name { "smoke_group_#{SecureRandom.hex(4)}" }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which replays with the seed).
 
 ### numeric-constraint-exhaustion
 
@@ -442,11 +443,11 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
   - Mastodon `Follow`: `languages { [] }` (the language validator rejects random words)
   - Discourse `LlmModel`: `provider { LlmModel::OPEN_AI_PROVIDER_NAME }`
 - A readable `inclusion:` validator (`in:` an array, a range or a Proc on the model) is handled, and so are enums. A **registry** that only custom validation code consults (a `validate` method, a custom validator, a site setting) is invisible to the gem: declare a value from it.
-- When a custom validator rejects the drawn enum value, boolean or STI type, the gem does not try the others: which one to use is a domain decision ([ADR-0008](https://github.com/mohammed-io/factory_bakery/blob/main/docs/adr/0008-user-chooses-domain-values.md)). Pin it in the definition.
+- When a custom validator rejects the drawn enum value, boolean or STI type, the gem does not try the others: which one to use is a domain decision ([ADR-0008](../../../docs/adr/0008-user-chooses-domain-values.md)). Pin it in the definition.
 
 ### random-value-rejected-by-app-rule
 
-- **Symptom:** The same model is valid on some runs and invalid on others. The failure text starts its explanation with `FactoryBakery could not produce a valid X. Invalid attributes:` and includes `Chosen at random: provider = "bedrock"` (or another value), followed by a seed line (`Seed N from <source>. Reproduce: <command>`), a `FactoryBakery.define(...)` snippet and an `Agent:` line. `bake!` raises the usual error class (for example `ActiveRecord::RecordInvalid`) with that text appended after the original message.
+- **Symptom:** The same model is valid on some runs and invalid on others. The failure text starts its explanation with `FactoryBakery could not produce a valid X. Invalid attributes:` — the errors, then the seed line (`Seed N from <source>. Reproduce: <command>`), then `Chosen at random: provider = "bedrock"` (or another value), then a `pin it in <file>` line, then a `FactoryBakery.define(...)` snippet, then an `Agent:` line. `bake!` raises the usual error class (for example `ActiveRecord::RecordInvalid`) with that text appended after the original message.
 - **Cause:** A validator the gem cannot read (a custom `validate` block, or a rule that depends on another attribute or setting) rejects the value FactoryBakery drew at random. FactoryBakery does not retry: the seed reproduces the same value every run.
 - **Fix:** Pin the value in your definitions file, using a value your validations accept. The snippet's `{ nil }` is a placeholder: replace it. Re-run with the same seed to confirm: `FACTORY_BAKERY_SEED=1234` (or the `rspec --seed` / `bin/rails test --seed` command the message prints). The value the message shows is what was drawn, not a fix.
 
@@ -462,7 +463,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 - **Symptom:** A validator compares a time or date to "now" in custom code: `expires_at` must be within 5 minutes to 1 month, a future effective date.
 - **Fix:** A block computing a value relative to now: `expires_at { 1.day.from_now }`.
-- **Example (Mastodon):** `Poll`: `expires_at { 1.day.from_now }`; `TermsOfService`: `effective_date { Date.current + SecureRandom.random_number(1..300) }`.
+- **Example (Mastodon):** `Poll`: `expires_at { 1.day.from_now }`; `TermsOfService`: `effective_date { Date.current + SecureRandom.random_number(1..300) }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which replays with the seed).
 - `comparison:` and `numericality:` bounds, including Proc and Symbol bounds, are handled without a definition.
 
 ### structured-text-columns
@@ -485,7 +486,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 ### remote-url-left-blank
 
 - **Message (WARN log, once per model and attribute per process):** `left Account#avatar_remote_url blank on purpose: assigning it downloads the URL. Set it in a definition or pass it as an override to fill it.`
-- **Cause:** The attribute matches `*_remote_url` (Mastodon's `Remotable`, Paperclip-style URL fetchers). Assigning it downloads the URL, so the gem never generates a value for it. The bake still succeeds.
+- **Cause:** The attribute matches `*_remote_url` (Mastodon's `Remotable`, Paperclip-style URL fetchers). Assigning it downloads the URL, so the gem never generates a value for it. The WARN is not proof of success: it records a skipped inferred assignment; check the returned record or the exception for the result — a presence validation on the omitted attribute still fails `bake!`.
 - **Where to look:** gem `ActiveRecordMapper::ConstraintReader::REMOTE_URL_WRITER_PATTERN`, `AttributeFillers::GuardedWriterFiller`, `RemoteUrlNotice`.
 - **Fix:** Nothing, when blank is fine. To fill it, set it in a definition or pass it as an override (stub the HTTP call in the test). A definition, an override or `skip` also silences the warning.
 
@@ -543,9 +544,9 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 ### definition-load-errors
 
-- **Symptom:** A `NoMethodError` or duplicate-definition error at boot from a definition file.
-- **Cause:** FactoryBakery and factory_bot both load `spec/factories`, so one evaluates the other's files. A syntax or constant error inside a file propagates, and files from earlier paths are already loaded.
-- **Fix:** Put FactoryBakery definitions in `spec/bakery` and set `config.factory_bakery.definition_paths`. See [Migrating](https://github.com/mohammed-io/factory_bakery/blob/main/docs/guide/migrating-from-factory-bot.md#step-2-set-up-side-by-side).
+- **Symptom:** A `NoMethodError`, `NameError` or duplicate-definition error at boot from a definition file.
+- **Cause:** FactoryBakery and factory_bot both load `spec/factories`, so one evaluates the other's files. A class-keyed stub naming a missing model (a `factory_bakery:definition` generated for a class that does not exist, e.g. `Admin::Post`) raises `NameError` when the file loads. A syntax or constant error inside a file propagates, and files from earlier paths are already loaded.
+- **Fix:** Put FactoryBakery definitions in `spec/bakery` and set `config.factory_bakery.definition_paths`. Fix or delete the stub's name. See [Migrating](../../../docs/guide/migrating-from-factory-bot.md#step-2-set-up-side-by-side).
 
 ---
 
@@ -579,7 +580,7 @@ These raise nothing. The result is wrong. Look here when a value is missing or o
 ### null-objects-and-unbakeable-classes
 
 - **Symptom:** A class that is never saved (a null object, a placeholder) fails `bake!`, or `doctor` lists it.
-- **Fix:** Skip it in your doctor run. These are not bakeable by design (Discourse's `Chat::NullMessage`).
+- **Fix:** Name the other models (`factory_bakery:doctor[A,B]`), or accept its failing line. These are not bakeable by design (Discourse's `Chat::NullMessage`).
 
 ---
 

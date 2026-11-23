@@ -81,7 +81,7 @@ A literal in a global definition also loses uniqueness regeneration: two bakes t
 
 ## 5. Adding `skip` to silence an informational WARN
 
-**Why it hurts.** `left Account#avatar_remote_url blank on purpose` is logged once per model and attribute, and the bake **succeeded**. `skip` changes behavior (the setter is never called, and `skip` on an association edge also suppresses its foreign key and type column) to remove one log line.
+**Why it hurts.** `left Account#avatar_remote_url blank on purpose` is logged once per model and attribute. It records a skipped inferred assignment, not a proven-good bake: check the returned record or the exception for the result — a presence validation on the omitted attribute still fails `bake!`. `skip` changes behavior (the setter is never called, and `skip` on an association edge also suppresses its foreign key and type column) to remove one log line.
 
 ```ruby
 # bad

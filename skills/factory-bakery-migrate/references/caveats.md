@@ -14,14 +14,14 @@ The standing rule for every caveat: **do not fix a caveat by editing a test.** F
 | **Faker vs FFaker** | Locale-sensitive assertions on Faker values | Keep the line |
 | **`FactoryBot.use_parent_strategy = false`** | `build` created parents. `bake` leaves parents unsaved | `association :x, persist: true` on the edges tests expect saved |
 | **Callbacks that depend on `create` vs `build`** | `after_create`/`after_commit` timing is the same for `bake!` as `create` (it calls `save!`). `bake` never saves **the record** | `build` to `bake` is exact only when the graph has no raw-FK presence edges (`validates :user_id, presence: true`) and no `persist:`. Otherwise `bake` inserts those parents, which `build` did not: the row counts differ. Check any `after_commit` reliance |
-| **Ordering** | `let!` order and definition order | Winning declarations run in order unless a sibling read resolves a later declaration first. An explicit `association` runs after the attribute blocks |
+| **Ordering** | `let!` order and definition order | Winning declarations run in order unless a sibling read resolves a later declaration first. With an explicit `association`, a sibling block that reads it gets nil and the edge is then not built at all (the record can end up invalid). Keep the attribute block |
 | **Tests that call `attributes_for`** | No built-in | A `bakery_attributes_for` helper if it matches factory_bot's symbol keys and explicit `nil`s, otherwise a blocker |
 
 ## Associations
 
 ### A custom validator reads a parent's id: `persist: true`
 
-An unsaved parent has `id == nil`. `user_id == invited_by_id` is `nil == nil`. Use `association :user, persist: true` on the edge whose id the validator reads. Two edges to the same class work with different options: a nested `bake!` checks records by build lineage, so the other edge may stay unsaved under plain `bake`, and an enclosing `bake!` verifies both ([sibling case](../../factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class)). If `IncompletePersistenceError` names the sibling, `bundle update factory_bakery`.
+An unsaved parent has `id == nil`. `user_id == invited_by_id` is `nil == nil`. Use `association :user, persist: true` on the edge whose id the validator reads. Two edges to the same class work with different options: a nested `bake!` checks records by build lineage, so the other edge may stay unsaved under plain `bake`, and an enclosing `bake!` verifies both ([sibling case](../../factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class)). If `IncompletePersistenceError` names the sibling, the fix is in the current source (0.0.2.0, still Unreleased in CHANGELOG.md; nothing is on rubygems.org). A path: checkout has it; on git:, move `ref:`.
 
 ```ruby
 # factory_bot: association :user, strategy: :create
@@ -68,7 +68,7 @@ No `sequence` DSL. Options:
 
 | Need | Use |
 | --- | --- |
-| Distinct values only | Delete the sequence. A uniqueness-validated column is regenerated on collision |
+| Distinct values only | In Phase 7, after approval: delete the sequence. A uniqueness-validated column is regenerated on collision |
 | A readable counter (`user1@x.com`) a test checks | `counter = 0` at the top of the definition file, then `email { "user#{counter += 1}@x.com" }` |
 | Global `generate(:email)` | A helper with a counter. Else blocker |
 

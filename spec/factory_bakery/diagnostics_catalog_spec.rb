@@ -26,6 +26,9 @@ RSpec.describe 'FactoryBakery diagnostics catalog' do
     note, _blank, *catalog = published.lines
 
     expect(note).to include('factory-bakery-diagnostics')
-    expect(catalog.join).to eq(skill_copy)
+    # The skill copy links the docs from its own depth (`../../../docs/...`);
+    # the published copy links them from docs/ (`guide/...`, `adr/...`). Strip
+    # that one documented prefix so the catalog text itself stays identical.
+    expect(skill_copy.gsub('(../../../docs/', '(')).to eq(catalog.join)
   end
 end

@@ -2,7 +2,7 @@
 
 Everything a factory_bot (or similar) factory can express, sorted into three classes. Each row has the reason. Verified against the code of gem 0.0.2.0 (`FactoryBakery::VERSION`; inheritance, sibling reads and the `static name` error were also run). Rows marked *(not run)* were read from the code, not exercised.
 
-- **Automatic**: inference or the associations plugin handles it. Write nothing. Drop the old line.
+- **Automatic**: inference or the associations plugin handles it. Write nothing new. An old line is dropped only in Phase 7, after the user agrees.
 - **Needs a definition**: FactoryBakery can do it, but you must say so in a definition (or association option).
 - **Not supported**: no equivalent. Solve with a helper that keeps test diffs to renames, or report as a **blocker**.
 
@@ -77,7 +77,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | Several has_many children | `association :x, count: n` | One child by default |
 | `class: 'Ns::Model'` or a factory name differing from the class | `define(:name, klass: Ns::Model)` | Names resolve by camelizing |
 | Factory inheritance (`parent:`, nested `factory`), same class | `define(:admin, klass: User)` repeating the parent's lines, so the call stays a rename (`bake!(:admin)`) | Class and symbol keys are separate registrations, so a symbol key can vary a class. A trait on the parent would change the call to `bake!(User, :admin)`: not a rename |
-| Factory inheritance with a subclass (`class: 'Admin'`, `Admin < User`) | Nothing if the parent's definition bakes the subclass. Otherwise `define(Admin)` with the lines it needs | A class with no definition uses its nearest ancestor's. An exact definition replaces it, so definitions do not merge |
+| Factory inheritance with a subclass (`class: 'Admin'`, `Admin < User`) | Empty child body: nothing (inherits). Otherwise in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop | A class with no definition uses its nearest ancestor's. An exact definition replaces it, so definitions do not merge |
 | Factory inheritance across unrelated classes | A second definition, lines repeated | Only ancestor classes are searched, never modules or `Object` |
 | `aliases:` | A second `define(:alias, klass: X, &same_block)` | One key per `define` |
 | `sequence` | A counter local at the top of the file | There is no `sequence` DSL |
@@ -95,7 +95,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | --- | --- | --- |
 | `build_stubbed` | No stubbed-persisted object. `bake` returns `persisted? == false`, `id == nil` | **Blocker.** Report |
 | `build_stubbed_list` | Same | Blocker |
-| `attributes_for` | No built-in | A thin helper named `bakery_attributes_for` that keeps call sites a rename ([testing recipes](../../../docs/guide/testing-recipes.md#attribute-hash-for-a-request-spec)). It must match factory_bot's output: symbol keys, only declared attributes, explicit `nil`s kept. The helper in [translation rules](translation-rules.md#the-helper-for-attributes_for) returns symbol keys but drops `nil`s and omits associations. If a test depends on an explicit `nil`, the exact key set or associations, **blocker**. Confirm `spec/support` is loaded |
+| `attributes_for` | No built-in | A thin helper named `bakery_attributes_for` that keeps call sites a rename ([testing recipes](../../../docs/guide/testing-recipes.md#attribute-hash-for-a-request-spec)). It must match factory_bot's output: symbol keys, only declared attributes, explicit `nil`s kept. The helper in [translation rules](translation-rules.md#the-helper-for-attributes_for) returns symbol keys but drops `nil`s and includes every filled column, not only the declared ones. If a test depends on an explicit `nil`, the exact key set or associations, **blocker**. Confirm `spec/support` is loaded |
 | Transient attributes as **call-site parameters** (`create(:user, with_posts: 3)`) | No transient DSL | Blocker. A trait or `association :posts, count: 3` may replace a specific use, but the call changes |
 | `after(:build)`, `after(:create)`, `before(:create)`, `callback` | No definition callback DSL | Report hooks that must run for every call. Individual calls can pass a block to `bake` or `bake!` |
 | `initialize_with { ... }` block with logic | A Hash only | Hash if simple. Otherwise blocker |

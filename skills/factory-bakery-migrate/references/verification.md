@@ -55,13 +55,14 @@ Run it from the worktree. `<skill-dir>` is the absolute path of the `factory-bak
 | Output | Meaning | Action |
 | --- | --- | --- |
 | nothing for a line | A clean rename | Fine |
-| `LIST` | `create_list`/`build_list`/`*_pair` became `Array.new(n) { ... }` | Glance at it |
-| `REVIEW` | The pair differs by more than the call (an argument, a literal, a trait) | Open it. If it is only the call, fine. If anything else changed, **revert that line** |
+| `LIST` | `create_list`/`build_list`/`*_pair` became `Array.new(n) { ... }` with the count and arguments unchanged | Glance at it |
+| `REVIEW` | The pair differs by more than the call: an argument, a literal, a trait, a different bake target, or a changed list count | Open it. If it is only the call, fine. If anything else changed, **revert that line** |
 | `FAIL` | A changed line is not a factory call, or line counts differ | **Stop.** Revert the change. Report a blocker |
+| `SUPPORT FILE` | A change in a helper, definition or suite-wiring file: `spec`/`test` `bakery`/`support` directories, `spec/rails_helper.rb`, `test/test_helper.rb` | Listed, never judged. Review by hand |
 | `NEW FILE` | A new helper or definition file | Review by hand. New files under `spec/support` and `spec/bakery` are expected |
 | `DELETED FILE` | A file was deleted | Expected **only** in the final deletion commit (the last door) |
 
-Exit status is `1` when any `FAIL` appears. The script judges lines. It does not understand Ruby, so it can miss a rename that also alters a nearby token on the same line. Read every `REVIEW` and skim the whole `git diff --stat` too.
+Exit status is `1` when any `FAIL` appears. A call split over several lines reports `FAIL` on its continuation lines; it is a rename when only the call changed. The script judges lines. It does not understand Ruby, so it can miss a rename that also alters a nearby token on the same line. Read every `REVIEW` and skim the whole `git diff --stat` too.
 
 Manual cross-checks:
 
@@ -81,7 +82,7 @@ Allowed:
 - `create_list` / `build_list` / `create_pair` to `Array.new(n) { ... }`
 - `attributes_for(:x)` to `bakery_attributes_for(X)` (through a helper that matches factory_bot's output, else a blocker)
 - `create(:admin)` to `bake!(:admin)` (a symbol target, for a same-class `parent:` factory registered with `define(:admin, klass: User)`)
-- A new helper file, and an `RSpec.configure` include inside it
+- A new helper file, and the `RSpec.configure { |config| config.include FactoryBakery::Methods }` line inside it
 
 Not allowed (blockers):
 
@@ -100,7 +101,7 @@ Remove lines **one factory at a time**, not in bulk.
    ```
 3. Re-run the tests that bake that model (search for the class name, or run the whole suite).
 4. If a test or a seed now fails, **restore the line** and note the reason ("a test depends on this value" or "the model cannot bake without it"). One green run is not enough to drop a line.
-5. Keep named definitions (`define(:admin, klass: User)`), even when empty.
+5. Keep named definitions (`define(:admin, klass: User)`). A named definition never merges with the class-keyed one. After reducing, it repeats exactly the lines `define(User)` still keeps. It may be empty only when `define(User)` is empty or absent. After simplifying a named definition, exercise its symbol + trait combinations directly in the test environment inside `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }`: doctor only bakes class names.
 6. Repeat for the next model.
 
 Run the whole suite at the end, twice with different seeds (`bundle exec rspec --seed 1`, then `--seed 2`). If a run fails, replay it with the seed it printed (or the one in the FactoryBakery log line or error text) before changing anything, and use the [`factory-bakery-diagnostics`](../../factory-bakery-diagnostics/SKILL.md) skill.
@@ -123,7 +124,7 @@ Only then ask the keep/delete question (see [doors.md](doors.md)).
 | --- | --- |
 | One batch broke the suite | `git revert <commit>` in the worktree, or `git restore .` for uncommitted work |
 | A definition is wrong | Edit or delete the file in `spec/bakery`. The old factory still exists |
-| The whole migration is wrong | `cd ..; git worktree remove ../<repo>-bakery-migration; git branch -D factory-bakery-migration` |
+| The whole migration is wrong | `cd ../<repo> && git worktree remove ../<repo>-bakery-migration && git branch -D factory-bakery-migration` |
 | The deletion commit was a mistake | `git revert <deletion commit>` |
 | The user's main checkout | Never touched. Nothing to roll back |
 

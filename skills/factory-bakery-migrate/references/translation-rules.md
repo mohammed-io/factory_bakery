@@ -25,7 +25,7 @@ end
 | `factory :post` (class `Post`) | `FactoryBakery.define(Post)` |
 | `factory :admin, class: 'User'` | `FactoryBakery.define(:admin, klass: User)` |
 | `factory :admin, class: User` | `FactoryBakery.define(:admin, klass: User)` |
-| `factory :admin, class: 'Admin'` where `Admin < User` | Nothing: `bake!(Admin)` uses `User`'s definition. `define(Admin)` only when a test depends on a value that differs (it replaces the inherited definition, so repeat the lines it needs) |
+| `factory :admin, class: 'Admin'` where `Admin < User` | Empty child body: nothing (inherits). Otherwise in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
 | `factory :post` where call sites only use `create(:post)` | `define(Post)` and the call becomes `bake!(Post)` |
 | One file, many factories | One definition per model, in one file per model |
 
@@ -58,7 +58,7 @@ FactoryBakery.define(User) do
 end
 ```
 
-If the column is `uniqueness`-validated and no test checks the shape, the 1:1 translation is the top-of-file counter above, or no line at all (inference regenerates a colliding value). Do not translate to `SecureRandom.hex`: it is not covered by the FactoryBakery seed, so `--seed N` no longer reproduces that value. The same goes for `rand` and `Faker::` calls in blocks (only FFaker inside the gem is seeded). Keep them 1:1 if you must, and know a replay needs them pinned ([diagnostics](../../factory-bakery-diagnostics/SKILL.md#1-reproduce)).
+If the column is `uniqueness`-validated and no test checks the shape, the 1:1 translation is the counter above. Dropping the line is a Phase 7 decision (inference regenerates a colliding value). Do not translate to `SecureRandom.hex`: it is not covered by the FactoryBakery seed, so `--seed N` no longer reproduces that value. The same goes for `rand` and `Faker::` calls in blocks (FFaker is seeded during a bake, including in your blocks; `Faker::`, `rand` and `SecureRandom` are not). Keep them 1:1 if you must, and know a replay needs them pinned ([diagnostics](../../factory-bakery-diagnostics/SKILL.md#1-reproduce)).
 
 ## Associations
 
@@ -84,7 +84,7 @@ If the column is `uniqueness`-validated and no test checks the shape, the 1:1 tr
 
 Two cautions on the `author { ... }` rows:
 
-- **A sibling reads it.** An explicit `association` runs **after** the attribute blocks, so `name { "#{author.name}'s post" }` cannot read it. When any sibling block reads `author`, keep it as an attribute block (`author { FactoryBakery.bake!(User) }`) rather than rewriting it to `association`. Unrewritten means more lines, not a different test ([definitions guide](../../../docs/guide/definitions.md)).
+- **A sibling reads it.** With an explicit `association`, a sibling block that reads it gets nil and the edge is then not built at all (the record can end up invalid), so `name { "#{author.name}'s post" }` breaks. Keep the attribute block when any sibling reads `author`, with the old verb preserved: `author { create(:user) }` stays `author { FactoryBakery.bake!(User) }`, `author { build(:user) }` stays `author { FactoryBakery.bake(User) }`. Unrewritten means more lines, not a different test ([definitions guide](../../../docs/guide/definitions.md)). A factory the tests use as both `build` and `create`, with timing-sensitive associations, is a blocker unless a helper preserves both.
 - **It was saved.** `author { create(:user) }` and `strategy: :create` saved the parent, and `author { build(:user) }` did not. Keep `persist: true` wherever the old factory saved the parent (those two, or `use_parent_strategy = false`, which made a `build` create its parents). Dropping it changes row counts and ids.
 
 ### Child blocks must pass the owner
@@ -108,8 +108,8 @@ association(:comments) { |post| Array.new(2) { |i| FactoryBakery.bake(Comment, p
 | `trait :admin do ... end` | `trait :admin do ... end` (same) |
 | trait using another trait (`admin` inside a trait body) | Repeat the lines. A trait cannot call a trait |
 | `factory :admin, parent: :user` (same class) | `define(:admin, klass: User)` repeating the parent's lines plus the child's, so the call stays a pure rename: `create(:admin)` becomes `bake!(:admin)`. Not a trait on the parent: that changes the call to `bake!(User, :admin)`, which is not a rename |
-| `factory :admin, parent: :user, class: 'Admin'` with `Admin < User` | Nothing, if `User`'s definition already bakes an `Admin`: a class without a definition uses its nearest ancestor's, traits included. The call becomes `bake!(Admin)` |
-| The same, and a test depends on a value that differs | `define(Admin)` with the lines it needs. It **replaces** the inherited definition (no merge), so repeat the parent's lines it still needs and its traits |
+| `factory :admin, parent: :user, class: 'Admin'` with `Admin < User` | Empty child body: nothing (inherits), and the call becomes `bake!(Admin)`. Otherwise in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
+| The same, and a test depends on a value that differs | In the 1:1 step: `define(Admin)` with the parent's lines plus the child's. It **replaces** the inherited definition (no merge). Falling back to inheritance is a Phase 7 drop |
 | `parent:` across unrelated classes | A second definition with the parent's lines repeated. Only ancestor classes are searched |
 | `traits_for_enum :status` | A trait per state a test uses, or none (enum inference) |
 | `trait :x` with `transient` | See transients |
@@ -168,11 +168,11 @@ RSpec.configure { |config| config.include BakeryHelpers }
 Before relying on it:
 
 1. **Confirm `spec/support` is loaded.** Rails' generated `rails_helper.rb` can ship the `spec/support/**/*.rb` require commented out. If it is, the helper is never included. Requiring it from a file the suite already loads is a change outside renames: ask, or report it.
-2. **Match factory_bot's output.** `attributes_for` returns **symbol** keys, only the attributes the factory declares, and keeps an explicit `nil`. The helper returns symbol keys, but it also lists every non-nil column the gem filled and drops `nil`s. If a test compares the whole hash, the key set, or an explicit `nil`, the helper does not match: it is a **blocker**. Do not edit the test to fit.
+2. **Match factory_bot's output.** `attributes_for` returns **symbol** keys, only the attributes the factory declares, and keeps an explicit `nil`. The helper returns symbol keys, but `.compact` drops `nil`s and `.attributes` lists every filled column, including column defaults — not only the declared ones. Use it only when the converted factory has no associations and no `nil` overrides. Otherwise it is a **blocker**: report it. Do not edit the test to fit.
 
 ## Putting a definition to bed
 
-After translating, the 1:1 definition for a model is correct but verbose. Do the whole 1:1 migration and verify it green first (Phase 6). Only then **ask the user** whether to simplify (Phase 7), and re-run that model's tests and doctor under `FACTORY_BAKERY_SEED=1,2,3` after each dropped line. Keep every named definition, even an empty one. Keep a line only when:
+After translating, the 1:1 definition for a model is correct but verbose. Do the whole 1:1 migration and verify it green first (Phase 6). Only then **ask the user** whether to simplify (Phase 7), and re-run that model's tests and doctor under `FACTORY_BAKERY_SEED=1,2,3` after each dropped line. A named definition never merges with the class-keyed one. After reducing, it repeats exactly the lines `define(User)` still keeps. It may be empty only when `define(User)` is empty or absent. Keep a line only when:
 
 1. A test depends on that exact value, or
 2. The model cannot bake without it. Say which: custom validator, registry, format, side effect, cross-record rule, cycle, view.

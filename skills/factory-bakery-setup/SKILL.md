@@ -7,7 +7,7 @@ description: Installs and configures the FactoryBakery gem (factory_bakery) in a
 
 Goal: `FactoryBakery.bake(Model)` works, definitions load from one known directory, tests can call it, and the verification in step 8 passed.
 
-Human guide: [`getting-started.md`](../../docs/guide/getting-started.md), [`rails.md`](../../docs/guide/rails.md), [`configuration.md`](../../docs/guide/configuration.md).
+Reference guides: [`getting-started.md`](../../docs/guide/getting-started.md), [`rails.md`](../../docs/guide/rails.md), [`configuration.md`](../../docs/guide/configuration.md). This skill supersedes them where they differ.
 
 ## Rules
 
@@ -49,7 +49,7 @@ Run `bundle install`, then check the install **before configuring anything**:
 
 ```sh
 bundle exec ruby -e 'require "factory_bakery"; puts FactoryBakery::VERSION'
-bin/rails -T factory_bakery        # Rails
+RAILS_ENV=test bin/rails -T factory_bakery   # Rails
 ```
 
 The version must be `0.0.2.0` or higher, and the task list must include `factory_bakery:doctor`. If not, fix the Gemfile line first.
@@ -59,12 +59,12 @@ The version must be `0.0.2.0` or higher, and the task list must include `factory
 Run it right after the dependencies, **before** wiring test helpers, so the framework `require` is written once. Details: [`references/generators-and-rake.md`](references/generators-and-rake.md).
 
 ```sh
-bin/rails g factory_bakery:install            # initializer + definitions directory
+RAILS_ENV=test bin/rails g factory_bakery:install   # initializer + definitions directory
 ```
 
-It writes `config/initializers/factory_bakery.rb` (with the framework `require` for RSpec or Minitest) and creates the definitions directory. If `bin/rails g --help` does not list `factory_bakery:install`, create the directory and the initializer by hand. Existing files are skipped, never overwritten, unless the user asks for `--force`.
+It writes `config/initializers/factory_bakery.rb` (with the framework `require` for RSpec or Minitest) and creates the definitions directory. If `RAILS_ENV=test bin/rails g --help` does not list `factory_bakery:install`, create the directory and the initializer by hand. Existing files are skipped, never overwritten, unless the user asks for `--force`.
 
-**Guard the generated initializer.** The gem is not loaded in production, so a bare `require 'factory_bakery/rspec'` or `Rails.application.config.factory_bakery` there fails at boot. Wrap the whole body:
+**Guard the generated initializer.** Three production-boot outcomes of an unguarded initializer: with the gem installed in production it loads FactoryBakery and its definitions into the process; with `BUNDLE_WITHOUT=test` its `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. Wrap the whole body either way:
 
 ```ruby
 # config/initializers/factory_bakery.rb
@@ -76,21 +76,22 @@ if defined?(FactoryBakery::Railtie)
 end
 ```
 
-More stubs, once the directory exists:
-
-```sh
-bin/rails g factory_bakery:definition Post    # one stub
-bin/rails factory_bakery:definitions          # stubs for every concrete model without a class-keyed definition
-```
-
 ### 4. Pick the definitions directory
 
 | Situation | Directory |
 | --- | --- |
 | No other factory library | `spec/factories` or `test/factories`. Rails finds it with no config |
-| `factory_bot` (or another) present | `spec/bakery` or `test/bakery`, and `config.factory_bakery.definition_paths = [...]` stated explicitly |
+| `factory_bot` (or another) present | `spec/bakery` or `test/bakery`, with `config.factory_bakery.definition_paths = [...]` stated explicitly — in the guarded initializer (step 3), so generators see it in development too |
 
 Never under `app/` or any autoload path. The install generator (step 3) created the directory and, when it detects factory_bot, wrote the `definition_paths` line. Confirm both.
+
+Generate stubs only for the models doctor (step 8) reports as failing:
+
+```sh
+RAILS_ENV=test bin/rails g factory_bakery:definition Post   # one stub
+```
+
+Leave `RAILS_ENV=test bin/rails factory_bakery:definitions` (a stub for every model) out of the procedure unless the user asks for the full sweep: a stub for a subclass is not inert ([bad pattern 13](references/bad-patterns.md#13-generating-stubs-for-every-model)).
 
 ### 5. Configure
 

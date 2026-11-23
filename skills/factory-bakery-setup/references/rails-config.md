@@ -15,10 +15,16 @@ On boot and on every reload (`config.to_prepare`), the polymorphic-target cache 
 ## Options
 
 ```ruby
-# config/environments/test.rb
-config.factory_bakery.associations     = { mode: :required_only }
+# config/initializers/factory_bakery.rb, inside the `if defined?(FactoryBakery::Railtie)` guard
 config.factory_bakery.definition_paths = [Rails.root.join('spec/bakery').to_s]
 ```
+
+```ruby
+# config/environments/test.rb
+config.factory_bakery.associations     = { mode: :required_only }
+```
+
+Keep `definition_paths` in the guarded initializer, not only in `test.rb`: generators and rake tasks read it in the environment the command runs in, development included.
 
 `config.factory_bakery` exists only while the gem is loaded (the Railtie defines it). With the gem in the test groups, `config/application.rb` raises `NoMethodError` at production boot. Use `config/environments/test.rb`, or guard the line: `... if config.respond_to?(:factory_bakery)`.
 
@@ -57,13 +63,13 @@ if defined?(FactoryBakery::Railtie)
 end
 ```
 
-An initializer runs **before** the Railtie's `after_initialize`, so these are in place when definitions load. The `if defined?(FactoryBakery::Railtie)` guard is required when the gem is not in the production group: the initializer file still loads in production, where `FactoryBakery` is undefined. The same guard goes around the whole body of the generated initializer, including its `require 'factory_bakery/rspec'` line.
+An initializer runs **before** the Railtie's `after_initialize`, so these are in place when definitions load. The guard is required when the gem is not in the production group: with a `path:`/`git:` source, `FactoryBakery` itself is defined in production, so guard on `FactoryBakery::Railtie` — the guard keeps the file inert in production. The same guard goes around the whole body of the generated initializer, including its `require 'factory_bakery/rspec'` line.
 
 ## Environment placement
 
 | Goal | Where |
 | --- | --- |
-| Tests only (the default) | `config/environments/test.rb`, and the gem in `group :development, :test` or `group :test` |
+| Tests only (the default) | `config/environments/test.rb`, and the gem in `group :development, :test` or `group :test`. With `group :test` alone, generators and rake tasks need `RAILS_ENV=test` |
 | Anywhere the gem is loaded, with the gem in a group that production skips | A guarded line: `config.factory_bakery.associations = ... if config.respond_to?(:factory_bakery)` |
 | All environments, with the gem in the default group | `config/application.rb` (not recommended: the gem would be a production dependency) |
 

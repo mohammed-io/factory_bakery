@@ -34,7 +34,9 @@ FactoryBakery.define(User) do
   association :account
 end
 
-# after the approved reduce step: nothing is left to say (a named definition, if any, stays even when empty)
+# after the approved reduce step: nothing is left to say. A named definition never merges
+# with the class-keyed one: it repeats the lines define(User) still keeps, and is empty
+# only when define(User) is empty or absent
 ```
 
 ## 3. Static `name 'x'`
@@ -81,7 +83,7 @@ association :author, User, persist: true
 
 A block that bakes is right for what the DSL refuses or cannot see: `has_many :through` and HABTM, registry-backed lookups, cross-record rules (Mastodon `AccountPin` bakes a `Follow`), Sequel models.
 
-It is also right when a **sibling block reads the attribute**. An explicit `association` runs after the attribute blocks ([definitions guide](../../../docs/guide/definitions.md)), so `name { "#{author.name}'s post" }` cannot read it. Keep `author { FactoryBakery.bake!(User) }` there instead of rewriting it. And keep `persist: true` on the rewrite where the old factory saved the parent (`author { create(:user) }`, `strategy: :create`): `association :author, User` alone leaves it unsaved.
+It is also right when a **sibling block reads the attribute**. With an explicit `association` ([definitions guide](../../../docs/guide/definitions.md)), a sibling block that reads it gets nil and the edge is then not built at all (the record can end up invalid), so `name { "#{author.name}'s post" }` breaks. Keep the attribute block there instead of rewriting it. And keep `persist: true` on the rewrite where the old factory saved the parent (`author { create(:user) }`, `strategy: :create`): `association :author, User` alone leaves it unsaved.
 
 ## 6. `persist: true` on every association
 

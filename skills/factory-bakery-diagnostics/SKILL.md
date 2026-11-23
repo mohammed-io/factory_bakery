@@ -8,7 +8,7 @@ description: >-
   in the message), when a value is silently nil or wrong, when a `left X#y_remote_url blank on purpose` WARN
   appears, or when `bin/rails factory_bakery:doctor` lists a failing model. Gives a procedure: reproduce with the
   printed seed, read `FactoryBakery.explain`, classify against the catalog, apply the smallest fix (call-site
-  override, one definition line, `persist:`, `with:`, `skip`, or a gem bug report). Not for a first install
+  override, one definition line, `persist:`, `with:`, `skip`, `strategy: :fresh`, or a gem bug report). Not for a first install
   (use factory-bakery-setup) or a move off factory_bot (use factory-bakery-migrate).
 ---
 
@@ -31,15 +31,15 @@ Use this when a model does not bake, or bakes into the wrong record. The catalog
 
 ### 1. Reproduce
 
-**Find the seed.** Every generated value derives from one seed. A `bake!` validation error, `FactoryBakery.explain(record)` and the doctor output for an invalid record all contain a line `Seed N from <source>. Reproduce: <command>`. The startup log line (`[FactoryBakery] INFO: using RSpec seed N ...` or `WARN: seed N from ...`) names it too. Resolution order: `FACTORY_BAKERY_SEED`, then `FactoryBakery.seed =` (Integer or callable), then the test framework's seed (`require 'factory_bakery/rspec'` or `'/minitest'`), then a random seed per process.
+**Find the seed.** Every generated value derives from one seed. A `bake!` validation error, `FactoryBakery.explain(record)` and the doctor output for an invalid record all contain a line `Seed N from <source>. Reproduce: <command>`. The seed log line, printed at the first bake (`[FactoryBakery] INFO: using RSpec seed N ...` or `WARN: seed N from ...`), names it too. Resolution order: `FACTORY_BAKERY_SEED`, then `FactoryBakery.seed =` (Integer or callable), then the test framework's seed (`require 'factory_bakery/rspec'` or `'/minitest'`), then a random seed per process.
 
-The seed covers only what the gem draws (including FFaker, inside a bake). `Faker::`, `rand` and `SecureRandom` in the project's own definition blocks are **not** seeded. Pin them to literals while diagnosing, or a replay can differ for that reason alone.
+The seed covers only what the gem draws: FFaker inside a bake is seeded, including in your own blocks. `Faker::`, `Kernel.rand` and `SecureRandom` in the project's blocks are **not** seeded. Pin them to literals while diagnosing, or a replay can differ for that reason alone.
 
-**Replay it.** Each model's values derive from the seed, the model name and that model's top-level bake ordinal in the process. So the same values need the same seed **and** the same earlier bakes of that model. The error text names the bake (`top-level bake #3 of User in this process`).
+**Replay it.** Values derive from the seed, the root class name and that class's top-level bake ordinal in the process. The count is per root class name across all top-level bakes, named factories included (`bake(:admin)` with `klass: User` counts as a `User` bake). Replay the root class and ordinal printed in the explanation: a nested child reports its owner's ordinal. So a replay runs the earlier N-1 bakes of that class, then the same bake again, with the last call identical — same factory name, traits, overrides. The error text names the bake (`top-level bake #3 of User in this process`).
 
 1. Start from the original suite command and its test-order seed. A narrower run changes which bakes ran before, and with them the ordinal.
 2. Once the failure reproduces, narrow it. Check that the error still says the same `bake #N of Model`.
-3. To replay bake #3 of `User` outside the suite, run the two bakes before it, then explain the third. Run it in a transaction that rolls back, because `bake!` commits and plain `bake` can still insert raw-FK parents:
+3. To replay bake #3 of `User` outside the suite, run the two bakes before it, then explain the third. Run it in a transaction that rolls back, because `bake!` commits and plain `bake` can still insert raw-FK parents; note the wrapper covers one connection pool, so writes on other pools survive:
 
 ```sh
 bundle exec rspec --seed 12345                                 # the original command. Minitest: bin/rails test --seed 12345
@@ -48,7 +48,7 @@ FACTORY_BAKERY_SEED=12345 RAILS_ENV=test bin/rails runner 'ActiveRecord::Base.tr
 
 For a `bake!` failure, replace the last `bake` with `bake!` and read the exception it raises. Database state (rows left by earlier examples) can still differ from the suite, so a clean replay is evidence, not proof. If the runner is valid but the suite fails, replay the suite.
 
-`FactoryBakery.explain(record)` runs `valid?` and returns the invalid attributes, the values FactoryBakery drew (`Chosen at random: ...`), the seed and a definition snippet. For a valid record it returns `<Class> is valid; nothing to explain.` `Chosen at random:` is provenance: it lists a filled attribute the errors name, so it shows where a value came from. It does not prove that value is the cause.
+`FactoryBakery.explain(record)` runs `valid?` and returns the invalid attributes, the values FactoryBakery drew (`Chosen at random: ...`), the seed and a definition snippet. The snippet's `pin it in <path>` is derived from the first entry of `FactoryBakery.definition_paths` and the record's class; it does not find the real file. Locate the definition the failing target uses and edit it in place; treat the printed path as a suggestion for a new class definition. The snippet is conditional: with only an explicitly set invalid value, the explanation prints the seed and `No invalid attribute was generated at random` with no snippet. For a valid record it returns `<Class> is valid; nothing to explain.` `Chosen at random:` is provenance: it lists a filled attribute the errors name, so it shows where a value came from. It does not prove that value is the cause.
 
 **Doctor** (Rails): `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Model]'` (add `NO_FAIL=1` for exit status `0`). It runs `bake` plus `valid?`, then `bake!`, and rolls the database rows back. Jobs, HTTP calls and file writes that model callbacks make still happen. It prints per failing model the first error line, a hint and a link, then the rest of the error indented (the explanation). It files each failure under one of six anchors, first match wins:
 
@@ -72,7 +72,7 @@ Run each model on its own, so one failure does not hide another, and roll back w
 | `bake` returns a record that is not valid, or `RecordInvalid` from `bake!` | Read `errors.full_messages` and `explain`. Go to step 3 |
 | A database error (`NotNullViolation`, `InvalidForeignKey`, unique violation) | [db-only-constraints](references/diagnostics.md#db-only-constraints) or [has-one-created-by-callback](references/diagnostics.md#has-one-created-by-callback) |
 | `Static attributes are unsupported` or `Cyclic attribute dependency` | [factory-attribute-errors](references/diagnostics.md#factory-attribute-errors) |
-| A WARN `left X#y_remote_url blank on purpose` | Not an error: the bake succeeded and the WARN records an intentional omission. Still check the bake result. [remote-url-left-blank](references/diagnostics.md#remote-url-left-blank) |
+| A WARN `left X#y_remote_url blank on purpose` | Not an error: the WARN records a skipped inferred assignment. Check the returned record or the exception for the result — a presence validation on the omitted attribute still fails `bake!`. [remote-url-left-blank](references/diagnostics.md#remote-url-left-blank) |
 | A subclass bakes with its parent's values | [subclass-uses-parent-definition](references/diagnostics.md#subclass-uses-parent-definition) |
 | No error, wrong value | [silent-failures](references/diagnostics.md#silent-failures) |
 
@@ -96,7 +96,7 @@ Pick exactly one class.
 Apply the fix the catalog entry names. In order of preference:
 
 1. **A call-site override** in the test that needs a particular value.
-2. **A definition line** when the model needs app knowledge. Name the validator or rule that needs it. Put it in the first entry of `FactoryBakery.definition_paths` (the explanation's "pin it in <file>" line names the exact file, `<underscored class name>.rb` in that directory).
+2. **A definition line** when the model needs app knowledge. Name the validator or rule that needs it. Put it in the definition the failing target actually uses, and edit that file in place. The explanation's `pin it in <file>` is derived from the first `definition_paths` entry and the class name (`<underscored class name>.rb`), so treat it as a suggestion for a new class definition, not a found file.
 3. **`association :x, persist: true`** when a validator reads a parent's id.
 4. **`with: { ... }`** for child attributes on an association.
 5. **`skip :x`** for a side-effecting setter (other than a `*_remote_url` writer), a read-only view edge, or a cycle.
@@ -152,9 +152,9 @@ Include `FactoryBakery::VERSION`, the validator, the exact message, the seed and
 
 ### 6. Verify
 
-- `FactoryBakery.bake(Model).valid?` is `true`, and `FactoryBakery.bake!(Model)` succeeds twice in a row (catches uniqueness collisions). Run both inside `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }`, or use doctor.
+- `FactoryBakery.bake(Model).valid?` is `true`, and `FactoryBakery.bake!(Model)` succeeds twice in a row (catches uniqueness collisions). Put all three calls in the **same** `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }` in the test environment: doctor rolls each probe back separately, so it cannot catch a collision between two consecutive `bake!` calls.
 - Replay with the original seed **and** with two other seeds (`FACTORY_BAKERY_SEED=1`, `=2`). A fix that holds for one seed only is a coincidence.
-- With the associations plugin, if the project uses `:all`: `FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(Model) }`.
+- With the associations plugin, if the project uses `:all`: `FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(Model) }`, inside the transaction wrapper, `RAILS_ENV=test`.
 - Run the affected tests. They must pass exactly as before.
 - Rails: `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Model]'` prints `1 valid, 0 needs definition` and exits `0`.
 

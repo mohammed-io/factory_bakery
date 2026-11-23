@@ -1,12 +1,12 @@
 # Generators and rake tasks
 
-Source: `lib/generators/factory_bakery/**`, `lib/tasks/factory_bakery.rake`, `lib/factory_bakery/active_record_mapper/{railtie,definition_paths,rails_tasks}.rb`. They load with the Railtie, so they exist only in a Rails app that has the gem in the current bundle group. Check with `bin/rails g --help` and `bin/rails -T factory_bakery`. If a command is missing, the installed gem predates it: create the files by hand.
+Source: `lib/generators/factory_bakery/**`, `lib/tasks/factory_bakery.rake`, `lib/factory_bakery/active_record_mapper/{railtie,definition_paths,rails_tasks}.rb`. They load with the Railtie, so they exist only in a Rails app that has the gem in the current bundle group. Check with `RAILS_ENV=test bin/rails g --help` and `RAILS_ENV=test bin/rails -T factory_bakery`. If a command is missing, the installed gem predates it — or this environment does not load the gem (group :test only: rerun with `RAILS_ENV=test`). Then create the files by hand.
 
 ## Where definitions are written
 
 All generators and `factory_bakery:definitions` write into one directory, `<dir>/<underscored class name>.rb` (`Admin::Post` is `admin/post.rb`):
 
-1. The **first** entry of `config.factory_bakery.definition_paths` when set. Relative paths resolve against `Rails.root`.
+1. The **first** entry of `config.factory_bakery.definition_paths` when set, read as set in the environment the command runs in. Keep the line in the guarded initializer, so development commands see it too. Relative paths resolve against `Rails.root`.
 2. Otherwise the default directory, which is also the one Rails loads at boot:
    - factory_bot detected: `spec/bakery` (`test/bakery` for Minitest). Detected means the `FactoryBot` constant is defined, or a `*.rb` file under `spec/factories`, `test/factories` or `factories` has a line that starts with `FactoryBot.define`.
    - else the first existing of `spec/factories`, `test/factories`, `factories`.
@@ -56,13 +56,13 @@ The hook is wired when generators load and needs a test framework in `config.gen
 ## Install generator
 
 ```sh
-bin/rails g factory_bakery:install
+RAILS_ENV=test bin/rails g factory_bakery:install
 ```
 
 Creates `config/initializers/factory_bakery.rb` (an existing one is skipped, `--force` overwrites) and the definitions directory.
 
 - The initializer sets `Rails.application.config.factory_bakery` and lists `associations`, `definition_paths`, `fill_optional`, `generators` as commented examples. Nothing is on until a line is uncommented.
-- **The generated file is unguarded.** Its top-level `require 'factory_bakery/rspec'` and `Rails.application.config.factory_bakery` fail in an environment where the gem is not loaded, such as production with the gem in the test groups. Wrap the whole file body in `if defined?(FactoryBakery::Railtie) ... end` (check: `lib/generators/factory_bakery/install/templates/initializer.rb.tt` has no guard).
+- **The generated file is unguarded.** In production, with the gem installed there, it loads FactoryBakery and its definitions into the process; with `BUNDLE_WITHOUT=test` its top-level `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. Wrap the whole file body in `if defined?(FactoryBakery::Railtie) ... end` (check: `lib/generators/factory_bakery/install/templates/initializer.rb.tt` has no guard).
 - It also writes `require 'factory_bakery/rspec'` when `spec/` exists, else `require 'factory_bakery/minitest'` when `test/` exists, so generated values follow the framework's seed. With neither directory it writes no require.
 - **factory_bot detected** (same test as above): creates `spec/bakery` (`test/bakery`) and writes an active `config.definition_paths = ["spec/bakery"]`. The two gems then never load each other's files.
 - **Otherwise**: creates the directory Rails would load (first `definition_paths` entry, else the default above) and leaves `definition_paths` commented.
@@ -72,8 +72,8 @@ The initializer does not turn the associations plugin on. Uncomment `config.asso
 ## Definition generator
 
 ```sh
-bin/rails g factory_bakery:definition Post
-bin/rails g factory_bakery:definition Admin::Post title:string user:references
+RAILS_ENV=test bin/rails g factory_bakery:definition Post
+RAILS_ENV=test bin/rails g factory_bakery:definition Admin::Post title:string user:references
 ```
 
 Writes one stub in the directory above. Existing file: skipped, `--force` overwrites.
@@ -81,8 +81,8 @@ Writes one stub in the directory above. Existing file: skipped, `--force` overwr
 ## Rake tasks
 
 ```sh
-bin/rails 'factory_bakery:definitions[Post,Comment]'
-bin/rails factory_bakery:definitions
+RAILS_ENV=test bin/rails 'factory_bakery:definitions[Post,Comment]'
+RAILS_ENV=test bin/rails factory_bakery:definitions
 RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Admin::Post]'
 RAILS_ENV=test bin/rails factory_bakery:doctor
 RAILS_ENV=test WRITE=1 NO_FAIL=1 bin/rails factory_bakery:doctor

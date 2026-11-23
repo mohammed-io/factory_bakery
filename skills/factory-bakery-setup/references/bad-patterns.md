@@ -49,7 +49,7 @@ FactoryBakery::Associations.with(mode: :all, default_count: 3) { bake!(Post) }
 
 ## 4. Requiring `factory_bakery/associations` by hand in Rails
 
-**Why it hurts.** The Railtie already requires and configures the plugin when `config.factory_bakery.associations` is set, before definitions load. A second `require` in `spec/rails_helper.rb` is harmless (registration is idempotent) but it hides where the mode is set. And if it is the **only** place that enables the plugin, it runs after `config/environment` has loaded the definitions: a definition that uses `association` raises `` `association` requires the associations plugin `` at boot, and `bin/rails runner` or `factory_bakery:doctor` never run the helper, so they see no plugin and report `must exist` failures the suite does not have.
+**Why it hurts.** The Railtie already requires and configures the plugin when `config.factory_bakery.associations` is set, before definitions load. A second `require` in `spec/rails_helper.rb` is harmless (registration is idempotent) but it hides where the mode is set. And if it is the **only** place that enables the plugin, it runs after `config/environment`. Boot still succeeds — definition blocks run at bake time — but the first bake outside the suite (`bin/rails runner`, `factory_bakery:doctor`) raises `` `association` requires the associations plugin ``: those never run the helper, so they see no plugin and report `must exist` failures the suite does not have.
 
 ```ruby
 # bad: spec/rails_helper.rb
@@ -171,7 +171,7 @@ before { FactoryBakery.find_definitions }
 
 ## 13. Generating stubs for every model
 
-**Why it hurts.** `bin/rails factory_bakery:definitions` with no names writes a file for every concrete model without a class-keyed definition, and it eager-loads the app. The stubs are comments, so they change nothing, but they bury the few definitions that matter. A model that passes `doctor` needs no definition.
+**Why it hurts.** `bin/rails factory_bakery:definitions` with no names writes a file for every concrete model without a class-keyed definition, and it eager-loads the app. The stubs are comments, so they are inert for a model with no ancestor definition — a subclass stub is not (see below) — but they bury the few definitions that matter. A model that passes `doctor` needs no definition.
 
 **Instead.** Run `RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor`, then write stubs only for the failing models (`factory_bakery:definitions[Post,Comment]`, or `WRITE=1`) and fill each with the one line its failure needs.
 
@@ -190,7 +190,7 @@ RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor
 
 ## 15. FactoryBakery config or requires where the gem is not loaded
 
-**Why it hurts.** `config.factory_bakery` exists only while the gem is loaded: the Railtie defines it. With the gem in `group :development, :test`, production never loads it, so `config.factory_bakery.associations = ...` in `config/application.rb` raises `NoMethodError` at production boot (probed: `undefined method 'factory_bakery'`). The generated `config/initializers/factory_bakery.rb` has the same flaw: it still loads in production, and its top-level `require 'factory_bakery/rspec'` and `Rails.application.config.factory_bakery` both fail there.
+**Why it hurts.** `config.factory_bakery` exists only while the gem is loaded: the Railtie defines it. With the gem in `group :development, :test`, production never loads it, so `config.factory_bakery.associations = ...` in `config/application.rb` raises `NoMethodError: undefined method 'factory_bakery'` at production boot (probed). The generated `config/initializers/factory_bakery.rb` spans the three production cases: with the gem installed in production it loads FactoryBakery and its definitions into the process; with `BUNDLE_WITHOUT=test` its top-level `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises the `NoMethodError`. Wrap it either way.
 
 ```ruby
 # bad: config/application.rb
