@@ -112,7 +112,7 @@ RSpec.describe 'seeded generation' do
       expect(full_name_for(7)).not_to eq(full_name_for(8))
     end
 
-    it 'restores FFaker\'s own seed once the bake returns' do
+    it 'leaves FFaker\'s own seed alone once the bake returns' do
       FactoryBakery.seed = 7
       previous = FFaker::Random.seed
 
@@ -132,7 +132,7 @@ RSpec.describe 'seeded generation' do
       expect(Array.new(3) { FFaker::Name.name }).to eq(expected)
     end
 
-    it 'restores FFaker even when the bake raises' do
+    it 'leaves FFaker\'s own seed alone even when the bake raises' do
       FFaker::Random.seed = 99
       before_seed = FFaker::Random.seed
       FactoryBakery.define(named) { full_name { raise 'boom' } }
@@ -186,8 +186,24 @@ RSpec.describe 'seeded generation' do
       values = fibers.map(&:resume)
 
       expect(values).to eq(solo)
-      expect(FFaker::Random.rng).to be_a(::Random)
-      expect(FFaker::Random.rng).not_to be_a(FactoryBakery::Randomness::LazyRandom)
+    end
+
+    it 'stops a fiber created inside a finished bake from drawing with that bake\'s generator' do
+      inside = nil
+      fiber = nil
+      FactoryBakery.seed = 11
+      FactoryBakery::Randomness.top_level_bake(alpha) do
+        inside = FFaker::Random.rng
+        fiber = Fiber.new do
+          Fiber.yield
+          FFaker::Random.rng
+        end
+        fiber.resume
+      end
+
+      after = fiber.resume
+
+      expect(after).not_to equal(inside)
     end
 
     it 'gives two threads baking different classes the values their bakes get when run alone' do

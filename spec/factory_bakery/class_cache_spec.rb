@@ -79,6 +79,41 @@ RSpec.describe FactoryBakery::ClassCache do
     expect(described_class.fetch(other, :key) { :recomputed }).to eq(:recomputed)
   end
 
+  it 'recomputes on every call for a frozen class and never stores' do
+    klass = Class.new
+    described_class.fetch(klass, :key) { :cached }
+    klass.freeze
+    calls = 0
+
+    results = Array.new(2) do
+      described_class.fetch(klass, :key) do
+        calls += 1
+        :fresh
+      end
+    end
+
+    expect(results).to all(eq(:fresh))
+    expect(calls).to eq(2)
+  end
+
+  it 'does not republish a stale value into a table that clear emptied in place' do
+    klass = Class.new
+    fiber = Fiber.new do
+      described_class.fetch(klass, :k) do
+        Fiber.yield
+        :stale
+      end
+    end
+    fiber.resume
+
+    klass.freeze
+    FactoryBakery.reset_cache!
+    fiber.resume
+
+    expect(described_class.fetch(klass, :k) { :fresh }).to eq(:fresh)
+    expect { FactoryBakery.reset_cache! }.not_to raise_error
+  end
+
   it 'does not re-publish a stale value whose computation was still in flight when the class was cleared' do
     klass = Class.new
     fiber = Fiber.new do

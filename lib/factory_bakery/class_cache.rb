@@ -26,25 +26,30 @@ module FactoryBakery
       #
       # A hit is one instance-variable read and one Hash lookup: the class is
       # asked dozens of times per bake, so the hit path allocates nothing.
+      #
+      # A frozen class is never served from or written to the cache: its table
+      # can never go stale, because no value computed for it is ever stored.
       def fetch(klass, key)
+        return yield if klass.frozen?
+
         store = klass.instance_variable_get(IVAR)
         value = store ? store.fetch(key, MISSING) : MISSING
         return value unless value.equal?(MISSING)
-        return yield if klass.frozen?
 
         store ||= store_for(klass)
         value = yield
         store.key?(key) ? store[key] : (store[key] = value)
       end
 
-      # A per-class Hash for callers that keep a keyed map (a throwaway one for
-      # a frozen class, so writes to it simply do not stick). Like `fetch`, the
-      # table is read before anything is computed.
+      # A per-class Hash for callers that keep a keyed map (a frozen class gets
+      # a throwaway one, so writes to it simply do not stick). Like `fetch`, a
+      # frozen class is never served from or written to the cache.
       def table(klass, key)
+        return {} if klass.frozen?
+
         store = klass.instance_variable_get(IVAR)
         hit = store && store[key]
         return hit if hit
-        return {} if klass.frozen?
 
         fetch(klass, key) { {} }
       end

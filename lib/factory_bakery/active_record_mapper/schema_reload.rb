@@ -22,5 +22,11 @@ module FactoryBakery
   end
 end
 
-ActiveRecord::Base.singleton_class.prepend(FactoryBakery::ActiveRecordMapper::SchemaReload) unless
-  ActiveRecord::Base.singleton_class.ancestors.include?(FactoryBakery::ActiveRecordMapper::SchemaReload)
+# Installed lazily: the gem may be required before the host app has finished
+# configuring itself, and touching ActiveRecord::Base here would run Rails'
+# `on_load(:active_record)` hooks too soon (e.g. before the app's own Active
+# Record encryption settings exist). Inside the hook `self` is ActiveRecord::Base.
+ActiveSupport.on_load(:active_record) do
+  singleton_class.prepend(FactoryBakery::ActiveRecordMapper::SchemaReload) unless
+    singleton_class.ancestors.include?(FactoryBakery::ActiveRecordMapper::SchemaReload)
+end

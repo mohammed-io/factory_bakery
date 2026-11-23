@@ -46,18 +46,22 @@ module FactoryBakery
       end
     end
 
-    # The generator of the top-level bake in flight, with the bake it belongs to.
-    Scope = Data.define(:rng, :model, :ordinal)
+    # The generator of the top-level bake in flight, with the bake it belongs
+    # to. `active` says whether the bake is still running: `Fiber[]` storage is
+    # inherited by child fibers, so a fiber created inside a bake and resumed
+    # after the bake returned must not keep drawing from that bake's generator.
+    Scope = Struct.new(:rng, :model, :ordinal, :active)
 
     class << self
       def current
-        scope = Fiber[STORAGE_KEY]
-        scope ? scope.rng : process_rng
+        scope&.rng || process_rng
       end
 
-      # The top-level bake in flight, or nil outside a bake.
+      # The top-level bake in flight, or nil outside a bake (a finished bake's
+      # scope is deactivated, so fibers it spawned stop seeing it).
       def scope
-        Fiber[STORAGE_KEY]
+        stored = Fiber[STORAGE_KEY]
+        stored if stored&.active
       end
 
       def rand(*args)
@@ -78,9 +82,11 @@ module FactoryBakery
         ordinal = next_ordinal(model)
         rng = LazyRandom.new(derive(seed, model, ordinal))
         previous = Fiber[STORAGE_KEY]
-        Fiber[STORAGE_KEY] = Scope.new(rng:, model:, ordinal:)
+        bake_scope = Scope.new(rng:, model:, ordinal:, active: true)
+        Fiber[STORAGE_KEY] = bake_scope
         block.call
       ensure
+        bake_scope&.active = false
         Fiber[STORAGE_KEY] = previous
       end
 
