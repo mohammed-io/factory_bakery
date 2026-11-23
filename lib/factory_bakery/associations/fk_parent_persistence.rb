@@ -8,8 +8,9 @@ module FactoryBakery
     # belongs_to targets: give the target a real id by persisting it through
     # the mapper's persistence adapter, before the owner is validated.
     #
-    # Under `bake!` the insert happens while the root savepoint is open, so it
-    # rolls back atomically with every other row the bake wrote. Under plain
+    # Under `bake!` with `FactoryBakery.savepoints` on, the insert happens
+    # while the root savepoint is open, so it rolls back atomically with every
+    # other row the bake wrote; with the setting off, the row stays. Under plain
     # `bake` it is a documented exception to the unsaved contract: the row is
     # inserted outside any transaction. A `:reuse_non_unique` miss (or a unique
     # edge) builds the parent exactly like `:fresh` does under the same mode.

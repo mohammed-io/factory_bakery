@@ -5,7 +5,7 @@
 | Returns | The object, **unsaved** | The object, **saved**, after the whole graph is verified |
 | Writes to the database | Nothing of its own (exceptions below) | The whole graph, in one transaction |
 | Validates | Only when needed to verify a lean bake (see [Heuristics](heuristics.md#the-verified-fallback)) | Through `save!` |
-| On an invalid record | Returns it. You check `valid?` | Raises (`ActiveRecord::RecordInvalid`) and rolls back |
+| On an invalid record | Returns it. You check `valid?` | Raises (`ActiveRecord::RecordInvalid`) and, with `FactoryBakery.savepoints = true`, rolls back |
 | Target without `save!` (a PORO) | Returns the object | Returns the object, nothing saved |
 
 Both take the same arguments: a class or registered symbol, any number of traits, then override keywords.
@@ -91,7 +91,7 @@ A record can stay unsaved even though the root saved. This happens with `autosav
 bake! did not persist all generated records: Member (assigned to members). Persist the record explicitly via a declaration or override, or change the association's autosave/validate options.
 ```
 
-The error class is `FactoryBakery::IncompletePersistenceError`. The whole bake is rolled back first. See [diagnostics](../../skills/factory-bakery-diagnostics/references/diagnostics.md#incomplete-persistence).
+The error class is `FactoryBakery::IncompletePersistenceError`. With `FactoryBakery.savepoints = true`, the whole bake is rolled back first; with the default off, only `save!`'s own transaction rolls back. See [diagnostics](../../skills/factory-bakery-diagnostics/references/diagnostics.md#incomplete-persistence).
 
 Known limit (observed, not documented elsewhere): the check is scoped by the **class path** of the nested bake. If a nested `bake!(User)` runs (from `persist: true` or a declaration block) while a sibling edge of the same class `User` was auto-built and is still unsaved, the check sees that sibling and raises. Persist both edges, or declare the sibling. See the [sibling case](../../skills/factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class).
 

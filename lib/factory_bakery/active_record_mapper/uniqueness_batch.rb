@@ -13,6 +13,11 @@ module FactoryBakery
     # asks the model's own validator one column at a time. Values never travel
     # as SQL text: the cached statement holds identifiers and placeholders
     # only, and the values are bound on execution.
+    #
+    # On MySQL/Trilogy a plain `=` can be case-insensitive under the default
+    # collation, so the batch may report a value as taken that a case-sensitive
+    # validator would accept; the only effect is an unnecessary regeneration,
+    # never a missed collision.
     module UniquenessBatch
       BATCHABLE_ADAPTERS = %w[SQLite PostgreSQL Mysql2 Trilogy].freeze
       BATCHABLE_TYPES = %i[string text integer bigint uuid decimal float date datetime boolean].freeze

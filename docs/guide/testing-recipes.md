@@ -113,7 +113,7 @@ post = bake(Post)      # unsaved, associations built unsaved (required_only)
 post.save!             # saves the graph through ActiveRecord autosave
 ```
 
-Prefer `bake!` when the test needs saved rows: it verifies the graph and rolls back on failure.
+Prefer `bake!` when the test needs saved rows: it verifies the graph and raises on failure; with `FactoryBakery.savepoints = true` it also rolls back.
 
 ### Build only what the test is about
 

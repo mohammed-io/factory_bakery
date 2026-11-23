@@ -30,9 +30,6 @@ module FactoryBakery
         # The guard count mirrors the index's semantics (nil never matches,
         # a default scope would hide a row, a persisted row excludes itself),
         # so it moves here unchanged rather than being rewritten.
-        # The guard count mirrors the index's semantics (nil never matches,
-        # a default scope would hide a row, a persisted row excludes itself),
-        # so it moves here unchanged rather than being rewritten.
         # rubocop:disable Metrics/AbcSize, Metrics/CyclomaticComplexity
         def unique_index_taken?(record, attr_name, value)
           klass = record.class

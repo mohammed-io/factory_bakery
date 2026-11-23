@@ -125,6 +125,6 @@ Notes from the example:
 ## Writing a good plugin
 
 - Keep framework reads out of it. Ask the mapper through `FactoryBakery::MapperRegistry` (`association_introspection`, `constraints_for`, `persistence_adapter`).
-- Do not write to the database from `heuristic_values`. It can run in a fallback attempt that is rolled back.
+- Do not write to the database from `heuristic_values`. It can run in a fallback attempt whose rows are only rolled back with `FactoryBakery.savepoints = true`.
 - Do not rely on a hook running once: the [verified fallback](heuristics.md#the-verified-fallback) can build a record twice.
 - Treat `BuildContext` as internal. Use `context.path` and `context.depth` if you must.

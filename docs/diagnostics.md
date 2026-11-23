@@ -257,7 +257,7 @@ All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reu
 ### incomplete-persistence
 
 - **Message:** `bake! did not persist all generated records: Member (assigned to members). Persist the record explicitly via a declaration or override, or change the association's autosave/validate options.`
-- **Class:** `FactoryBakery::IncompletePersistenceError`. The bake is rolled back first.
+- **Class:** `FactoryBakery::IncompletePersistenceError`. The bake is rolled back first when `FactoryBakery.savepoints = true`; with the default off, only `save!`'s own transaction rolls back.
 - **Cause:** After the root `save!`, a generated record is still new. Usual reasons: `autosave: false` on the association, `validate: false` on an invalid child, or a parent Rails skipped because it was invalid.
 - **Where to look:** gem `PersistenceVerifier`. App: the association's `autosave` / `validate` options, and the named record's own validity.
 - **Fix:** Persist the record explicitly in a declaration or override, or fix the association options. Make the named record valid first: `FactoryBakery.bake(Member).valid?`.

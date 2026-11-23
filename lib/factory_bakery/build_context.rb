@@ -222,7 +222,8 @@ module FactoryBakery
 
       # True while a `bake!` is building its graph (including nested bakes made
       # from declaration blocks). FK-presence parents created here are inserted
-      # inside that bake's savepoint and roll back with it.
+      # inside that bake's savepoint (that is, with `FactoryBakery.savepoints`
+      # on) and roll back with it.
       def persisting?
         Fiber[PERSIST_PARENTS_KEY] || false
       end

@@ -149,12 +149,13 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
 
     private
 
-    # `bake!` has a persistence contract: graph building (including nested
-    # `bake!` calls from declaration blocks), the root `save!` and the
-    # verify-and-raise step all run inside one transaction opened with
-    # `requires_new`. That is a savepoint when the caller already has a
-    # transaction, so a failure rolls back every row this bake wrote without
-    # disturbing the caller's transaction. The transaction, save and
+    # `bake!` has a persistence contract: with `FactoryBakery.savepoints` on,
+    # graph building (including nested `bake!` calls from declaration blocks),
+    # the root `save!` and the verify-and-raise step all run inside one
+    # transaction opened with `requires_new`. That is a savepoint when the
+    # caller already has a transaction, so a failure rolls back every row this
+    # bake wrote without disturbing the caller's transaction. With the setting
+    # off, only the root `save!`'s own transaction rolls back. The transaction, save and
     # persistence check are performed through the mapper's persistence adapter;
     # a target no mapper claims keeps plain build-and-save semantics.
     def build_and_persist(target, overrides, traits, mode, validate)
