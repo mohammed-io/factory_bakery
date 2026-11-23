@@ -2,7 +2,7 @@
 
 Each entry: the pattern, why it hurts, what to do instead. Every claim is checked against `lib/` or `docs/guide/`. One entry is general Rails knowledge and is marked as not run here.
 
-Contents: [gem group](#1-the-gem-in-the-default-or-production-group) · [shared directory](#2-factorybakery-and-factory_bot-loading-one-directory) · [global `:all`](#3-all-mode-set-globally) · [manual associations require](#4-requiring-factory_bakeryassociations-by-hand-in-rails) · [no seed integration](#5-no-seed-integration-require) · [hard-coded seed](#6-a-hard-coded-seed-in-ci) · [reset_plugins!](#7-factorybakeryreset_plugins-in-an-app-suite) · [definitions in app/](#8-definitions-inside-app-or-an-autoload-path) · [generators = true](#9-generators--true-next-to-factory_bot) · [global defaults](#10-defining-on-object-or-applicationrecord-for-a-global-default) · [bake at load time](#11-baking-at-file-load) · [find_definitions per example](#12-calling-find_definitions-per-example) · [stub flood](#13-generating-stubs-for-every-model) · [doctor outside test](#14-running-doctor-outside-the-test-environment)
+Contents: [gem group](#1-the-gem-in-the-default-or-production-group) · [shared directory](#2-factorybakery-and-factory_bot-loading-one-directory) · [global `:all`](#3-all-mode-set-globally) · [manual associations require](#4-requiring-factory_bakeryassociations-by-hand-in-rails) · [no seed integration](#5-no-seed-integration-require) · [hard-coded seed](#6-a-hard-coded-seed-in-ci) · [reset_plugins!](#7-factorybakeryreset_plugins-in-an-app-suite) · [definitions in app/](#8-definitions-inside-app-or-an-autoload-path) · [generators = true](#9-generators--true-next-to-factory_bot) · [global defaults](#10-defining-on-object-or-applicationrecord-for-a-global-default) · [bake at load time](#11-baking-at-file-load) · [find_definitions per example](#12-calling-find_definitions-per-example) · [stub flood](#13-generating-stubs-for-every-model) · [doctor outside test](#14-running-doctor-outside-the-test-environment) · [unguarded config](#15-factorybakery-config-or-requires-where-the-gem-is-not-loaded)
 
 ## 1. The gem in the default or production group
 
@@ -10,11 +10,11 @@ Contents: [gem group](#1-the-gem-in-the-default-or-production-group) · [shared 
 
 ```ruby
 # bad
-gem 'factory_bakery', git: 'https://github.com/mohammed-io/factory_bakery.git'
+gem 'factory_bakery', path: '/absolute/path/to/factory_bakery'
 
 # good
 group :development, :test do
-  gem 'factory_bakery', git: 'https://github.com/mohammed-io/factory_bakery.git'
+  gem 'factory_bakery', path: '/absolute/path/to/factory_bakery'
 end
 ```
 
@@ -55,7 +55,7 @@ FactoryBakery::Associations.with(mode: :all, default_count: 3) { bake!(Post) }
 # bad: spec/rails_helper.rb
 require 'factory_bakery/associations'
 
-# good: config/application.rb or config/environments/test.rb
+# good: config/environments/test.rb (see bad pattern 15 for config/application.rb)
 config.factory_bakery.associations = { mode: :required_only }
 ```
 
@@ -94,15 +94,18 @@ FactoryBakery.seed = 1234
 
 **Why it hurts.** It removes every plugin, including the associations plugin the Railtie registered once at boot. Later examples then raise on `association` and stop building required parents (`must exist`).
 
+`FactoryBakery::Associations.reset_configuration!` is no substitute in an app suite. It resets the plugin to **the gem's defaults** (`mode: :required_only`, `strategy: :fresh`, `max_depth: 2`, ...), not to what `config.factory_bakery.associations` set, so after the first example the app's config is gone.
+
 ```ruby
 # bad
 config.after { FactoryBakery.reset_plugins! }
-
-# good: restore the plugin's own defaults and clear the fiber scope
 config.after { FactoryBakery::Associations.reset_configuration! }
+
+# good: call nothing. For a change in one test, a scope that restores itself
+FactoryBakery::Associations.with(mode: :all) { bake!(Post) }
 ```
 
-Reset plugins only in specs of your own that register a plugin and register it again.
+Call `reset_configuration!` only in specs that assign the plugin's globals themselves (`FactoryBakery::Associations.mode = ...`) and want the gem's defaults back. Reset plugins only in specs of your own that register a plugin and register it again.
 
 ## 8. Definitions inside `app/` or an autoload path
 
@@ -170,7 +173,9 @@ before { FactoryBakery.find_definitions }
 
 **Why it hurts.** `bin/rails factory_bakery:definitions` with no names writes a file for every concrete model without a class-keyed definition, and it eager-loads the app. The stubs are comments, so they change nothing, but they bury the few definitions that matter. A model that passes `doctor` needs no definition.
 
-**Instead.** Run `NO_FAIL=1 bin/rails factory_bakery:doctor`, then write stubs only for the failing models (`factory_bakery:definitions[Post,Comment]`, or `WRITE=1`) and fill each with the one line its failure needs.
+**Instead.** Run `RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor`, then write stubs only for the failing models (`factory_bakery:definitions[Post,Comment]`, or `WRITE=1`) and fill each with the one line its failure needs.
+
+A stub for a **subclass** is worse than clutter. `FactoryBakery.define(Subclass) do ... end` registers an exact definition even when the block holds only comments, and it replaces the ancestor's definition. The subclass then loses the parent's attributes and traits (probed: `bake(Sub)` returned a `nil` name and `bake(Sub, :loud)` raised `Trait :loud is not declared for Sub`). Delete such a stub, or fill it with every line and trait the subclass needs.
 
 ## 14. Running doctor outside the test environment
 
@@ -181,4 +186,29 @@ before { FactoryBakery.find_definitions }
 bin/rails factory_bakery:doctor
 # good
 RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor
+```
+
+## 15. FactoryBakery config or requires where the gem is not loaded
+
+**Why it hurts.** `config.factory_bakery` exists only while the gem is loaded: the Railtie defines it. With the gem in `group :development, :test`, production never loads it, so `config.factory_bakery.associations = ...` in `config/application.rb` raises `NoMethodError` at production boot (probed: `undefined method 'factory_bakery'`). The generated `config/initializers/factory_bakery.rb` has the same flaw: it still loads in production, and its top-level `require 'factory_bakery/rspec'` and `Rails.application.config.factory_bakery` both fail there.
+
+```ruby
+# bad: config/application.rb
+config.factory_bakery.associations = { mode: :required_only }
+
+# good: config/environments/test.rb
+config.factory_bakery.associations = { mode: :required_only }
+
+# also good where the line must stay in application.rb
+config.factory_bakery.associations = { mode: :required_only } if config.respond_to?(:factory_bakery)
+```
+
+```ruby
+# good: config/initializers/factory_bakery.rb, whole body guarded
+if defined?(FactoryBakery::Railtie)
+  require 'factory_bakery/rspec'
+  Rails.application.config.factory_bakery.tap do |config|
+    # ...
+  end
+end
 ```

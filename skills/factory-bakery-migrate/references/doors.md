@@ -19,7 +19,7 @@ Deleting the old factories, fabricators, blueprints, fixtures and the `factory_b
 | Simplify a **new** definition (drop a line) | The old factory is untouched | Add the line back |
 | Add a thin helper in `spec/support` (for `attributes_for` and the like) | New file | Delete it |
 | Rename call sites in a batch, one commit per batch | Pure text rename, in a commit | `git revert` the commit |
-| Run `factory_bakery:doctor` | Rolled back. Writes nothing | Nothing to undo. (`WRITE=1` writes stubs: that is adding definitions, also two-way) |
+| Run `RAILS_ENV=test bin/rails factory_bakery:doctor` | Runs model callbacks and rolls the database rows back. Effects outside the database (jobs, HTTP calls, file writes) still happen | Nothing to undo in the database. (`WRITE=1` writes stubs: that is adding definitions, also two-way) |
 | Run the suite, capture the baseline | Read-only | Nothing |
 
 ## One-way doors: ask first, do last

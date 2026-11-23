@@ -4,7 +4,7 @@ For an error raised by a bake, use the [`factory-bakery-diagnostics`](../../fact
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |
-| `NameError: uninitialized constant FactoryBakery` | Gem not in the bundle for this environment | Check the Gemfile group. Run `bundle install`. Run the command with the right `RAILS_ENV` |
+| `NameError: uninitialized constant FactoryBakery`, or `NoMethodError: undefined method 'factory_bakery'` for the Rails config | Gem not in the bundle for this environment. At production boot, an unguarded initializer or a `config.factory_bakery` line in `config/application.rb` | Check the Gemfile group. Run `bundle install`. Run the command with the right `RAILS_ENV`. Guard the initializer with `if defined?(FactoryBakery::Railtie)` and move config to `config/environments/test.rb` ([bad pattern](bad-patterns.md#15-factorybakery-config-or-requires-where-the-gem-is-not-loaded)) |
 | `cannot load such file -- factory_bakery/associations` | Old gem version, or not bundled | `bundle update factory_bakery`. Check `bundle exec` |
 | `` `association` requires the associations plugin: require 'factory_bakery/associations' `` | Plugin not enabled | Add `config.factory_bakery.associations = {...}` (Rails) or the require |
 | Definitions never apply | Wrong directory. `FactoryBakery.definition_paths` is empty or points elsewhere | Print it. Create the directory. Set `config.factory_bakery.definition_paths` |

@@ -1,6 +1,6 @@
 # Capability matrix
 
-Everything a factory_bot (or similar) factory can express, sorted into three classes. Each row has the reason. Verified against the code on branch `v0.0.2` (inheritance, sibling reads and the `static name` error were also run). Rows marked *(not run)* were read from the code, not exercised.
+Everything a factory_bot (or similar) factory can express, sorted into three classes. Each row has the reason. Verified against the code of gem 0.0.2.0 (`FactoryBakery::VERSION`; inheritance, sibling reads and the `static name` error were also run). Rows marked *(not run)* were read from the code, not exercised.
 
 - **Automatic**: inference or the associations plugin handles it. Write nothing. Drop the old line.
 - **Needs a definition**: FactoryBakery can do it, but you must say so in a definition (or association option).
@@ -56,7 +56,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | --- | --- | --- |
 | A test asserts on an exact value | `attr { 'value' }` | Inference is random |
 | Specific state (`:published`, `:admin`) | `trait` | A state is a test decision |
-| Registry, provider list, site setting, emoji list | A block returning a registry value | Not a discoverable constraint ([ADR-0004](../../../docs/adr/0004-extend-generation-within-discoverable-constraints.md)) |
+| Registry, provider list, site setting, emoji list | A block returning a registry value | Not a discoverable constraint: a registry only custom code consults is invisible to the mapper ([what inference cannot know](../../../docs/guide/heuristics.md#what-inference-cannot-know)) |
 | Custom validator that needs particular values | One block per needed attribute | Unreadable logic |
 | Time-relative custom validation | A block computing from "now" | Custom code |
 | Structured JSON/YAML in a **text** column (not index-cast) | A block returning the shape | No schema to read |
@@ -76,7 +76,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | `has_many :through`, HABTM | An attribute block | `association` refuses them |
 | Several has_many children | `association :x, count: n` | One child by default |
 | `class: 'Ns::Model'` or a factory name differing from the class | `define(:name, klass: Ns::Model)` | Names resolve by camelizing |
-| Factory inheritance (`parent:`, nested `factory`), same class | A trait on the parent | One definition per class. Traits are the only way to vary a class |
+| Factory inheritance (`parent:`, nested `factory`), same class | `define(:admin, klass: User)` repeating the parent's lines, so the call stays a rename (`bake!(:admin)`) | Class and symbol keys are separate registrations, so a symbol key can vary a class. A trait on the parent would change the call to `bake!(User, :admin)`: not a rename |
 | Factory inheritance with a subclass (`class: 'Admin'`, `Admin < User`) | Nothing if the parent's definition bakes the subclass. Otherwise `define(Admin)` with the lines it needs | A class with no definition uses its nearest ancestor's. An exact definition replaces it, so definitions do not merge |
 | Factory inheritance across unrelated classes | A second definition, lines repeated | Only ancestor classes are searched, never modules or `Object` |
 | `aliases:` | A second `define(:alias, klass: X, &same_block)` | One key per `define` |
@@ -95,18 +95,18 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | --- | --- | --- |
 | `build_stubbed` | No stubbed-persisted object. `bake` returns `persisted? == false`, `id == nil` | **Blocker.** Report |
 | `build_stubbed_list` | Same | Blocker |
-| `attributes_for` | No built-in | A thin helper that keeps call sites a rename ([testing recipes](../../../docs/guide/testing-recipes.md#attribute-hash-for-a-request-spec)). Its keys are strings and it omits associations. If a test needs symbol keys or associations, blocker |
+| `attributes_for` | No built-in | A thin helper named `bakery_attributes_for` that keeps call sites a rename ([testing recipes](../../../docs/guide/testing-recipes.md#attribute-hash-for-a-request-spec)). It must match factory_bot's output: symbol keys, only declared attributes, explicit `nil`s kept. The helper in [translation rules](translation-rules.md#the-helper-for-attributes_for) returns symbol keys but drops `nil`s and omits associations. If a test depends on an explicit `nil`, the exact key set or associations, **blocker**. Confirm `spec/support` is loaded |
 | Transient attributes as **call-site parameters** (`create(:user, with_posts: 3)`) | No transient DSL | Blocker. A trait or `association :posts, count: 3` may replace a specific use, but the call changes |
 | `after(:build)`, `after(:create)`, `before(:create)`, `callback` | No definition callback DSL | Report hooks that must run for every call. Individual calls can pass a block to `bake` or `bake!` |
 | `initialize_with { ... }` block with logic | A Hash only | Hash if simple. Otherwise blocker |
 | `FactoryBot.generate(:seq)`, global sequences | No sequence registry | Helper with a counter, or blocker |
 | Trait that applies another trait | A trait cannot call a trait | Repeat the lines, or pass both traits at the call site (call changes: blocker if many) |
 | Nested attributes via `traits_for_enum` | Not a feature | Automatic enum inference, or explicit traits |
-| `to_create`, `skip_create` customizing save | `bake!` calls `save!` | Blocker if a test depends on it |
+| `to_create`, `skip_create` customizing save | `bake!` calls `save!` | **Blocker.** Do not drop the line and call it translated |
 | `FactoryBot.create` in seeds or rake tasks | Not a test file | Out of scope. Report |
 | Rails fixtures (`users(:ada)`) | Named global data. A conversion changes tests | Not converted. Report |
 | Sequel associations | Never auto-built | An attribute block |
-| `stub_method` (temporary stubbing of a callback during a bake) | Proposed, not shipped (engineering log, section 8) | Blocker |
+| `stub_method` (temporary stubbing of a callback during a bake) | Not shipped | Blocker |
 | A different ORM (Mongoid, ROM) | No mapper | Out of scope |
 | Per-example override of a factory | `define` is global | Use a call-site override |
 

@@ -24,7 +24,9 @@ FactoryBakery.define(Post) do
 end
 ```
 
-Attributes given on the command line become commented examples. The stub changes nothing until a line is uncommented.
+Attributes given on the command line become commented examples. For a model with no ancestor definition the stub changes nothing until a line is uncommented.
+
+**A stub for a subclass is not inert.** `FactoryBakery.define(Subclass) do ... end` registers an exact definition even when the block holds only comments, and an exact definition replaces the ancestor's (probed: a comment-only `define(Sub)` made `bake(Sub)` lose the parent's attribute and raise `Trait :loud is not declared for Sub`). So do not generate or keep a stub for a subclass that the parent's definition already bakes. Delete the stub, or fill it with every line and trait the subclass needs.
 
 ## Model generator hook
 
@@ -60,11 +62,12 @@ bin/rails g factory_bakery:install
 Creates `config/initializers/factory_bakery.rb` (an existing one is skipped, `--force` overwrites) and the definitions directory.
 
 - The initializer sets `Rails.application.config.factory_bakery` and lists `associations`, `definition_paths`, `fill_optional`, `generators` as commented examples. Nothing is on until a line is uncommented.
+- **The generated file is unguarded.** Its top-level `require 'factory_bakery/rspec'` and `Rails.application.config.factory_bakery` fail in an environment where the gem is not loaded, such as production with the gem in the test groups. Wrap the whole file body in `if defined?(FactoryBakery::Railtie) ... end` (check: `lib/generators/factory_bakery/install/templates/initializer.rb.tt` has no guard).
 - It also writes `require 'factory_bakery/rspec'` when `spec/` exists, else `require 'factory_bakery/minitest'` when `test/` exists, so generated values follow the framework's seed. With neither directory it writes no require.
 - **factory_bot detected** (same test as above): creates `spec/bakery` (`test/bakery`) and writes an active `config.definition_paths = ["spec/bakery"]`. The two gems then never load each other's files.
 - **Otherwise**: creates the directory Rails would load (first `definition_paths` entry, else the default above) and leaves `definition_paths` commented.
 
-The initializer does not turn the associations plugin on. Uncomment `config.associations = :required_only` (or set it in `config/application.rb`) if the app needs it.
+The initializer does not turn the associations plugin on. Uncomment `config.associations = :required_only` inside the guarded initializer, or set it in `config/environments/test.rb`, if the app needs it. Not in `config/application.rb` unless the line carries `if config.respond_to?(:factory_bakery)`.
 
 ## Definition generator
 
@@ -80,9 +83,9 @@ Writes one stub in the directory above. Existing file: skipped, `--force` overwr
 ```sh
 bin/rails 'factory_bakery:definitions[Post,Comment]'
 bin/rails factory_bakery:definitions
-bin/rails 'factory_bakery:doctor[Post,Admin::Post]'
-bin/rails factory_bakery:doctor
-WRITE=1 NO_FAIL=1 bin/rails factory_bakery:doctor
+RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Admin::Post]'
+RAILS_ENV=test bin/rails factory_bakery:doctor
+RAILS_ENV=test WRITE=1 NO_FAIL=1 bin/rails factory_bakery:doctor
 ```
 
 Quote the bracketed form in zsh. Arguments are Active Record class names, comma separated. A name that is not a concrete Active Record model aborts the task: `Unknown concrete Active Record model: <name>`. With no names, both tasks eager-load the app and cover every concrete model (abstract classes are skipped).
@@ -107,7 +110,7 @@ Quote the bracketed form in zsh. Arguments are Active Record class names, comma 
 | `NO_FAIL=1` | Exit `0` even when models fail (report only) |
 | `WRITE=1` | Also write a stub for each failing model, with the error as `#` comment lines at the top. An existing file is kept |
 
-Run `doctor` in the **test** environment (`RAILS_ENV=test`). It writes rows (rolled back), so never point it at production data.
+Run `doctor` in the **test** environment (`RAILS_ENV=test`, on every command). It writes rows (rolled back) and runs model callbacks, so never point it at real data.
 
 ## Reading doctor output
 

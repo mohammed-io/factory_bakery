@@ -13,7 +13,7 @@ RSpec.configure do |config|
 end
 ```
 
-`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer or a callable), or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot, and the last require wins. `bin/rails g factory_bakery:install` already writes the require into `config/initializers/factory_bakery.rb` (RSpec when `spec/` exists, else Minitest when `test/` exists). If the initializer has it, add only the `include` in the helper. The seed is announced once, at INFO when it comes from the framework and at WARN otherwise ([Randomness](../../../docs/guide/configuration.md#randomness)).
+`require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer or a callable), or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot, and the last require wins. Run `bin/rails g factory_bakery:install` **before** editing the helper: it writes the require into `config/initializers/factory_bakery.rb` (RSpec when `spec/` exists, else Minitest when `test/` exists), and that file must wrap its body in `if defined?(FactoryBakery::Railtie)` (see [generators-and-rake.md](generators-and-rake.md#install-generator)). If the initializer has the require, add only the `include` in the helper, so the require is not duplicated. The seed is announced once, at INFO when it comes from the framework and at WARN otherwise ([Randomness](../../../docs/guide/configuration.md#randomness)).
 
 Use in examples:
 
@@ -67,11 +67,13 @@ Without the include, call `FactoryBakery.bake(...)` and `FactoryBakery.bake!(...
 
 ## Isolation in your own specs
 
-If specs of your own register plugins or change settings:
+An app suite needs no reset hook. Call nothing between examples. For a setting that one test needs, use a scope that restores itself:
 
 ```ruby
-config.after { FactoryBakery::Associations.reset_configuration! }   # restores plugin defaults
+FactoryBakery::Associations.with(mode: :all, default_count: 3) { bake!(Post) }
 ```
+
+`FactoryBakery::Associations.reset_configuration!` restores the **gem's** defaults, not the app's `config.factory_bakery.associations`, so an after-each hook would drop the app's config after the first example. Use it only in specs of your own that assign the plugin's globals themselves and want the defaults back.
 
 `FactoryBakery.reset_plugins!` removes **all** plugins. Do not use it in an app suite unless you register them again ([bad pattern](bad-patterns.md#7-factorybakeryreset_plugins-in-an-app-suite)).
 
@@ -82,6 +84,6 @@ Run with YJIT (`RUBY_YJIT_ENABLE=1`). It makes `bake` about 2.2x faster on Ruby 
 ## Verify
 
 ```sh
-bin/rails runner -e test 'include FactoryBakery::Methods; p bake(User).class'
+RAILS_ENV=test bin/rails runner 'include FactoryBakery::Methods; ActiveRecord::Base.transaction { record = bake(User); abort FactoryBakery.explain(record) unless record.valid?; p record.class; raise ActiveRecord::Rollback }'
 bundle exec rspec        # the suite must pass exactly as before
 ```

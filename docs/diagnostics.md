@@ -8,7 +8,7 @@ Conventions:
 
 - **Gem** means a file under `lib/factory_bakery/`. **App** means your code.
 - Messages are quoted from `lib/`. `X`, `Y`, `name` stand for your class, association and attribute names. Messages marked *(Rails)* come from ActiveRecord, not from this gem.
-- "Smallest fix" ranks: a call-site override, a definition line, `persist:`, `with:`, `skip`, then a gem bug report. See [the ladder](#choosing-the-fix).
+- "Smallest fix" ranks: a call-site override, a definition line, `persist:`, `with:`, `skip`, `strategy: :fresh`, then a gem bug report. See [the ladder](#choosing-the-fix).
 - Mastodon and Discourse examples come from `docs/reports/smoke/20261119-final-*-definitions.rb`.
 
 ## Index by message
@@ -56,7 +56,7 @@ Conventions:
 | `Chosen at random:` or `FactoryBakery could not produce a valid` after a validation error | [#random-value-rejected-by-app-rule](#random-value-rejected-by-app-rule) |
 | `Static attributes are unsupported` | [#factory-attribute-errors](#factory-attribute-errors) |
 | `Cyclic attribute dependency` | [#factory-attribute-errors](#factory-attribute-errors) |
-| `to declare a value` (`Use name { ... }`, `Use add_attribute(:x) { ... }`) | [#factory-attribute-errors](#factory-attribute-errors) |
+| `to declare a value` (`Use name { ... }`, `Use add_attribute(:x) { ... }`, or `Use admin { ... }` when a trait calls another trait by bare name) | [#factory-attribute-errors](#factory-attribute-errors) |
 | `FACTORY_BAKERY_SEED must be an integer`, `FactoryBakery.seed must be an Integer` | [#configuration-errors](#configuration-errors) |
 | A subclass bakes with its parent's values | [#subclass-uses-parent-definition](#subclass-uses-parent-definition) |
 | Record invalid, validator reads a registry or setting | [#registry-and-inclusion-lists](#registry-and-inclusion-lists) |
@@ -109,8 +109,9 @@ Never change the model, its validations or the schema to make baking easier. Tha
 ### unknown-trait
 
 - **Message:** `Trait :nope is not declared for User`
-- **Cause:** The trait is absent from **the definition the bake target uses**: its own, or its nearest ancestor class's when it has none (traits are inherited with it). Also raised for a class with no definition of its own or from an ancestor, for a trait forwarded to a child (`association :author, :admin`) the child's definition lacks, and for a trait called from inside another trait.
-- **Fix:** Declare the trait in that class's definition, or fix the name.
+- **Cause:** The trait is absent from **the definition the bake target uses**: its own, or its nearest ancestor class's when it has none (traits are inherited with it). Also raised for a class with no definition of its own or from an ancestor, for a trait forwarded to a child (`association :author, :admin`) the child's definition lacks. In `association :author, :admin`, `:admin` is a trait on the **target's** definition.
+- **Not this error:** a trait cannot call another trait by bare name. `trait :super_admin do admin end` raises `Use admin { ... } to declare a value, or skip :admin` ([factory-attribute-errors](#factory-attribute-errors)), because the bare name reads as an attribute declaration.
+- **Fix:** Declare the trait in that class's definition, or fix the name. To combine traits, repeat the lines, or pass both at the call site.
 
 ### association-plugin-not-loaded
 
@@ -142,9 +143,9 @@ Never change the model, its validations or the schema to make baking easier. Tha
 
 - **Message:** `bake nesting exceeded max_bake_depth (10): User -> User -> User`
 - **Class:** `FactoryBakery::NestingTooDeepError`
-- **Cause:** Nested bakes exceed `FactoryBakery.max_bake_depth`. Usually a declaration block that bakes the class it belongs to (or a parent that bakes its child).
-- **Where to look:** The path in the message names the loop. App: the definition for the first repeated class.
-- **Fix:** Break the loop (`skip :child`, pass the owner). Raise `max_bake_depth` only for a legitimately deep graph.
+- **Cause:** Nested bakes exceed `FactoryBakery.max_bake_depth`. A class that repeats in the path usually means a declaration block that bakes the class it belongs to (or a parent that bakes its child). A path with no repetition is a deep graph, not a loop.
+- **Where to look:** The path in the message shows where the depth limit hit. Check it for a repeated class before calling it a loop. App: the definition for the first repeated class.
+- **Fix:** If the path repeats, break the loop (`skip :child`, pass the owner). Raise `max_bake_depth` only for a legitimately deep graph.
 
 ### configuration-errors
 
@@ -282,7 +283,7 @@ All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reu
 
 ### nested-bake-sibling-of-same-class
 
-Fixed in Unreleased. Nested `bake!` used to raise `IncompletePersistenceError` when an unsaved sibling shared its class path. It now checks records by build lineage. For example, `association :user, persist: true` on `Invite` saves `user` while a plain `bake` can leave the auto-built `invited_by` unsaved. An enclosing `bake!` verifies the whole invite graph after it saves the invite.
+If `IncompletePersistenceError` names the sibling, `bundle update factory_bakery`. Nested `bake!` used to raise `IncompletePersistenceError` when an unsaved sibling shared its class path. It now checks records by build lineage. For example, `association :user, persist: true` on `Invite` saves `user` while a plain `bake` can leave the auto-built `invited_by` unsaved. An enclosing `bake!` verifies the whole invite graph after it saves the invite.
 
 ### read-only-target
 
@@ -353,10 +354,10 @@ Fixed in Unreleased. Nested `bake!` used to raise `IncompletePersistenceError` w
 
 - **Message:** `could not generate a unique value for User#email: "x" keeps colliding after 10 attempts. Constraints: <validator descriptions>. Pass an explicit value with an override or relax the constraint.`
 - **Class:** `FactoryBakery::Error`
-- **Cause:** The value space of a uniqueness-validated column is exhausted: a single-value `inclusion` list plus uniqueness, an enum, a tiny `length`, a `format` that allows few values, or a definition that returns a literal.
+- **Cause:** The value space of a uniqueness-validated column is exhausted: a single-value `inclusion` list plus uniqueness, an enum, a tiny `length`, or a `format` that allows few values.
 - **Where to look:** gem `UniquenessEnforcer`. App: the validators and the definition for that column.
-- **Fix:** Override with a generator, or widen the rule. After two collisions the gem appends an entropy suffix unless the column has a `format`, `inclusion`, `enum`, numericality rule, exact length, or a cap with no room.
-- **Related (no error):** two bakes in a test that collide with each other usually mean a literal was set. See [literal-override-uniqueness](#literal-override-uniqueness).
+- **Fix:** Override with a generator, or widen the rule. Regeneration applies only to values the gem generated: after two collisions it appends an entropy suffix unless the column has a `format`, `inclusion`, `enum`, numericality rule, exact length, or a cap with no room.
+- **Literals:** a value a definition or an override sets literally is not regenerated. Two bakes that collide with each other usually mean a literal was set. See [literal-override-uniqueness](#literal-override-uniqueness).
 - **Example (Mastodon):** `Account#username`: two mutually constraining format regexes. A literal wins: `username { "fb_#{SecureRandom.hex(5)}" }`.
 
 ### format-exhaustion
@@ -442,7 +443,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
   - Mastodon `Webhook`: `events { ['status.created'] }`
   - Mastodon `Follow`: `languages { [] }` (the language validator rejects random words)
   - Discourse `LlmModel`: `provider { LlmModel::OPEN_AI_PROVIDER_NAME }`
-- Enum and `inclusion:` domains declared on the model are handled. Lists held in constants are handled for polymorphic type columns only.
+- A readable `inclusion:` validator (`in:` an array, a range or a Proc on the model) is handled, and so are enums. A **registry** that only custom validation code consults (a `validate` method, a custom validator, a site setting) is invisible to the gem: declare a value from it.
 - When a custom validator rejects the drawn enum value, boolean or STI type, the gem does not try the others: which one to use is a domain decision ([ADR-0008](https://github.com/mohammed-io/factory_bakery/blob/main/docs/adr/0008-user-chooses-domain-values.md)). Pin it in the definition.
 
 ### random-value-rejected-by-app-rule
@@ -556,7 +557,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 | --- | --- | --- |
 | `Static attributes are unsupported; use name { "Ada" }` | A value was passed to the declaration as an argument (`name 'Ada'`) | Use a value block such as `name { 'Ada' }`, or `skip :name` to omit it |
 | `Cyclic attribute dependency: a -> b -> a` | The displayed chain of sibling reads returns to an attribute already being resolved | Change one declaration to break the cycle, or pass a call-site value for one attribute in the chain |
-| `Use name { ... } to declare a value, or skip :name` | An attribute declared with neither a block nor an argument | Give it a block, or `skip :name` |
+| `Use name { ... } to declare a value, or skip :name` | An attribute declared with neither a block nor an argument. This includes a trait body that calls another trait by bare name (`admin`): a trait cannot call a trait | Give it a block, or `skip :name`. For a trait call, repeat the lines or pass both traits at the call site |
 | `Use add_attribute(:skip) { ... } to declare a value` | `add_attribute` called without a block | Pass the value block |
 
 ## Silent failures

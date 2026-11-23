@@ -4,7 +4,8 @@
 # Checks that every changed line in the test files is a factory-call rename.
 #
 # Usage (from the migration worktree):
-#   git diff -U0 --no-color <base>...HEAD -- spec test | ruby check_renames.rb
+#   git diff -U0 --no-color HEAD -- spec test | ruby check_renames.rb              # uncommitted work
+#   git diff -U0 --no-color <start-sha> HEAD -- spec test | ruby check_renames.rb  # the whole migration
 #
 # Read-only. It reads a unified diff from stdin and prints a report.
 #
@@ -18,7 +19,7 @@
 OLD_CALL = /\b(?:FactoryBot\.)?(?:create|build|build_stubbed|create_list|build_list|create_pair|build_pair|
                                   build_stubbed_list|attributes_for|Fabricate|Fabricate\.build|Fabricate\.times|
                                   Fabricate\.attributes_for)\b|\.make!?\b|\.plan\b/x
-NEW_CALL = /FactoryBakery\.bake!?\(|\bbake!?\(|\battributes_for\(|Array\.new\(\d+\)\s*\{/
+NEW_CALL = /FactoryBakery\.bake!?\(|\bbake!?\(|\b(?:bakery_)?attributes_for\(|Array\.new\(\d+\)\s*\{/
 
 # Reduces a line to what must stay identical across a rename.
 def residue(line)
@@ -26,8 +27,8 @@ def residue(line)
       .gsub(/Array\.new\(\d+\)\s*\{\s*/, '')
       .gsub(/\s*\}\s*(?=\)|\z)/, '')
       .gsub(/\b(?:FactoryBot\.)?(?:create_list|build_list|create_pair|build_pair|create|build|build_stubbed|attributes_for)\(\s*:\w+/, 'CALL(')
-      .gsub(/\b(?:FactoryBakery\.)?bake!?\(\s*[A-Z][\w:]*/, 'CALL(')
-      .gsub(/\battributes_for\(\s*[A-Z][\w:]*/, 'CALL(')
+      .gsub(/\b(?:FactoryBakery\.)?bake!?\(\s*(?:[A-Z][\w:]*|:\w+)/, 'CALL(')
+      .gsub(/\b(?:bakery_)?attributes_for\(\s*(?:[A-Z][\w:]*|:\w+)/, 'CALL(')
       .gsub(/CALL\(\s*(?:\d+,\s*)?/, 'CALL(')
       .gsub(/\s+/, '')
 end

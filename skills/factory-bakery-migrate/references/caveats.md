@@ -8,20 +8,20 @@ The standing rule for every caveat: **do not fix a caveat by editing a test.** F
 
 | Caveat | What happens | What to do |
 | --- | --- | --- |
-| **Random values vs fixed ones** | factory_bot with Faker is random too, but a test may rely on a value's shape (`'Ada'`, a sequence `user1@`) | Keep the line when a test asserts or looks up by the value. Run the suite twice with different seeds (`rspec --seed A`, `--seed B`, with `factory_bakery/rspec` required) to catch hidden dependence. A failure replays with its seed |
+| **Random values vs fixed ones** | factory_bot with Faker is random too, but a test may rely on a value's shape (`'Ada'`, a sequence `user1@`) | Keep the line when a test asserts or looks up by the value. Run the suite twice with different seeds (`rspec --seed A`, `--seed B`, with `factory_bakery/rspec` required) to catch hidden dependence. A failure replays with its seed, but the seed covers only what the gem draws: `Faker::`, `rand` and `SecureRandom` in blocks you keep are **not** seeded, so pin them while replaying a failure |
 | **Hidden dependence on an optional association** | A factory had `association :author` for an **optional** `belongs_to`, and a test reads `post.author`. After simplifying, `author` is `nil` in `:required_only` | The verification run catches it. Restore the line (`association :author`), and say "a test depends on this" |
 | **Row counts** | `expect { create(:post) }.to change(User, :count)`. The plugin builds required parents, and `:all` builds more | Compare counts in the verification run. Use `:required_only` (default). Keep an `association` line if a test counts a row |
 | **Faker vs FFaker** | Locale-sensitive assertions on Faker values | Keep the line |
 | **`FactoryBot.use_parent_strategy = false`** | `build` created parents. `bake` leaves parents unsaved | `association :x, persist: true` on the edges tests expect saved |
-| **Callbacks that depend on `create` vs `build`** | `after_create`/`after_commit` timing is the same for `bake!` as `create` (it calls `save!`). `bake` never saves | A rename of `build` to `bake` is exact. Check any `after_commit` reliance |
-| **Ordering** | `let!` order and definition order | Winning declarations run in order unless a sibling read resolves a later declaration first |
-| **Tests that call `attributes_for`** | No built-in | Helper, or blocker |
+| **Callbacks that depend on `create` vs `build`** | `after_create`/`after_commit` timing is the same for `bake!` as `create` (it calls `save!`). `bake` never saves **the record** | `build` to `bake` is exact only when the graph has no raw-FK presence edges (`validates :user_id, presence: true`) and no `persist:`. Otherwise `bake` inserts those parents, which `build` did not: the row counts differ. Check any `after_commit` reliance |
+| **Ordering** | `let!` order and definition order | Winning declarations run in order unless a sibling read resolves a later declaration first. An explicit `association` runs after the attribute blocks |
+| **Tests that call `attributes_for`** | No built-in | A `bakery_attributes_for` helper if it matches factory_bot's symbol keys and explicit `nil`s, otherwise a blocker |
 
 ## Associations
 
 ### A custom validator reads a parent's id: `persist: true`
 
-An unsaved parent has `id == nil`. `user_id == invited_by_id` is `nil == nil`. Use `association :user, persist: true` on the edge whose id the validator reads. Two edges to the same class work with different options: a nested `bake!` checks records by build lineage, so the other edge may stay unsaved under plain `bake`, and an enclosing `bake!` verifies both ([sibling case](../../factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class); the unreleased fix in `CHANGELOG.md`, so a gem that predates it raises `IncompletePersistenceError` here).
+An unsaved parent has `id == nil`. `user_id == invited_by_id` is `nil == nil`. Use `association :user, persist: true` on the edge whose id the validator reads. Two edges to the same class work with different options: a nested `bake!` checks records by build lineage, so the other edge may stay unsaved under plain `bake`, and an enclosing `bake!` verifies both ([sibling case](../../factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class)). If `IncompletePersistenceError` names the sibling, `bundle update factory_bakery`.
 
 ```ruby
 # factory_bot: association :user, strategy: :create
@@ -141,6 +141,7 @@ Check constraints, composite unique indexes and triggers are invisible. A block 
 | --- | --- |
 | **Both gems load `spec/factories`** | Use `spec/bakery` plus `definition_paths` |
 | **Plugins vanish after `reset_plugins!`** | Do not call it in an app suite |
-| **`doctor` writes rows (rolled back)** | Test environment only |
+| **`doctor` writes rows (rolled back)** | Run it as `RAILS_ENV=test bin/rails ...`. Callbacks still run, so a job, an HTTP call or a file write is not rolled back |
 | **Gem in the wrong group** | Definitions load at boot wherever the gem loads |
+| **Config for a gem that production does not load** | `config.factory_bakery` raises `NoMethodError` without the gem. Use `config/environments/test.rb`, and guard the generated initializer with `if defined?(FactoryBakery::Railtie)` |
 | **Ruby < 3.2, Rails < 7.1** | Not supported |

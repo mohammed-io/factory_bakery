@@ -38,7 +38,7 @@ After the migration, the same `--seed N` also fixes FactoryBakery's generated va
    | Pending/skipped | Identical. **No new pending or skipped** |
    | Warnings about deprecations | No new ones from the migration |
 
-3. Run the rename check (below).
+3. Run the rename check (below) on the uncommitted batch.
 4. Commit the batch on the migration branch, one commit per batch. If the user's instructions forbid commits, leave the changes in the worktree and report.
 
 ## 3. The rename check
@@ -46,10 +46,11 @@ After the migration, the same `--seed N` also fixes FactoryBakery's generated va
 Every changed test line must be a factory-call rename. The helper [`check_renames.rb`](check_renames.rb) reads a unified diff and judges it. It is read-only.
 
 ```sh
-git diff -U0 --no-color <base-branch>...HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb
+git diff -U0 --no-color HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb              # uncommitted work, before each commit
+git diff -U0 --no-color <start-sha> HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb   # the whole migration, at the end
 ```
 
-Run it from the worktree. `<skill-dir>` is the absolute path of the `factory-bakery-migrate` skill directory (the script is not in the project). Replace `<base-branch>` with the branch the worktree started from (often `main`).
+Run it from the worktree. `<skill-dir>` is the absolute path of the `factory-bakery-migrate` skill directory (the script is not in the project). `<start-sha>` is the commit the worktree started from (Phase 0: `git rev-parse HEAD`). The first form checks each batch before it is committed. Only staged or tracked changes appear in a diff, so `git add` a new file first. The second form catches anything an earlier check missed.
 
 | Output | Meaning | Action |
 | --- | --- | --- |
@@ -65,8 +66,8 @@ Exit status is `1` when any `FAIL` appears. The script judges lines. It does not
 Manual cross-checks:
 
 ```sh
-git diff --stat <base>...HEAD -- spec test       # which test files changed
-git diff --numstat <base>...HEAD -- spec test    # added and removed lines per file
+git diff --stat <start-sha> HEAD -- spec test       # which test files changed
+git diff --numstat <start-sha> HEAD -- spec test    # added and removed lines per file
 ```
 
 Expected: for each existing test file, added and removed line counts are equal (a rename is one line out, one line in). A file where they differ is suspect. New files (helpers) show only additions.
@@ -78,7 +79,8 @@ Allowed:
 - `create(:x, ...)` to `FactoryBakery.bake!(X, ...)`
 - `build(:x, ...)` to `FactoryBakery.bake(X, ...)`
 - `create_list` / `build_list` / `create_pair` to `Array.new(n) { ... }`
-- `attributes_for(:x)` to `attributes_for(X)` (through a helper)
+- `attributes_for(:x)` to `bakery_attributes_for(X)` (through a helper that matches factory_bot's output, else a blocker)
+- `create(:admin)` to `bake!(:admin)` (a symbol target, for a same-class `parent:` factory registered with `define(:admin, klass: User)`)
 - A new helper file, and an `RSpec.configure` include inside it
 
 Not allowed (blockers):
@@ -87,15 +89,19 @@ Not allowed (blockers):
 - Moving a block, adding a `reload`, adding a `before`
 - Changing the number of examples
 
-## 4. Simplification checks (after the user agrees to reduce)
+## 4. Simplification checks (Phase 7: only after the 1:1 migration is green, and the user agrees to reduce)
 
 Remove lines **one factory at a time**, not in bulk.
 
 1. Remove the lines the user approved for one model.
-2. Run `bin/rails 'factory_bakery:doctor[Model]'`. It must exit `0` and print `1 valid, 0 needs definition`.
-3. Run the tests that bake that model (search for the class name, or run the whole suite).
-4. If a test now fails, **restore the line** and note the reason ("a test depends on this value" or "the model cannot bake without it").
-5. Repeat for the next model.
+2. Run doctor under three seeds. Each must exit `0` and print `1 valid, 0 needs definition`:
+   ```sh
+   for s in 1 2 3; do FACTORY_BAKERY_SEED=$s RAILS_ENV=test bin/rails 'factory_bakery:doctor[Model]'; done
+   ```
+3. Re-run the tests that bake that model (search for the class name, or run the whole suite).
+4. If a test or a seed now fails, **restore the line** and note the reason ("a test depends on this value" or "the model cannot bake without it"). One green run is not enough to drop a line.
+5. Keep named definitions (`define(:admin, klass: User)`), even when empty.
+6. Repeat for the next model.
 
 Run the whole suite at the end, twice with different seeds (`bundle exec rspec --seed 1`, then `--seed 2`). If a run fails, replay it with the seed it printed (or the one in the FactoryBakery log line or error text) before changing anything, and use the [`factory-bakery-diagnostics`](../../factory-bakery-diagnostics/SKILL.md) skill.
 
@@ -104,8 +110,8 @@ Run the whole suite at the end, twice with different seeds (`bundle exec rspec -
 | Check | Command or look |
 | --- | --- |
 | Suite equals baseline | Full run, compare counts |
-| Test diff is renames only | The rename check, clean or fully reviewed |
-| Every baked model passes doctor | `bin/rails 'factory_bakery:doctor[Post,Comment]'` naming every model the tests bake. Exit `0`, `N valid, 0 needs definition`. The unnamed form checks all models and may fail on ones the tests never bake |
+| Test diff is renames only | The rename check against `<start-sha>`, clean or fully reviewed |
+| Every baked model passes doctor | `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'` naming every model the tests bake. Exit `0`, `N valid, 0 needs definition`. The unnamed form checks all models and may fail on ones the tests never bake |
 | No remaining uses of the old library in tests | Search `spec`/`test` for `create(`, `build(`, `create_list`, `FactoryBot`, `Fabricate`, `.make` |
 | Blockers are written down | A list with file, line, reason |
 

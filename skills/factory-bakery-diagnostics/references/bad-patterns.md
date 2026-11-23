@@ -2,7 +2,7 @@
 
 Each entry: the pattern, why it hurts, what to do instead. Claims are checked against `lib/`, `docs/guide/` and the [catalog](diagnostics.md).
 
-Contents: [change the model](#1-changing-validations-or-the-schema-to-make-baking-pass) · [retry until green](#2-retrying-until-green-instead-of-reproducing-with-the-seed) · [rescue](#3-rescuing-the-error) · [blind definition line](#4-adding-a-definition-line-without-knowing-which-rule-needs-it) · [define everything](#5-defining-every-attribute-to-be-safe) · [skip a WARN](#6-adding-skip-to-silence-an-informational-warn) · [subclass definitions](#7-a-subclass-definition-that-copies-the-parent-or-forgetting-it-inherits) · [copying the drawn value](#8-copying-the-value-the-error-printed) · [raising max_bake_depth](#9-raising-max_bake_depth-to-cure-a-loop) · [scattershot options](#10-sprinkling-persist-fresh-or-skip-to-see-what-sticks) · [srand](#11-srand-to-stabilize-values) · [global fill_optional](#12-filling-every-optional-column-globally) · [editing one catalog copy](#13-editing-one-copy-of-the-catalog)
+Contents: [change the model](#1-changing-validations-or-the-schema-to-make-baking-pass) · [retry until green](#2-retrying-until-green-instead-of-reproducing-with-the-seed) · [rescue](#3-rescuing-the-error) · [lines no rule needs](#4-adding-definition-lines-no-failing-rule-needs) · [skip a WARN](#5-adding-skip-to-silence-an-informational-warn) · [subclass definitions](#6-a-subclass-definition-that-copies-the-parent-or-forgetting-it-inherits) · [copying the drawn value](#7-copying-the-value-the-error-printed) · [raising max_bake_depth](#8-raising-max_bake_depth-to-cure-a-loop) · [scattershot options](#9-sprinkling-persist-fresh-or-skip-to-see-what-sticks) · [srand](#10-srand-to-stabilize-values) · [global fill_optional](#11-filling-every-optional-column-globally) · [unseeded randomness](#12-diagnosing-with-unseeded-randomness-left-in-the-blocks)
 
 ## 1. Changing validations or the schema to make baking pass
 
@@ -27,9 +27,11 @@ If a model really must change, say why and ask first.
 bundle exec rspec || bundle exec rspec
 
 # good: the failure text names the seed and the bake number
-bundle exec rspec spec/models/llm_model_spec.rb --seed 12345
-FACTORY_BAKERY_SEED=12345 bin/rails runner -e test 'puts FactoryBakery.explain(FactoryBakery.bake(LlmModel))'
+bundle exec rspec --seed 12345
+FACTORY_BAKERY_SEED=12345 RAILS_ENV=test bin/rails runner 'ActiveRecord::Base.transaction { puts FactoryBakery.explain(FactoryBakery.bake(LlmModel)); raise ActiveRecord::Rollback }'
 ```
+
+The runner draws bake #1 of `LlmModel`. When the failure says `bake #3 of LlmModel`, run two bakes first ([Replay it](../SKILL.md#1-reproduce)).
 
 Then pin the value in a definition and check three seeds ([catalog](diagnostics.md#random-value-rejected-by-app-rule)).
 
@@ -49,43 +51,35 @@ end
 FactoryBakery.define(Report) { source { 'core_report' } }
 ```
 
-## 4. Adding a definition line without knowing which rule needs it
+## 4. Adding definition lines no failing rule needs
 
-**Why it hurts.** A line nobody can justify stays forever, and the next reader cannot tell whether it matters. A line for the wrong attribute fixes nothing, and a mistyped attribute name is skipped silently (the setter does not exist), so it even looks harmless.
+**Why it hurts.** Two forms of one mistake. A guessed line nobody can justify stays forever, and the next reader cannot tell whether it matters. A line for the wrong attribute fixes nothing. Defining every attribute "to be safe" does the same in bulk: a declared value stops inference for that column, so a validator added later is no longer honored there, and the lines hide the few that matter. Both are invisible when wrong: a mistyped attribute name is skipped silently (the setter does not exist), so the line looks harmless and never errors. An attribute declared as `name 'x'` (no block) does raise: `Static attributes are unsupported; use name { "x" }`.
 
-**Instead.** Read `FactoryBakery.explain(record)` or the `errors.full_messages`, find the validator, add exactly one line, delete it again to confirm the failure returns, and keep a comment only if the rule is not obvious.
+**Instead.** Read `FactoryBakery.explain(record)` or the `errors.full_messages`, find the validator, add exactly one line, delete it again to confirm the failure returns, and keep a comment only if the rule is not obvious. Declare what the model cannot bake without. A model that passes `factory_bakery:doctor` needs no definition. A test that asserts on a value passes it at the call site.
 
 ```ruby
 # bad: guessed
 FactoryBakery.define(Webhook) { events { ['x'] } }
 
-# good: the failing rule is a custom language validator
-FactoryBakery.define(Follow) do
-  languages { [] } # the language validator rejects random words
-end
-```
-
-## 5. Defining every attribute "to be safe"
-
-**Why it hurts.** A definition for a column makes it a declared value: inference stops for it, so a validator added later is no longer honored for that column. The lines hide the few that matter, and a typo never errors. An attribute declared as `name 'x'` (no block) raises `Static attributes are unsupported; use name { "x" }`.
-
-**Instead.** Declare what a test asserts on, or what the model cannot bake without. A model that passes `factory_bakery:doctor` needs no definition.
-
-```ruby
-# bad
+# bad: every attribute, "to be safe"
 FactoryBakery.define(User) do
   name { 'Ada' }
   email { 'ada@example.com' }
   age { 30 }
 end
 
-# good: only the value a test depends on
-FactoryBakery.define(User) { email { 'ada@example.com' } }
+# good: the failing rule is a custom language validator
+FactoryBakery.define(Follow) do
+  languages { [] } # the language validator rejects random words
+end
+
+# good: the value one test depends on, at its call site
+FactoryBakery.bake(User, email: 'ada@example.com')
 ```
 
-A literal also loses uniqueness regeneration: two bakes then collide ([literal-override-uniqueness](diagnostics.md#literal-override-uniqueness)).
+A literal in a global definition also loses uniqueness regeneration: two bakes then collide ([unique-value-collisions](diagnostics.md#unique-value-collisions), [literal-override-uniqueness](diagnostics.md#literal-override-uniqueness)).
 
-## 6. Adding `skip` to silence an informational WARN
+## 5. Adding `skip` to silence an informational WARN
 
 **Why it hurts.** `left Account#avatar_remote_url blank on purpose` is logged once per model and attribute, and the bake **succeeded**. `skip` changes behavior (the setter is never called, and `skip` on an association edge also suppresses its foreign key and type column) to remove one log line.
 
@@ -99,7 +93,7 @@ FactoryBakery.bake(Account, avatar_remote_url: 'https://example.test/a.png')
 
 Reserve `skip` for a setter with a side effect that is not a `*_remote_url` writer, a read-only view edge, or a cycle.
 
-## 7. A subclass definition that copies the parent, or forgetting it inherits
+## 6. A subclass definition that copies the parent, or forgetting it inherits
 
 **Why it hurts.** Two opposite mistakes.
 
@@ -114,7 +108,7 @@ FactoryBakery.define(Admin) { name { 'x' }; email { 'y' } }
 FactoryBakery.define(Admin) { name { 'x' }; role { 'admin' } }
 ```
 
-## 8. Copying the value the error printed
+## 7. Copying the value the error printed
 
 **Why it hurts.** `Chosen at random: provider = "bedrock"` is the value that **failed**. The snippet below it uses a `{ nil }` placeholder with the comment `use a value your validations accept`. Pasting either unchanged keeps the bake invalid or sets a `nil`.
 
@@ -126,19 +120,19 @@ FactoryBakery.define(LlmModel) { provider { nil } }
 FactoryBakery.define(LlmModel) { provider { LlmModel::OPEN_AI_PROVIDER_NAME } }
 ```
 
-## 9. Raising `max_bake_depth` to cure a loop
+## 8. Raising `max_bake_depth` to cure a loop
 
-**Why it hurts.** `bake nesting exceeded max_bake_depth (10): User -> User -> User` names a loop, usually a declaration block that bakes the class it belongs to. A higher limit only makes the loop longer before it fails.
+**Why it hurts.** `bake nesting exceeded max_bake_depth (10): User -> User -> User` shows the path where the limit was hit. A repeated class in it (as here) is a loop, usually a declaration block that bakes the class it belongs to. A higher limit only makes the loop longer before it fails. A path with no repetition is a deep graph, not a loop.
 
-**Instead.** Break the loop (`skip :child`, or pass the owner into the nested bake). Raise the limit only for a legitimately deep graph ([nesting-too-deep](diagnostics.md#nesting-too-deep)).
+**Instead.** Check the path for a repeated class. If it repeats, break the loop (`skip :child`, or pass the owner into the nested bake). Raise the limit only for a legitimately deep graph ([nesting-too-deep](diagnostics.md#nesting-too-deep)).
 
-## 10. Sprinkling `persist:`, `:fresh` or `skip` to see what sticks
+## 9. Sprinkling `persist:`, `:fresh` or `skip` to see what sticks
 
 **Why it hurts.** `persist: true` inserts and verifies a parent even under `bake`, `strategy: :fresh` is already the default, and `skip :edge` also removes the edge's foreign key. Each option answers one specific cause, and a wrong one can turn a visible error into a silent `nil` or an `IncompletePersistenceError`.
 
 **Instead.** Match the cause to the fix with the catalog's [choosing the fix](diagnostics.md#choosing-the-fix) table: an id read by a validator needs `persist: true`, a reused parent that breaks a rule needs `:fresh` on that edge, a side effect or cycle needs `skip`.
 
-## 11. `srand` to stabilize values
+## 10. `srand` to stabilize values
 
 **Why it hurts.** The gem no longer draws from Ruby's global RNG, so `srand(seed)` does not make baked values repeat. The seed settings do ([Randomness](../../../docs/guide/configuration.md#randomness)).
 
@@ -152,12 +146,12 @@ FACTORY_BAKERY_SEED=1234 bundle exec rspec spec/models/user_spec.rb
 
 Relative dates (`1.day.ago`) still move with the clock, so a fixed seed does not freeze time-dependent failures.
 
-## 12. Filling every optional column globally
+## 11. Filling every optional column globally
 
 **Why it hurts.** `FactoryBakery.fill_optional = true` fills every optional column of every model, so every bake exposes more validators and more values to reject. By default only what a valid record needs is filled, and an optional column left `nil` is expected.
 
 ```ruby
-# bad: a derived slug collides because the optional title is nil
+# bad: to fix one slug collision, fill every optional column of every model
 FactoryBakery.fill_optional = true
 
 # good: fill only the source of the derived value
@@ -166,8 +160,16 @@ FactoryBakery.bake(Post, fill_optional: [:title])
 
 ([derived-values-need-the-source](diagnostics.md#derived-values-need-the-source))
 
-## 13. Editing one copy of the catalog
+## 12. Diagnosing with unseeded randomness left in the blocks
 
-**Why it hurts.** `docs/diagnostics.md` and `skills/factory-bakery-diagnostics/references/diagnostics.md` must stay identical, apart from the note line and blank line at the top of the published copy. The doctor's links point at the published copy, and `spec/factory_bakery/diagnostics_catalog_spec.rb` fails when they differ or when a doctor hint names an anchor that does not exist.
+**Why it hurts.** The seed covers what the gem draws, FFaker included. `Faker::`, `rand` and `SecureRandom` called from the project's own definition blocks are not seeded, so the same seed and bake order can still give different values. A replay that "passes" or "fails differently" then proves nothing about the seed.
 
-**Instead.** Make every catalog edit in both files, then run `bundle exec rspec spec/factory_bakery/diagnostics_catalog_spec.rb`.
+```ruby
+# bad: unseeded while diagnosing
+username { "fb_#{SecureRandom.hex(5)}" }
+
+# good: pin a literal for the replay, then restore the generator once the cause is found
+username { 'fb_diag_1' }
+```
+
+If the line is the cause (a collision from a literal or a narrow generator), fix it as the catalog entry says.

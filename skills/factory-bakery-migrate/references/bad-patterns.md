@@ -2,7 +2,7 @@
 
 Each entry: the pattern, why it hurts, what to do instead. Claims are checked against `lib/` and `docs/guide/`. An entry marked *(reasoned, not run)* follows from documented behavior but was not executed.
 
-Contents: [edit the test](#1-editing-assertions-lets-or-literals-instead-of-renaming-calls) · [translate forever](#2-translating-every-attribute-and-stopping) · [static attributes](#3-static-name-x) · [class vs symbol key](#4-a-symbol-definition-called-by-class) · [bake! in a block](#5-factorybakerybakex-inside-an-attribute-block) · [persist everywhere](#6-persist-true-on-every-association) · [fresh everywhere](#7-strategy-fresh-everywhere) · [memoized record](#8-memoizing-a-record-across-bakes) · [reuse for isolation](#9-relying-on-reuse_non_unique-for-isolation) · [build to bake!](#10-converting-build-to-bake) · [subclass copies](#11-copying-a-parents-lines-into-a-subclass-definition) · [auto-delete](#12-deleting-the-old-factories-automatically) · [big bang](#13-a-big-bang-rewrite) · [history rewrites](#14-git-reset---hard-or-history-rewrites) · [domain values](#15-expecting-the-gem-to-pick-a-value-a-custom-validator-accepts)
+Contents: [edit the test](#1-editing-assertions-lets-or-literals-instead-of-renaming-calls) · [skip the simplify decision](#2-skipping-the-simplification-decision) · [static attributes](#3-static-name-x) · [class vs symbol key](#4-a-symbol-definition-called-by-class) · [bake! in a block](#5-factorybakerybakex-inside-an-attribute-block) · [persist everywhere](#6-persist-true-on-every-association) · [fresh everywhere](#7-strategy-fresh-everywhere) · [memoized record](#8-memoizing-a-record-across-bakes) · [reuse for isolation](#9-relying-on-reuse_non_unique-for-isolation) · [build to bake!](#10-converting-build-to-bake) · [subclass copies](#11-copying-a-parents-lines-into-a-subclass-definition) · [auto-delete](#12-deleting-the-old-factories-automatically) · [big bang](#13-a-big-bang-rewrite) · [history rewrites](#14-git-reset---hard-or-history-rewrites) · [domain values](#15-expecting-the-gem-to-pick-a-value-a-custom-validator-accepts) · [one green run](#16-dropping-a-definition-line-on-one-green-doctor-run)
 
 ## 1. Editing assertions, lets or literals instead of renaming calls
 
@@ -19,11 +19,11 @@ Contents: [edit the test](#1-editing-assertions-lets-or-literals-instead-of-rena
 
 **Instead.** If the count differs, the graph differs: fix it in a definition (an `association` line) or report a blocker. Never in the test.
 
-## 2. Translating every attribute and stopping
+## 2. Skipping the simplification decision
 
-**Why it hurts.** A 1:1 translation keeps lines inference already produces (Faker names, sequences on uniqueness-validated columns, required `association` lines). The migration then buys nothing and the lines keep hiding which ones a model really needs.
+**Why it hurts.** A 1:1 translation keeps lines inference already produces (Faker names, sequences on uniqueness-validated columns, required `association` lines). Keeping it is allowed, but only as the user's answer. Translating everything and never asking leaves the migration buying nothing, and the lines keep hiding which ones a model really needs. The opposite mistake is simplifying before the 1:1 migration is green: a failure then has two possible causes.
 
-**Instead.** Run Phase 4: doctor, the drop list, the two-option question, then remove lines one model at a time, keeping only lines a test asserts on or the model cannot bake without.
+**Instead.** Finish and verify the 1:1 migration (Phase 6). Then run Phase 7: the drop list, the two-option question, and, if the user agrees, remove lines one model at a time, keeping only lines a test asserts on or the model cannot bake without. If the user says keep, keep.
 
 ```ruby
 # 1:1 translation
@@ -34,7 +34,7 @@ FactoryBakery.define(User) do
   association :account
 end
 
-# after the approved reduce step: nothing is left to say
+# after the approved reduce step: nothing is left to say (a named definition, if any, stays even when empty)
 ```
 
 ## 3. Static `name 'x'`
@@ -81,11 +81,13 @@ association :author, User, persist: true
 
 A block that bakes is right for what the DSL refuses or cannot see: `has_many :through` and HABTM, registry-backed lookups, cross-record rules (Mastodon `AccountPin` bakes a `Follow`), Sequel models.
 
+It is also right when a **sibling block reads the attribute**. An explicit `association` runs after the attribute blocks ([definitions guide](../../../docs/guide/definitions.md)), so `name { "#{author.name}'s post" }` cannot read it. Keep `author { FactoryBakery.bake!(User) }` there instead of rewriting it. And keep `persist: true` on the rewrite where the old factory saved the parent (`author { create(:user) }`, `strategy: :create`): `association :author, User` alone leaves it unsaved.
+
 ## 6. `persist: true` on every association
 
 **Why it hurts.** `persist: true` bakes the parent with `bake!` before the owner is validated, even under plain `bake`: an insert, a verification and a database dependency per edge. It also hides the one case that needs it. It is factory_bot's `strategy: :create` only in that sense, and most `strategy: :create` lines were habit.
 
-**Instead.** Use it where a custom validator reads a parent's **id** (`user_id == invited_by_id` is `nil == nil` while unsaved). A required `belongs_to` and a raw-FK presence validator (`validates :user_id, presence: true`) need nothing: the plugin handles them.
+**Instead.** Use it where a custom validator reads a parent's **id** (`user_id == invited_by_id` is `nil == nil` while unsaved), and where the old factory saved the parent (`author { create(:user) }`, `strategy: :create`). A required `belongs_to` and a raw-FK presence validator (`validates :user_id, presence: true`) need nothing: the plugin handles them.
 
 ```ruby
 # bad
@@ -119,7 +121,7 @@ FactoryBakery.define(Post) do
 end
 ```
 
-Locals declared **inside** the `define` block are fresh per bake. That is the safe home for state shared by two blocks of one definition (Mastodon `AccountMigration` keeps its source and target accounts that way).
+To share a record between two blocks of one definition, read the sibling: declare it once and let the other block read it by name, so a call-site override is honored (`name { "#{user.name}'s account" }`). Do not capture it in a local from inside one block: if a test overrides the attribute, that block never runs and the local stays `nil`. Locals are for constants (`foo = 1`) and counters.
 
 ## 9. Relying on `:reuse_non_unique` for isolation
 
@@ -191,3 +193,13 @@ end
 ```
 
 On a failure, the `bake!` error and `FactoryBakery.explain(record)` print a definition snippet naming the attribute. See [`factory-bakery-diagnostics`](../../factory-bakery-diagnostics/SKILL.md).
+
+## 16. Dropping a definition line on one green doctor run
+
+**Why it hurts.** A value drawn at random can pass on one seed and fail on another, and doctor bakes each model only twice. One green run after a drop proves little, and the model's own tests may depend on the dropped value.
+
+**Instead.** After each drop, re-run the tests that bake that model, and run doctor for it under three seeds. If any run fails, restore the line and record why.
+
+```sh
+for s in 1 2 3; do FACTORY_BAKERY_SEED=$s RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post]'; done
+```

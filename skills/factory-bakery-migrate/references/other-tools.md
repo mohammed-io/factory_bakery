@@ -9,14 +9,14 @@ The FactoryBakery side of every table below is verified against this gem. The Fa
 | Fabrication | FactoryBakery |
 | --- | --- |
 | `Fabricator(:user) { name 'Ada' }` | `FactoryBakery.define(User) { name { 'Ada' } }` (note the block) |
-| `Fabricator(:admin, from: :user) { ... }` (same class) | A trait: `trait :admin do ... end`, or `define(:admin, klass: User)` with repeated lines |
+| `Fabricator(:admin, from: :user) { ... }` (same class) | `define(:admin, klass: User)` repeating the parent's lines, so `Fabricate(:admin)` stays a rename (`bake!(:admin)`). A trait on `User` would change the call |
 | `Fabricator(:admin, from: :user, class_name: 'Admin')` with `Admin < User` | Nothing, if `User`'s definition bakes an `Admin` (a class without a definition uses its nearest ancestor's). `define(Admin)` replaces it, so repeat the lines it needs |
 | `Fabricator(:user, class_name: 'Ns::User')` | `define(:user, klass: Ns::User)` |
 | `Fabricate(:user)` | `FactoryBakery.bake!(User)` |
 | `Fabricate(:user, name: 'x')` | `FactoryBakery.bake!(User, name: 'x')` |
 | `Fabricate.build(:user)` | `FactoryBakery.bake(User)` |
 | `Fabricate.times(3, :user)` | `Array.new(3) { FactoryBakery.bake!(User) }` |
-| `Fabricate.attributes_for(:user)` | A helper (see [translation-rules](translation-rules.md#the-helper-for-attributes_for)) |
+| `Fabricate.attributes_for(:user)` | `bakery_attributes_for(User)` through a helper, a blocker if it cannot match (see [translation-rules](translation-rules.md#the-helper-for-attributes_for)) |
 | `Fabricate(:user) { name 'x' }` (block form) | Blocker (the block form changes the call) |
 | `after_build`, `after_create`, `before_validation` hooks | Not supported |
 | `transient` | Locals inside `define`, or blocker if passed at the call site |

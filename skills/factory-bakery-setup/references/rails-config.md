@@ -15,10 +15,12 @@ On boot and on every reload (`config.to_prepare`), the polymorphic-target cache 
 ## Options
 
 ```ruby
-# config/application.rb
+# config/environments/test.rb
 config.factory_bakery.associations     = { mode: :required_only }
 config.factory_bakery.definition_paths = [Rails.root.join('spec/bakery').to_s]
 ```
+
+`config.factory_bakery` exists only while the gem is loaded (the Railtie defines it). With the gem in the test groups, `config/application.rb` raises `NoMethodError` at production boot. Use `config/environments/test.rb`, or guard the line: `... if config.respond_to?(:factory_bakery)`.
 
 | Option | Values | Default |
 | --- | --- | --- |
@@ -47,22 +49,25 @@ Unknown keys and invalid values raise `ArgumentError`:
 
 ```ruby
 # config/initializers/factory_bakery.rb
-FactoryBakery.configure do |config|
-  config.fill_optional  = false   # true, false or an Array of names
-  config.max_bake_depth = 10
+if defined?(FactoryBakery::Railtie)
+  FactoryBakery.configure do |config|
+    config.fill_optional  = false   # true, false or an Array of names
+    config.max_bake_depth = 10
+  end
 end
 ```
 
-An initializer runs **before** the Railtie's `after_initialize`, so these are in place when definitions load.
+An initializer runs **before** the Railtie's `after_initialize`, so these are in place when definitions load. The `if defined?(FactoryBakery::Railtie)` guard is required when the gem is not in the production group: the initializer file still loads in production, where `FactoryBakery` is undefined. The same guard goes around the whole body of the generated initializer, including its `require 'factory_bakery/rspec'` line.
 
 ## Environment placement
 
 | Goal | Where |
 | --- | --- |
-| All environments the gem is loaded in | `config/application.rb` |
-| Tests only | `config/environments/test.rb`, and the gem in `group :test` |
+| Tests only (the default) | `config/environments/test.rb`, and the gem in `group :development, :test` or `group :test` |
+| Anywhere the gem is loaded, with the gem in a group that production skips | A guarded line: `config.factory_bakery.associations = ... if config.respond_to?(:factory_bakery)` |
+| All environments, with the gem in the default group | `config/application.rb` (not recommended: the gem would be a production dependency) |
 
-The gem should be in `group :development, :test` or `group :test`. Definitions load at boot wherever the gem is loaded.
+Definitions load at boot wherever the gem is loaded.
 
 ## Things to know
 
