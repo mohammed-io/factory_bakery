@@ -184,7 +184,7 @@ RSpec.describe 'FactoryBakery discarded association graphs' do
     expect(detail.count).to eq(0)
   end
 
-  it 'rolls back only the lean attempt when fallback rebuilds a definition with a nested bake!' do
+  it 'rolls back only the lean attempt when fallback rebuilds a definition with a nested bake!', :savepoints do
     writer = define_model('DiscardLeanWriter', name: :string)
     article = define_model('DiscardLeanArticle', writer_id: :integer, title: :string) do
       belongs_to :writer, class_name: 'DiscardLeanWriter', optional: false

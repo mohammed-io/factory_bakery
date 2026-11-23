@@ -16,6 +16,7 @@ RSpec.describe FactoryBakery::Railtie do
         example.run
       ensure
         FactoryBakery.definition_paths = []
+        FactoryBakery.validate = nil
         described_class.config.factory_bakery.definition_paths = nil
         described_class.config.factory_bakery.associations = nil
         reset_associations_state
@@ -196,6 +197,26 @@ RSpec.describe FactoryBakery::Railtie do
     boot_app
 
     expect(FactoryBakery::ClassCache.fetch(target, :@factory_bakery_fact) { :fresh }).to eq(:fresh)
+  end
+
+  describe 'config.factory_bakery.savepoints' do
+    it 'sets FactoryBakery.savepoints? at boot' do
+      boot_app do |config|
+        config.factory_bakery.savepoints = true
+      end
+
+      expect(FactoryBakery.savepoints?).to be(true)
+    end
+  end
+
+  describe 'config.factory_bakery.validate' do
+    it 'sets FactoryBakery.validate? at boot' do
+      boot_app do |config|
+        config.factory_bakery.validate = false
+      end
+
+      expect(FactoryBakery.validate?).to be(false)
+    end
   end
 
   describe 'config.factory_bakery.associations' do

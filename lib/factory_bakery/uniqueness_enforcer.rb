@@ -32,6 +32,8 @@ module FactoryBakery
     end
 
     def call
+      return unless FactoryBakery.validate?
+
       answered = batch_answers
       @heuristic_attribute_names.each { |attribute| enforce(attribute, answered[attribute.to_s]) }
     end

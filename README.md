@@ -371,6 +371,17 @@ The per-call setting applies to nested bakes made from declaration blocks too. D
 
 A column filled only because you opted in is verified as well: when a custom validator or a `validate` block rejects the generated value, that fill is put back to the column's default (or `nil`) if that is what makes the record valid. A required column keeps its value, and a fill that neither the generated value nor the default can fix is left as generated.
 
+#### Turning the gem's own checks off
+
+`FactoryBakery.validate` (default `true`) decides whether the gem checks its own work: the verified fallback's `valid?` probe and rebuild, the verification of optional fills, and the build-time uniqueness checks (database queries and the in-bake registry). Set it globally or per call:
+
+```ruby
+FactoryBakery.validate = false                 # or config.factory_bakery.validate = false in Rails
+FactoryBakery.bake(User, validate: false)      # opt out for one call
+```
+
+Values are still generated from the validators and column types exactly as before, so the typical record is the same. But nothing is checked, so a record may come back invalid — this is the `FactoryBot.build` experience. `bake!` still saves through the framework's normal validation, so an invalid record still raises there. A nested bake made by a definition block inherits the caller's choice. The associations plugin's best-effort validity checks of optional children are not part of this option.
+
 | Metadata | Example | Result |
 | --- | --- | --- |
 | Column type | `title: :string`, `count: :integer`, `published_at: :datetime` | A type-appropriate fake value (strings come from [FFaker](https://github.com/ffaker/ffaker)) |

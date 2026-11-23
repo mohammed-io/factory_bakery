@@ -2,11 +2,13 @@
 
 require 'spec_helper'
 
-# `FactoryBakery.savepoints` decides whether the `bake!` envelope is wrapped in
-# a nested transaction. Off (the default) behaves like factory_bot for `bake!`:
-# nothing its own save rolls back is undone. The verified fallback's attempts
-# keep their savepoints either way, so its rebuild always leaves one copy of
-# what a declaration block saved. On, a failed bake! leaves no rows (ADR-0006).
+# `FactoryBakery.savepoints` decides whether the gem wraps the `bake!`
+# envelope and the verified fallback's attempts in a nested transaction. Off
+# (the default) behaves like factory_bot for `bake!`: nothing its own save
+# rolls back is undone, and rows a discarded lean fallback attempt wrote stay
+# behind. On, a failed bake! leaves no rows and the rebuild leaves one copy
+# of what a declaration block saved (ADR-0006). The associations plugin's
+# best-effort edges keep their savepoints either way.
 RSpec.describe 'FactoryBakery.savepoints' do
   include DefineConstantMacros
 
@@ -66,7 +68,15 @@ RSpec.describe 'FactoryBakery.savepoints' do
       [account, owner]
     end
 
-    it 'leaves one parent row by default' do
+    it 'leaves the lean attempt\'s parent row behind by default' do
+      account, owner = fallback_models
+
+      expect(FactoryBakery.bake(owner)).to be_valid
+
+      expect(account.count).to eq(2)
+    end
+
+    it 'leaves one parent row when savepoints are on', :savepoints do
       account, owner = fallback_models
 
       expect(FactoryBakery.bake(owner)).to be_valid
@@ -74,25 +84,30 @@ RSpec.describe 'FactoryBakery.savepoints' do
       expect(account.count).to eq(1)
     end
 
-    it 'leaves one parent row when savepoints are on' do
-      account, owner = fallback_models
-      FactoryBakery.savepoints = true
-
-      expect(FactoryBakery.bake(owner)).to be_valid
-
-      expect(account.count).to eq(1)
-    end
-
-    it 'lets a declaration that bakes a unique parent succeed on the rebuild by default' do
+    it 'raises on the rebuild of a declaration that bakes a unique parent by default' do
       # The declaration block runs in the lean attempt and again in the
       # rebuild. Without the fallback's own savepoint, the rebuild's
-      # `bake!` of the same unique name would fail with "has already been
-      # taken" against the row the lean attempt left behind.
+      # `bake!` of the same unique name fails with "has already been
+      # taken" against the row the lean attempt left behind. The
+      # documented fix is `FactoryBakery.savepoints = true`.
       account = define_model('SpFbUniqueAccount', name: :string) do
         validates :name, uniqueness: true
       end
       owner = define_model('SpFbUniqueOwner', name: :string, nickname: :string, account_id: :integer) do
         belongs_to :account, class_name: 'SpFbUniqueAccount', optional: true
+        validate { errors.add(:nickname, :blank) if nickname.blank? }
+      end
+      FactoryBakery.define(owner) { account { FactoryBakery.bake!(account, name: 'acme') } }
+
+      expect { FactoryBakery.bake(owner) }.to raise_error(ActiveRecord::RecordInvalid, /taken/)
+    end
+
+    it 'succeeds with one acme row when savepoints are on', :savepoints do
+      account = define_model('SpFbUniqueAccountOn', name: :string) do
+        validates :name, uniqueness: true
+      end
+      owner = define_model('SpFbUniqueOwnerOn', name: :string, nickname: :string, account_id: :integer) do
+        belongs_to :account, class_name: 'SpFbUniqueAccountOn', optional: true
         validate { errors.add(:nickname, :blank) if nickname.blank? }
       end
       FactoryBakery.define(owner) { account { FactoryBakery.bake!(account, name: 'acme') } }

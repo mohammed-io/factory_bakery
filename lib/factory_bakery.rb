@@ -16,6 +16,8 @@ require_relative 'factory_bakery/provenance'
 require_relative 'factory_bakery/explanation'
 require_relative 'factory_bakery/seed_api'
 require_relative 'factory_bakery/savepoint_setting'
+require_relative 'factory_bakery/verification'
+require_relative 'factory_bakery/validation_setting'
 require_relative 'factory_bakery/required_attribute'
 require_relative 'factory_bakery/fallback_builder'
 require_relative 'factory_bakery/mapper_registry'
@@ -61,6 +63,7 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
 
   extend SeedApi
   extend SavepointSetting
+  extend ValidationSetting
 
   class << self
     attr_writer :definition_paths, :max_bake_depth
@@ -79,7 +82,7 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
     # Validated and normalized like the per-call option, so `%i[bio]` and
     # `%w[bio]` behave the same and a typo such as `'true'` raises.
     def fill_optional=(value)
-      FillOptional.global = value.nil? ? false : normalize_fill_optional(value)
+      FillOptional.global = value.nil? ? false : FillOptional.normalize(value)
     end
 
     # No paths are configured until the host app (or the Railtie) sets them.
@@ -121,20 +124,25 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
       BakeryBuilder.register(target, klass: klass, &block)
     end
 
-    def bake(target, *traits, fill_optional: nil, **overrides)
+    # `validate:` turns the gem's own checks off for one bake. A model cannot
+    # have an attribute named `validate` (the mapper forbids it), so the
+    # keyword cannot shadow an override.
+    def bake(target, *traits, fill_optional: nil, validate: nil, **overrides)
+      ValidationSetting.check(validate)
       mode = resolve_fill_optional(fill_optional)
       record = FillOptional.around_bake(BuildContext.current.depth, mode) do
-        model_klass, definition = BakeryBuilder.resolve(target)
-        BuildContext.push(model_klass) do
-          build_with_fallback(model_klass, definition, overrides, traits, mode)
+        Verification.with(validate) do
+          model_klass, definition = BakeryBuilder.resolve(target)
+          BuildContext.push(model_klass) { build_with_fallback(model_klass, definition, overrides, traits, mode) }
         end
       end
       yield record if block_given?
       record
     end
 
-    def bake!(target, *traits, fill_optional: nil, **overrides)
-      record = build_and_persist(target, overrides, traits, resolve_fill_optional(fill_optional))
+    def bake!(target, *traits, fill_optional: nil, validate: nil, **overrides)
+      ValidationSetting.check(validate)
+      record = build_and_persist(target, overrides, traits, resolve_fill_optional(fill_optional), validate)
       yield record if block_given?
       record
     end
@@ -149,43 +157,45 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
     # disturbing the caller's transaction. The transaction, save and
     # persistence check are performed through the mapper's persistence adapter;
     # a target no mapper claims keeps plain build-and-save semantics.
-    def build_and_persist(target, overrides, traits, mode)
+    def build_and_persist(target, overrides, traits, mode, validate)
       # FK-column-validated edges insert their parent while the graph is being
       # built, so the flag must cover graph building too, not just the save.
       BuildContext.with_persistence do
         FillOptional.around_bake(BuildContext.current.depth, mode) do
-          model_klass, definition = BakeryBuilder.resolve(target)
-          adapter = MapperRegistry.persistence_adapter(model_klass)
-          return bake_untransactional(target, adapter, overrides, traits, mode) unless adapter.transactional?
-
-          # The transaction's return value may not be the block's: capture it.
-          object = nil
-          build = proc do
-            object = BuildContext.push(model_klass) do
-              persist_build!(adapter) { build_with_fallback(model_klass, definition, overrides, traits, mode) }
+          Verification.with(validate) do
+            model_klass, definition = BakeryBuilder.resolve(target)
+            adapter = MapperRegistry.persistence_adapter(model_klass)
+            unless adapter.transactional?
+              return bake_untransactional(target, adapter, overrides, traits, mode, validate)
             end
+
+            persist_transactional(model_klass, definition, adapter, overrides, traits, mode)
           end
-          savepoints? ? adapter.transaction(model_klass, &build) : build.call
-          object
         end
       end
     end
 
-    def normalize_fill_optional(value)
-      return FillOptional.current if value.nil?
-      return value if [true, false].include?(value)
-      return value.map(&:to_s) if value.is_a?(Array)
-
-      raise ArgumentError, "fill_optional must be true, false, or an array of attribute names, got #{value.inspect}"
+    # The transactional bake: the graph build (nested `bake!` calls included),
+    # the root save and the persistence check inside one transaction, which is
+    # a savepoint when `savepoints?` is on. The transaction's return value may
+    # not be the block's, so the record is captured by hand.
+    def persist_transactional(model_klass, definition, adapter, overrides, traits, mode) # rubocop:disable Metrics/ParameterLists
+      object = nil
+      build = proc do
+        object = BuildContext.push(model_klass) do
+          persist_build!(adapter) { build_with_fallback(model_klass, definition, overrides, traits, mode) }
+        end
+      end
+      savepoints? ? adapter.transaction(model_klass, &build) : build.call
+      object
     end
 
     # The verified fallback's rebuild fills optional columns for the one record
     # it rebuilds. A nested bake inherits that opt-in by default, so it is
     # forced back to lean unless the caller named a value explicitly.
     def resolve_fill_optional(fill_optional)
-      mode = normalize_fill_optional(fill_optional)
-      return mode unless fill_optional.nil?
-      return mode unless FillOptional.nested_in_rebuild?(BuildContext.current.depth)
+      mode = FillOptional.normalize(fill_optional)
+      return mode unless fill_optional.nil? && FillOptional.nested_in_rebuild?(BuildContext.current.depth)
 
       false
     end
@@ -206,8 +216,8 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
       record
     end
 
-    def bake_untransactional(target, adapter, overrides, traits, mode)
-      object = bake(target, *traits, fill_optional: mode, **overrides)
+    def bake_untransactional(target, adapter, overrides, traits, mode, validate) # rubocop:disable Metrics/ParameterLists
+      object = bake(target, *traits, fill_optional: mode, validate: validate, **overrides)
       ReadOnlyGuard.new(object, adapter, []).call
       Explanation.around_failed_save(object) { adapter.save!(object) }
       object

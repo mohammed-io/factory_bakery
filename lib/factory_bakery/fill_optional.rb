@@ -66,6 +66,17 @@ module FactoryBakery
         Fiber[REBUILD_ERRORS_KEY] || []
       end
 
+      # Normalizes a call-site or global `fill_optional` value: `nil` falls
+      # back to the current scope, `true` / `false` pass, an Array of names is
+      # stringified, and anything else raises ArgumentError.
+      def normalize(value)
+        return current if value.nil?
+        return value if [true, false].include?(value)
+        return value.map(&:to_s) if value.is_a?(Array)
+
+        raise ArgumentError, "fill_optional must be true, false, or an array of attribute names, got #{value.inspect}"
+      end
+
       # The blamed names describe the one record being rebuilt. A bake nested
       # inside that rebuild (a parent, a declaration's own bake) is a separate
       # record, so it runs with no names: otherwise an outer error on `user_id`

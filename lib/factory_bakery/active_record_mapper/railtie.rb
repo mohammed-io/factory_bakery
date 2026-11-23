@@ -20,6 +20,8 @@ module FactoryBakery
       FactoryBakery.fill_optional = fill_optional unless fill_optional.nil?
       savepoints = app.config.factory_bakery.savepoints
       FactoryBakery.savepoints = savepoints unless savepoints.nil?
+      validate = app.config.factory_bakery.validate
+      FactoryBakery.validate = validate unless validate.nil?
       FactoryBakery::Railtie.install_definitions(app)
     end
 

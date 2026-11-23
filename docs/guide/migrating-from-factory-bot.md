@@ -52,7 +52,7 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | `initialize_with { new(a: 1) }` | `initialize_with(a: 1)` (a Hash only. A block does not map) |
 | `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Not supported. See the limits below |
 | `to_create`, `skip_create` | Not needed. `bake` never saves |
-| `build(:post)` | `FactoryBakery.bake(Post)` |
+| `build(:post)` | `FactoryBakery.bake(Post)` — pass `validate: false` for the closest to `build`: no probe, no uniqueness check, the record may be invalid |
 | `create(:post)` | `FactoryBakery.bake!(Post)` |
 | `build(:post) { \|post\| ... }` / `create(:post) { \|post\| ... }` | Keep the block on `bake` / `bake!`. `bake!` yields after its transaction or savepoint finishes |
 | `build_stubbed(:post)` | No equivalent |

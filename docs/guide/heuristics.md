@@ -124,7 +124,7 @@ FactoryBakery.bake(User, fill_optional: [:bio, :website])          # just these 
 [ADR-0006](../adr/0006-required-only-baking-and-verified-fallback.md). The lean record can be invalid for a reason no validator describes, for example a custom validator that needs an optional column. FactoryBakery handles this in two steps:
 
 1. Build the lean record. Probe it with `valid?` **only if** a defaulted column has validators, or the model has validation the gem cannot read (a custom validator, `validates_with`, or a `validate` method). Rails' own autosave validators do not count, so a plain model gets no extra `valid?`.
-2. If the probe says invalid, discard the attempt (its rows always roll back in a savepoint) and rebuild once with optional columns filled. The required-only result is always preferred.
+2. If the probe says invalid, discard the attempt (its rows roll back only with `savepoints = true`) and rebuild once with optional columns filled. The required-only result is always preferred.
 
 What the fallback adds to errors:
 
@@ -134,9 +134,10 @@ What the fallback adds to errors:
 
 Consequences you should plan for:
 
-- **Declaration blocks can run twice** when the fallback fires. A block with a side effect outside the database (an HTTP call, a counter, a global setting) can repeat. Database writes of the first attempt are rolled back (each attempt runs in its own savepoint); other side effects are not.
+- **Declaration blocks can run twice** when the fallback fires. A block with a side effect outside the database (an HTTP call, a counter, a global setting) can repeat. Database writes of the first attempt are rolled back only with `savepoints = true`; other side effects are not.
 - A fallback that cannot fix the record returns the record as it is. `bake` does not raise.
 - With `fill_optional: true` globally there is no fallback and no savepoint.
+- All of the fallback's checks are part of the `validate` setting: with `FactoryBakery.validate = false` (or one call's `validate: false`) there is no probe, no rebuild, no optional-fill verification and no savepoint — one lean build is returned as it is, like `FactoryBot.build`. The build-time uniqueness checks are switched off with it; values are still generated the same way, and `bake!` still validates on save.
 
 ## Conditional validators
 
