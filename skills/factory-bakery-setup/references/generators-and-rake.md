@@ -35,7 +35,7 @@ bin/rails g model Post title:string
 bin/rails g scaffold Post title:string
 ```
 
-Both also write the stub. The hook takes Rails' `fixture_replacement` slot, so Rails does not write a fixtures file while it is active.
+Both also write the stub. The hook takes Rails' `fixture_replacement` slot, so Rails does not write a fixtures file while it is active. `bin/rails g model Child --parent=Parent` generates a subclass, so the stub written for it is **not** inert: an exact `define(Child)` shadows the parent's definition. Delete the stub or fill it (see "Where definitions are written" above).
 
 `config.factory_bakery.generators`:
 
@@ -62,7 +62,7 @@ RAILS_ENV=test bin/rails g factory_bakery:install
 Creates `config/initializers/factory_bakery.rb` (an existing one is skipped, `--force` overwrites) and the definitions directory.
 
 - The initializer sets `Rails.application.config.factory_bakery` and lists `associations`, `definition_paths`, `fill_optional`, `generators` as commented examples. Nothing is on until a line is uncommented.
-- **The generated file is unguarded.** In production, with the gem installed there, it loads FactoryBakery and its definitions into the process; with `BUNDLE_WITHOUT=test` its top-level `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. Wrap the whole file body in `if defined?(FactoryBakery::Railtie) ... end` (check: `lib/generators/factory_bakery/install/templates/initializer.rb.tt` has no guard).
+- **The generated file is unguarded.** In production, with the gem installed there, it loads FactoryBakery and its definitions into the process; with every group that lists the gem excluded (`BUNDLE_WITHOUT=development:test`, or `=test` when the gem is in `group :test` only) its top-level `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. Wrap the whole file body in `if defined?(FactoryBakery::Railtie) ... end` (check: `lib/generators/factory_bakery/install/templates/initializer.rb.tt` has no guard).
 - It also writes `require 'factory_bakery/rspec'` when `spec/` exists, else `require 'factory_bakery/minitest'` when `test/` exists, so generated values follow the framework's seed. With neither directory it writes no require.
 - **factory_bot detected** (same test as above): creates `spec/bakery` (`test/bakery`) and writes an active `config.definition_paths = ["spec/bakery"]`. The two gems then never load each other's files.
 - **Otherwise**: creates the directory Rails would load (first `definition_paths` entry, else the default above) and leaves `definition_paths` commented.

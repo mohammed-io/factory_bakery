@@ -41,8 +41,8 @@ Conventions:
 | `could not generate a format-compliant value` / `JSON value` | [#format-exhaustion](#format-exhaustion) |
 | `could not generate a value satisfying the numeric constraints` | [#numeric-constraint-exhaustion](#numeric-constraint-exhaustion) |
 | `could not generate a value ... that satisfies exclusion` | [#exclusion-exhaustion](#exclusion-exhaustion) |
-| `length :minimum ... resolved to` | [#length-resolution-error](#length-resolution-error) |
-| `length :maximum ... raised` | [#length-option-raised](#length-option-raised) |
+| `length :… resolved to` | [#length-resolution-error](#length-resolution-error) |
+| `length :… raised` | [#length-option-raised](#length-option-raised) |
 | `:in proc raised` | [#inclusion-proc-raised](#inclusion-proc-raised) |
 | `(FactoryBakery also tried ... construction)` | [#construction-failed](#construction-failed) |
 | `no bundled attachment fixture matches` | [#attachment-fixture-missing](#attachment-fixture-missing) |
@@ -67,7 +67,7 @@ Conventions:
 
 ## Choosing the fix
 
-Reproduce first, with the seed the failure printed (`Seed N from <source>. Reproduce: <command>`): replay the failing spec with `rspec --seed N` (Minitest: `bin/rails test --seed N`), or set `FACTORY_BAKERY_SEED=N` in a console, in the test environment. Then, inside `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }` — `bake!` commits, and the wrapper covers one connection pool, so writes on other pools survive — run `FactoryBakery.bake(Model)`, `FactoryBakery.explain(record)` (it runs `valid?`), `.errors.full_messages`, then `FactoryBakery.bake!(Model)`. See [Randomness](guide/configuration.md#randomness).
+Reproduce first, with the seed the failure printed (`Seed N from <source>. Reproduce: <command>`): replay the failing spec with `rspec --seed N` (Minitest: `bin/rails test --seed N`), or start a fresh process with `FACTORY_BAKERY_SEED=N RAILS_ENV=test` and replay the printed root ordinal — the earlier bakes of that class — then the original call, identical to the one that failed. Changing ENV after seed resolution has no effect: the seed resolves at the first bake and is memoized. Then, inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` — the failing model's own connection pool, plus the same wrapper around every other pool the graph writes to (a wrapper covers one pool; `bake!` commits, and plain `bake` can still insert raw-FK parents); for a Sequel model, `model.db.transaction(rollback: :always)` — run `FactoryBakery.bake(Model)`, `FactoryBakery.explain(record)` (it runs `valid?`), `.errors.full_messages`, then `FactoryBakery.bake!(Model)`. See [Randomness](guide/configuration.md#randomness).
 
 | The cause is | Smallest fix |
 | --- | --- |
@@ -359,7 +359,7 @@ If `IncompletePersistenceError` names the sibling, the fix is in the current sou
 - **Where to look:** gem `UniquenessEnforcer`. App: the validators and the definition for that column.
 - **Fix:** Override with a generator, or widen the rule. Regeneration applies only to values the gem generated: after two collisions it appends an entropy suffix unless the column has a `format`, `inclusion`, `enum`, numericality rule, exact length, or a cap with no room.
 - **Literals:** a value a definition or an override sets literally is not regenerated. Two bakes that collide with each other usually mean a literal was set. See [literal-override-uniqueness](#literal-override-uniqueness).
-- **Example (Mastodon):** `Account#username`: two mutually constraining format regexes. A declared value wins: `username { "fb_#{SecureRandom.hex(5)}" }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which replays with the seed).
+- **Example (Mastodon):** `Account#username`: two mutually constraining format regexes. A declared value wins: `username { "fb_#{SecureRandom.hex(5)}" }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which repeats with the seed only when its evaluation sequence repeats).
 
 ### format-exhaustion
 
@@ -367,7 +367,7 @@ If `IncompletePersistenceError` names the sibling, the fix is in the current sou
 - **Cause:** The regex cannot be satisfied (`/\Afoo(?=bar)\z/`), exceeds the generator's bounds (256 characters, depth), uses a construct `regexp_parser` cannot parse, or clashes with a `length` rule or a second regex.
 - **Where to look:** gem `AttributeFillers::StringFiller`, `RegexGeneration`. App: the `format:` options.
 - **Fix:** Give the value: a definition line or an override.
-- **Example (Mastodon):** `Account#username` (two regexes). Discourse `Group#name`: `name { "smoke_group_#{SecureRandom.hex(4)}" }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which replays with the seed).
+- **Example (Mastodon):** `Account#username` (two regexes). Discourse `Group#name`: `name { "smoke_group_#{SecureRandom.hex(4)}" }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which repeats with the seed only when its evaluation sequence repeats).
 
 ### numeric-constraint-exhaustion
 
@@ -465,7 +465,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 - **Symptom:** A validator compares a time or date to "now" in custom code: `expires_at` must be within 5 minutes to 1 month, a future effective date.
 - **Fix:** A block computing a value relative to now: `expires_at { 1.day.from_now }`.
-- **Example (Mastodon):** `Poll`: `expires_at { 1.day.from_now }`; `TermsOfService`: `effective_date { Date.current + SecureRandom.random_number(1..300) }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which replays with the seed).
+- **Example (Mastodon):** `Poll`: `expires_at { 1.day.from_now }`; `TermsOfService`: `effective_date { Date.current + SecureRandom.random_number(1..300) }` (unseeded: pin a literal while replaying a failure; prefer a file-level counter, which repeats with the seed only when its evaluation sequence repeats).
 - `comparison:` and `numericality:` bounds, including Proc and Symbol bounds, are handled without a definition.
 
 ### structured-text-columns
@@ -548,7 +548,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 
 - **Symptom:** A `NoMethodError`, `NameError` or duplicate-definition error at boot from a definition file.
 - **Cause:** FactoryBakery and factory_bot both load `spec/factories`, so one evaluates the other's files. A class-keyed stub naming a missing model (a `factory_bakery:definition` generated for a class that does not exist, e.g. `Admin::Post`) raises `NameError` when the file loads. A syntax or constant error inside a file propagates, and files from earlier paths are already loaded.
-- **Fix:** Put FactoryBakery definitions in `spec/bakery` and set `config.factory_bakery.definition_paths`. Fix or delete the stub's name. See [Migrating](guide/migrating-from-factory-bot.md#step-2-set-up-side-by-side).
+- **Fix:** Put FactoryBakery definitions in `spec/bakery` and set `config.definition_paths` inside the generated initializer's `tap` block. Fix or delete the stub's name. See [Migrating](guide/migrating-from-factory-bot.md#step-2-set-up-side-by-side).
 
 ---
 

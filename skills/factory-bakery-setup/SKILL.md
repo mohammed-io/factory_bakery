@@ -64,7 +64,7 @@ RAILS_ENV=test bin/rails g factory_bakery:install   # initializer + definitions 
 
 It writes `config/initializers/factory_bakery.rb` (with the framework `require` for RSpec or Minitest) and creates the definitions directory. If `RAILS_ENV=test bin/rails g --help` does not list `factory_bakery:install`, create the directory and the initializer by hand. Existing files are skipped, never overwritten, unless the user asks for `--force`.
 
-**Guard the generated initializer.** Three production-boot outcomes of an unguarded initializer: with the gem installed in production it loads FactoryBakery and its definitions into the process; with `BUNDLE_WITHOUT=test` its `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. Wrap the whole body either way:
+**Guard the generated initializer.** Three production-boot outcomes of an unguarded initializer: with the gem installed in production it loads FactoryBakery and its definitions into the process; with every group that lists the gem excluded (`BUNDLE_WITHOUT=development:test`, or `=test` when the gem is in `group :test` only) its `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. Wrap the whole body in all three cases:
 
 ```ruby
 # config/initializers/factory_bakery.rb
@@ -81,7 +81,7 @@ end
 | Situation | Directory |
 | --- | --- |
 | No other factory library | `spec/factories` or `test/factories`. Rails finds it with no config |
-| `factory_bot` (or another) present | `spec/bakery` or `test/bakery`, with `config.factory_bakery.definition_paths = [...]` stated explicitly — in the guarded initializer (step 3), so generators see it in development too |
+| `factory_bot` (or another) present | `spec/bakery` or `test/bakery`, with `config.definition_paths = [...]` stated explicitly — in the guarded initializer (step 3, inside the generated `tap` block), so generators see it in development too |
 
 Never under `app/` or any autoload path. The install generator (step 3) created the directory and, when it detects factory_bot, wrote the `definition_paths` line. Confirm both.
 

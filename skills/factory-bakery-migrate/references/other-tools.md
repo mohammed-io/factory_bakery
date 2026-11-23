@@ -10,7 +10,7 @@ The FactoryBakery side of every table below is verified against this gem. The Fa
 | --- | --- |
 | `Fabricator(:user) { name 'Ada' }` | `FactoryBakery.define(User) { name { 'Ada' } }` (note the block) |
 | `Fabricator(:admin, from: :user) { ... }` (same class) | `define(:admin, klass: User)` repeating the parent's lines, so `Fabricate(:admin)` stays a rename (`bake!(:admin)`). A trait on `User` would change the call |
-| `Fabricator(:admin, from: :user, class_name: 'Admin')` with `Admin < User` | Empty child body: nothing (inherits). Otherwise in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
+| `Fabricator(:admin, from: :user, class_name: 'Admin')` with `Admin < User` | The fabricator inherits :user's attributes, so an empty body translates to nothing: once `define(User)` is its equivalent, `bake!(Admin)` uses it. Otherwise in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
 | `Fabricator(:user, class_name: 'Ns::User')` | `define(:user, klass: Ns::User)` |
 | `Fabricate(:user)` | `FactoryBakery.bake!(User)` |
 | `Fabricate(:user, name: 'x')` | `FactoryBakery.bake!(User, name: 'x')` |

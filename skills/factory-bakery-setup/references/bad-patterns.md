@@ -26,11 +26,11 @@ end
 
 ```ruby
 # bad: both libraries read spec/factories
-# good
-config.factory_bakery.definition_paths = [Rails.root.join('spec/bakery').to_s]
+# good: config/initializers/factory_bakery.rb, inside the generated tap block
+config.definition_paths = [Rails.root.join('spec/bakery').to_s]
 ```
 
-`bin/rails g factory_bakery:install` writes this line when it detects factory_bot.
+`RAILS_ENV=test bin/rails g factory_bakery:install` writes this line when it detects factory_bot.
 
 ## 3. `:all` mode set globally
 
@@ -74,7 +74,7 @@ require 'factory_bakery/rspec'
 RSpec.configure { |config| config.include FactoryBakery::Methods }
 ```
 
-`bin/rails g factory_bakery:install` writes the require into the initializer. Keep one framework require: the seed has a single framework slot and the last require wins.
+`RAILS_ENV=test bin/rails g factory_bakery:install` writes the require into the initializer. Keep one framework require: the seed has a single framework slot and the last require wins.
 
 ## 6. A hard-coded seed in CI
 
@@ -109,7 +109,7 @@ Call `reset_configuration!` only in specs that assign the plugin's globals thems
 
 ## 8. Definitions inside `app/` or an autoload path
 
-**Why it hurts.** FactoryBakery loads definition files itself, with `Kernel.load`, from `definition_paths`. Nothing needs them autoloadable. Under Zeitwerk each file in an autoload path must define a constant named after the file, and a definition file defines none, so eager loading (production, CI) raises `Zeitwerk::NameError`. That Zeitwerk behavior is general Rails knowledge and was not run here. Also, the gem is not loaded in production, so `FactoryBakery` is an undefined constant there.
+**Why it hurts.** FactoryBakery loads definition files itself, with `Kernel.load`, from `definition_paths`. Nothing needs them autoloadable. Under Zeitwerk each file in an autoload path must define a constant named after the file, and a definition file defines none, so eager loading (production, CI) raises `Zeitwerk::NameError`. That Zeitwerk behavior is general Rails knowledge and was not run here. Also, the gem is not loaded in production, so `FactoryBakery.define` is not available there (with a `path:`/`git:` source only the bare `FactoryBakery` module exists, holding `VERSION`: the gemspec requires `lib/factory_bakery/version`).
 
 ```text
 # bad:  app/factories/user.rb
@@ -125,7 +125,7 @@ Call `reset_configuration!` only in specs that assign the plugin's globals thems
 config.factory_bakery.generators = true
 
 # good: leave it unset, and write stubs on demand
-#   bin/rails g factory_bakery:definition Post
+#   RAILS_ENV=test bin/rails g factory_bakery:definition Post
 ```
 
 Ask the user before setting `true`. See [generators-and-rake.md](generators-and-rake.md#model-generator-hook).
@@ -173,7 +173,7 @@ before { FactoryBakery.find_definitions }
 
 **Why it hurts.** `bin/rails factory_bakery:definitions` with no names writes a file for every concrete model without a class-keyed definition, and it eager-loads the app. The stubs are comments, so they are inert for a model with no ancestor definition — a subclass stub is not (see below) — but they bury the few definitions that matter. A model that passes `doctor` needs no definition.
 
-**Instead.** Run `RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor`, then write stubs only for the failing models (`factory_bakery:definitions[Post,Comment]`, or `WRITE=1`) and fill each with the one line its failure needs.
+**Instead.** Run `RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor`, then write stubs only for the failing models (`RAILS_ENV=test bin/rails 'factory_bakery:definitions[Post,Comment]'`, or `WRITE=1`) and fill each with the one line its failure needs.
 
 A stub for a **subclass** is worse than clutter. `FactoryBakery.define(Subclass) do ... end` registers an exact definition even when the block holds only comments, and it replaces the ancestor's definition. The subclass then loses the parent's attributes and traits (probed: `bake(Sub)` returned a `nil` name and `bake(Sub, :loud)` raised `Trait :loud is not declared for Sub`). Delete such a stub, or fill it with every line and trait the subclass needs.
 
@@ -190,7 +190,7 @@ RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor
 
 ## 15. FactoryBakery config or requires where the gem is not loaded
 
-**Why it hurts.** `config.factory_bakery` exists only while the gem is loaded: the Railtie defines it. With the gem in `group :development, :test`, production never loads it, so `config.factory_bakery.associations = ...` in `config/application.rb` raises `NoMethodError: undefined method 'factory_bakery'` at production boot (probed). The generated `config/initializers/factory_bakery.rb` spans the three production cases: with the gem installed in production it loads FactoryBakery and its definitions into the process; with `BUNDLE_WITHOUT=test` its top-level `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises the `NoMethodError`. Wrap it either way.
+**Why it hurts.** `config.factory_bakery` exists only while the gem is loaded: the Railtie defines it. With the gem in `group :development, :test`, production never loads it, so `config.factory_bakery.associations = ...` in `config/application.rb` raises `NoMethodError: undefined method 'factory_bakery'` at production boot (probed). The generated `config/initializers/factory_bakery.rb` spans the three production cases: with the gem installed in production it loads FactoryBakery and its definitions into the process; with every group that lists the gem excluded (`BUNDLE_WITHOUT=development:test`, or `=test` when the gem is in `group :test` only) its top-level `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises the `NoMethodError`. Wrap it in all three cases.
 
 ```ruby
 # bad: config/application.rb

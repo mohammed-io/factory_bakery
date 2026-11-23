@@ -15,8 +15,9 @@ On boot and on every reload (`config.to_prepare`), the polymorphic-target cache 
 ## Options
 
 ```ruby
-# config/initializers/factory_bakery.rb, inside the `if defined?(FactoryBakery::Railtie)` guard
-config.factory_bakery.definition_paths = [Rails.root.join('spec/bakery').to_s]
+# config/initializers/factory_bakery.rb, inside the generated tap block:
+#   Rails.application.config.factory_bakery.tap do |config| ... end
+config.definition_paths = [Rails.root.join('spec/bakery').to_s]
 ```
 
 ```ruby
@@ -25,6 +26,8 @@ config.factory_bakery.associations     = { mode: :required_only }
 ```
 
 Keep `definition_paths` in the guarded initializer, not only in `test.rb`: generators and rake tasks read it in the environment the command runs in, development included.
+
+An initializer file has no `config` variable: use `Rails.application.config.factory_bakery.…` — or `config.definition_paths = …` inside the generated `tap` block, where `config` is already the factory_bakery options (`config.factory_bakery.…` there raises `NoMethodError`, and a bare `config.…` at the top level raises `NameError`).
 
 `config.factory_bakery` exists only while the gem is loaded (the Railtie defines it). With the gem in the test groups, `config/application.rb` raises `NoMethodError` at production boot. Use `config/environments/test.rb`, or guard the line: `... if config.respond_to?(:factory_bakery)`.
 
@@ -83,4 +86,4 @@ Common mistakes with these options are in [bad-patterns.md](bad-patterns.md).
 - Generator behavior, `--skip-factory-bakery`, `--force`, and the rake tasks: [generators-and-rake.md](generators-and-rake.md).
 - A definition naming a model (`define(User)`) autoloads it during boot. A bare symbol (`define(:user)`) resolves at the first bake.
 - Class-keyed definitions go stale across code reloads. Tests do not reload.
-- If `factory_bot` is installed, set `definition_paths` to a separate directory (`bin/rails g factory_bakery:install` does it). Without factory_bot, both gems would default to `spec/factories`. With factory_bot detected, FactoryBakery defaults to `spec/bakery` or `test/bakery`, but state it explicitly.
+- If `factory_bot` is installed, set `definition_paths` to a separate directory (`RAILS_ENV=test bin/rails g factory_bakery:install` does it). Without factory_bot, both gems would default to `spec/factories`. With factory_bot detected, FactoryBakery defaults to `spec/bakery` or `test/bakery`, but state it explicitly.

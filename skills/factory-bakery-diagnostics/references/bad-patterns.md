@@ -28,7 +28,7 @@ bundle exec rspec || bundle exec rspec
 
 # good: the failure text names the seed and the bake number
 bundle exec rspec --seed 12345
-FACTORY_BAKERY_SEED=12345 RAILS_ENV=test bin/rails runner 'ActiveRecord::Base.transaction { puts FactoryBakery.explain(FactoryBakery.bake(LlmModel)); raise ActiveRecord::Rollback }'
+FACTORY_BAKERY_SEED=12345 RAILS_ENV=test bin/rails runner 'LlmModel.transaction(requires_new: true) { puts FactoryBakery.explain(FactoryBakery.bake(LlmModel)); raise ActiveRecord::Rollback }'
 ```
 
 The runner draws bake #1 of `LlmModel`. When the failure says `bake #3 of LlmModel`, run two bakes first ([Replay it](../SKILL.md#1-reproduce)).

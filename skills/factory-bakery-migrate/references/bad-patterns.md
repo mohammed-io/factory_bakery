@@ -35,8 +35,9 @@ FactoryBakery.define(User) do
 end
 
 # after the approved reduce step: nothing is left to say. A named definition never merges
-# with the class-keyed one: it repeats the lines define(User) still keeps, and is empty
-# only when define(User) is empty or absent
+# with the class-keyed one: reduced by the same keep rules on its own, it carries its own
+# lines and traits plus every line define(User) keeps, and is empty only when nothing is
+# left under those rules
 ```
 
 ## 3. Static `name 'x'`
@@ -148,6 +149,8 @@ To share a record between two blocks of one definition, read the sibling: declar
 
 **Why it hurts.** A class with no definition uses the nearest ancestor class's definition, traits included. An STI subclass often needs nothing: `bake!(Admin)` with `Admin < User` already uses `User`'s definition. A subclass definition **replaces** it entirely (definitions do not merge), so a copy drifts from the original, and a half-copy silently loses lines and traits.
 
+This applies in Phase 7. In the 1:1 step (Phase 3) a subclass factory with its own body is translated with the parent's lines copied in; falling back to inheritance is a Phase 7 drop.
+
 ```ruby
 # factory_bot
 factory :admin, parent: :user, class: 'Admin' do ... end
@@ -156,8 +159,9 @@ factory :admin, parent: :user, class: 'Admin' do ... end
 FactoryBakery.define(Admin) { name { 'x' }; email { 'y' } }
 
 # good: nothing. bake!(Admin) uses User's definition.
-# Write one only when a test depends on a value that differs, and keep just the lines the subclass needs:
-FactoryBakery.define(Admin) { name { 'x' }; role { 'admin' } }
+# When one is needed, it carries every line: the parent's kept lines (name, email)
+# plus the subclass's own (role)
+FactoryBakery.define(Admin) { name { 'x' }; email { 'y' }; role { 'admin' } }
 ```
 
 The call site stays a rename (`create(:admin)` to `FactoryBakery.bake!(Admin)`), so a differing value has to live in the definition. Do not add a call-site argument to carry it.
