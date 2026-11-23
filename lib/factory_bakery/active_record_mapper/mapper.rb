@@ -248,6 +248,19 @@ module FactoryBakery
         UniquenessProbe.taken?(record, attr_name, value, uniqueness_validators_for(record.class, attr_name))
       end
 
+      # Batched counterpart of `uniqueness_check`: one statement answers every
+      # attribute of the Hash the batch can settle exactly ({ 'attr' => bool });
+      # the attributes it cannot are absent, and the caller asks
+      # `uniqueness_check` for each of them as before.
+      def uniqueness_taken_many(record, values)
+        return {} unless active_record_class?(record.class)
+
+        validators_by_attribute = values.keys.to_h do |name|
+          [name, uniqueness_validators_for(record.class, name)]
+        end
+        UniquenessBatch.taken(record, values, validators_by_attribute)
+      end
+
       # Human-readable validator descriptions for exhaustion errors.
       def validator_descriptions(klass, attr_name)
         return [] unless klass.respond_to?(:validators_on)

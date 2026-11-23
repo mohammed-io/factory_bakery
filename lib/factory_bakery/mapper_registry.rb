@@ -40,6 +40,10 @@ module FactoryBakery
   #       check?
   #   uniqueness_check(record, attr_name, value) => bool
   #       Is the value taken? (Only called when uniqueness_validated?.)
+  #   uniqueness_taken_many(record, { 'attr' => value }) => { 'attr' => bool }
+  #       Optional: answers the attributes it can for a Hash of values with
+  #       one statement; the rest are checked one by one. Mappers without it
+  #       answer {}.
   #   uniqueness_case_insensitive?(klass, attr_name) => bool
   #       Does the attribute's uniqueness check fold case? Mappers without the
   #       notion may omit it (the registry answers false).
@@ -315,6 +319,15 @@ module FactoryBakery
 
       def uniqueness_check(record, attr_name, value)
         mapper_for(record)&.uniqueness_check(record, attr_name, value) || false
+      end
+
+      # Batched answers for a Hash of values: the mapper answers what it can
+      # with one statement; the rest are checked one by one.
+      def uniqueness_taken_many(record, values)
+        mapper = mapper_for(record)
+        return {} unless mapper.respond_to?(:uniqueness_taken_many)
+
+        mapper.uniqueness_taken_many(record, values)
       end
 
       def validator_descriptions(klass, attr_name)
