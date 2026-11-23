@@ -70,13 +70,13 @@ module FactoryBakery
     end
 
     # The root record of a `bake!` is saved by that same call, and a uniqueness
-    # validator checks it again then. Asking the database now as well would
-    # run the same query twice, so the value is left to the save, and
-    # UniquenessRetry regenerates it if the save finds it taken.
+    # validator checks it again then. Asking the database now as well would run
+    # the same query twice, so the value is left to the save and the attribute
+    # is recorded as deferred (see UniquenessRetry).
     def taken_in_database?(attribute, value)
-      return false if deferred_to_save?(attribute)
-
-      FactoryBakery::MapperRegistry.uniqueness_check(@record, attribute, value)
+      deferred = deferred_to_save?(attribute)
+      Provenance.defer(@record, attribute) if deferred
+      deferred ? false : FactoryBakery::MapperRegistry.uniqueness_check(@record, attribute, value)
     end
 
     def deferred_to_save?(attribute)

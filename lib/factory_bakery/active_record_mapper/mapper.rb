@@ -206,16 +206,26 @@ module FactoryBakery
           unique_index_columns(klass).include?(attr_name.to_s)
       end
 
-      # An unconditional uniqueness validator runs on every `save!` and reports
-      # `:taken` on the attribute, so the value can be left to the save. One
-      # with `if:` / `unless:` / `on:` may be skipped by the save, and then a
-      # taken value would reach the database's own constraint instead.
+      # The options a uniqueness validator may carry and still be left to the
+      # save: the save runs the validator whatever these do. Any other option
+      # (a condition, an `on:` / `except_on:` context, `allow_nil` /
+      # `allow_blank`, `strict`, `conditions:`) can make the save skip the
+      # check or fail it differently, and then a taken value would reach the
+      # database's own constraint instead.
+      DEFERRED_UNIQUENESS_OPTIONS = %i[case_sensitive message scope].freeze
+      private_constant :DEFERRED_UNIQUENESS_OPTIONS
+
+      # True when the attribute has at least one uniqueness validator and
+      # every one of them is plain in this sense: an unconditional validator
+      # runs on every `save!` and reports `:taken` on the attribute, so the
+      # value can be left to the save.
       def save_validates_uniqueness?(klass, attr_name)
         return false unless active_record_class?(klass) && klass.respond_to?(:validators_on)
 
-        uniqueness_validators_for(klass, attr_name).any? do |validator|
-          (validator.options.keys & %i[if unless on]).empty?
-        end
+        validators = uniqueness_validators_for(klass, attr_name)
+        return false if validators.empty?
+
+        validators.all? { |validator| (validator.options.keys - DEFERRED_UNIQUENESS_OPTIONS).empty? }
       end
 
       # Unique indexes as column-name arrays, composite included. The
@@ -256,40 +266,20 @@ module FactoryBakery
         return unique_index_taken?(record, attr_name, value) if validators.empty?
 
         validators.any? do |validator|
-          if record.new_record? && plain_uniqueness?(validator, record.class)
-            next plain_value_taken?(record, attr_name, value)
+          probe = build_probe(record, attr_name, value)
+          begin
+            validator.validate_each(probe, attr_name, value)
+          rescue ::ActiveModel::StrictValidationFailed
+            # A `validates!` uniqueness validator reports a taken value by
+            # raising from the probe's errors object instead of adding to it.
+            # Raising is that validator's only taken answer, so the probe
+            # reads it as taken too.
+            next true
           end
 
-          probe = build_probe(record, attr_name, value)
-          validator.validate_each(probe, attr_name, value)
           taken_error?(probe.errors, attr_name)
         end
       end
-
-      # A uniqueness validator with no scope, conditions or case folding, on
-      # the class that declared it, asks the database exactly "is there a row
-      # with this value": the same `SELECT 1 ... LIMIT 1` it would run, minus
-      # copying the record and building an errors object around it. Anything
-      # more (a scope, `conditions:`, `case_sensitive: false`, an STI
-      # subclass whose validator the base class declared) keeps going through
-      # the validator itself.
-      PLAIN_UNIQUENESS_OPTIONS = %i[class message allow_nil allow_blank if unless on].freeze
-      private_constant :PLAIN_UNIQUENESS_OPTIONS
-
-      def plain_uniqueness?(validator, klass)
-        options = validator.options
-        options[:class].equal?(klass) &&
-          options[:case_sensitive] != false &&
-          (options.keys - PLAIN_UNIQUENESS_OPTIONS - [:case_sensitive]).empty?
-      end
-      private :plain_uniqueness?
-
-      # `unscoped` matches the validator, which ignores the default scope. The
-      # candidate is never persisted yet, so there is no own row to exclude.
-      def plain_value_taken?(record, attr_name, value)
-        record.class.unscoped.exists?(attr_name => value)
-      end
-      private :plain_value_taken?
 
       # Does the database already hold `value` in a unique-indexed column? The
       # record's own class scopes the query like the index's table (default

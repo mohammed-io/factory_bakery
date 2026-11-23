@@ -100,6 +100,111 @@ RSpec.describe 'uniqueness deferred to the bake! save' do
     end
   end
 
+  describe 'deferral is limited to plain validators' do
+    it 'does not defer an allow_blank validator, so a blank collision is regenerated instead of hitting the index' do
+      model = define_model('DeferredAllowBlank', code: :string) do
+        validates :code, uniqueness: { allow_blank: true }
+      end
+      model.connection.add_index(model.table_name, :code, unique: true)
+      model.create!(code: '')
+      allow(FFaker::Lorem).to receive(:word).and_return('', 'zeta')
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.code).to eq('zeta')
+      expect(record).to be_persisted
+      expect(model.pluck(:code)).to contain_exactly('', 'zeta')
+    end
+
+    it 'does not defer an except_on validator, so a taken value is regenerated while building' do
+      model = define_model('DeferredExceptOn', code: :string) do
+        validates :code, uniqueness: { except_on: :create }
+      end
+      model.connection.add_index(model.table_name, :code, unique: true)
+      model.create!(code: 'alpha')
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.code).to eq('beta')
+      expect(model.pluck(:code)).to contain_exactly('alpha', 'beta')
+    end
+
+    it 'does not defer when one of two validators is conditional, and regenerates at build time' do
+      model = define_model('DeferredDualValidators', code: :string, kind: :string) do
+        validates :code, uniqueness: { if: -> { false } }
+        validates :code, uniqueness: { scope: :kind }
+      end
+      model.connection.add_index(model.table_name, :code, unique: true)
+      model.create!(code: 'alpha', kind: 'held')
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.code).to eq('beta')
+      expect(model.pluck(:code)).to contain_exactly('alpha', 'beta')
+    end
+
+    it 'does not defer a strict validator, so bake! returns the regenerated value instead of raising' do
+      model = define_model('DeferredStrict', code: :string) do
+        validates! :code, uniqueness: true
+      end
+      model.create!(code: 'alpha')
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
+
+      expect(FactoryBakery.bake!(model, fill_optional: true).code).to eq('beta')
+    end
+  end
+
+  describe 'the retry after a failed save' do
+    it 'propagates an exception an after_create raises, without swallowing or retrying it' do
+      model = define_model('DeferredCallbackBoom', code: :string) do
+        validates :code, uniqueness: true
+      end
+      booms = 0
+      model.class_eval do
+        after_create do
+          booms += 1
+          errors.add(:code, :taken)
+          raise IOError, 'boom'
+        end
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('word')
+
+      expect { FactoryBakery.bake!(model, fill_optional: true) }.to raise_error(IOError, /boom/)
+      expect(booms).to eq(1)
+    end
+
+    it 'stops retrying when a before_validation keeps rewriting the value back to a taken one' do
+      model = define_model('DeferredNoProgress', code: :string) do
+        validates :code, uniqueness: true
+      end
+      model.create!(code: 'fixed')
+      runs = 0
+      model.before_validation do
+        runs += 1
+        self.code = 'fixed'
+      end
+      allow(FFaker::Lorem).to receive(:word).and_return('hello')
+
+      expect { FactoryBakery.bake!(model, fill_optional: true) }
+        .to raise_error(ActiveRecord::RecordInvalid, /taken/)
+      expect(runs).to be <= 2
+    end
+
+    it 'never retries a taken error on an attribute that was not deferred' do
+      model = define_model('DeferredCustomTaken', slug: { type: :string, null: false })
+      passes = 0
+      model.validate do
+        passes += 1
+        errors.add(:slug, :taken)
+      end
+
+      expect { FactoryBakery.bake!(model) }.to raise_error(ActiveRecord::RecordInvalid, /taken/)
+      expect(passes).to eq(1)
+    end
+  end
+
   describe 'nested bakes' do
     it 'checks a parent baked from a declaration block while building' do
       account = define_model('DeferredAccount', code: :string) { validates :code, uniqueness: true }

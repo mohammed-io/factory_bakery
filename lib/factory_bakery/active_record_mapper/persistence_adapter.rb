@@ -27,6 +27,14 @@ module FactoryBakery
         record.save! if record.respond_to?(:save!)
       end
 
+      # True when `error` is a validation failure of exactly this record, so
+      # UniquenessRetry may regenerate what the record's own validations
+      # reported. Any other exception (a database constraint, a callback
+      # error) is never the retry's to fix.
+      def validation_failure?(error, record)
+        error.is_a?(::ActiveRecord::RecordInvalid) && error.record.equal?(record)
+      end
+
       def read_only_parent(parent, owner, entry)
         klass = parent.class
         relation = klass.all

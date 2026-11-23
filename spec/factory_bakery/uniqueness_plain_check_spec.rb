@@ -3,10 +3,10 @@
 require 'spec_helper'
 require 'active_support/notifications'
 
-# A plain uniqueness validator (no scope, conditions or case folding) is checked
-# with a direct existence query. These examples pin what that must keep doing:
-# see rows the bake did not write, ask the database once per unique column,
-# and still honour a validator the base class of an STI hierarchy declared.
+# The uniqueness check asks the model's own validator against a probe copy of
+# the record. These examples pin what that must keep doing: see rows the bake
+# did not write, ask the database once per unique column, and still honour a
+# validator the base class of an STI hierarchy declared.
 RSpec.describe 'plain uniqueness check' do
   include DefineConstantMacros
 
