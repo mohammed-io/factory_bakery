@@ -124,7 +124,7 @@ FactoryBakery.bake(User, fill_optional: [:bio, :website])          # just these 
 [ADR-0006](../adr/0006-required-only-baking-and-verified-fallback.md). The lean record can be invalid for a reason no validator describes, for example a custom validator that needs an optional column. FactoryBakery handles this in two steps:
 
 1. Build the lean record. Probe it with `valid?` **only if** a defaulted column has validators, or the model has validation the gem cannot read (a custom validator, `validates_with`, or a `validate` method). Rails' own autosave validators do not count, so a plain model gets no extra `valid?`.
-2. If the probe says invalid, discard the attempt (its rows roll back in a savepoint when `FactoryBakery.savepoints` is on) and rebuild once with optional columns filled. The required-only result is always preferred.
+2. If the probe says invalid, discard the attempt (its rows always roll back in a savepoint) and rebuild once with optional columns filled. The required-only result is always preferred.
 
 What the fallback adds to errors:
 
@@ -134,7 +134,7 @@ What the fallback adds to errors:
 
 Consequences you should plan for:
 
-- **Declaration blocks can run twice** when the fallback fires. A block with a side effect outside the database (an HTTP call, a counter, a global setting) can repeat. Database writes in the first attempt are rolled back only with `FactoryBakery.savepoints = true`; by default they stay, so a block that saves a parent saves it twice.
+- **Declaration blocks can run twice** when the fallback fires. A block with a side effect outside the database (an HTTP call, a counter, a global setting) can repeat. Database writes of the first attempt are rolled back (each attempt runs in its own savepoint); other side effects are not.
 - A fallback that cannot fix the record returns the record as it is. `bake` does not raise.
 - With `fill_optional: true` globally there is no fallback and no savepoint.
 

@@ -179,6 +179,25 @@ RSpec.describe 'FactoryBakery associations :all mode' do
       expect(post_model.count).to eq(0)
     end
 
+    it 'evaluates a dynamic default scope per child instead of freezing one create scope' do
+      # The create scope reads the target's default_scope too, so a scope
+      # whose value changes per evaluation would be frozen onto every child
+      # if the collection shared one scope object.
+      counter = 0
+      define_model('AllDynScopePost', title: :string, author_id: :integer, position: :integer) do
+        belongs_to :author, class_name: 'AllDynScopeAuthor', optional: true
+        default_scope { where(position: counter += 1) }
+      end
+      author_model = define_model('AllDynScopeAuthor', name: :string) do
+        has_many :posts, class_name: 'AllDynScopePost', inverse_of: :author
+      end
+      FactoryBakery::Associations.default_count = 3
+
+      author = FactoryBakery.bake(author_model)
+
+      expect(author.posts.map(&:position).uniq.size).to eq(3)
+    end
+
     it 'skips optional polymorphic belongs_to' do
       define_model('AllPolyTarget', name: :string)
       comment_model = define_model('AllPolyComment',

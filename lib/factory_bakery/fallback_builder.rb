@@ -116,12 +116,13 @@ module FactoryBakery
     end
 
     # A mapper whose targets open no transactions has no savepoint to rebuild
-    # in; the plain build is the same thing without one. So is every attempt
-    # while `FactoryBakery.savepoints` is off: the discard stays in-memory (the
-    # exception, the generated-record and unique-value bookkeeping), and the
-    # rows the attempt wrote stay.
+    # in; the plain build is the same thing without one. The fallback keeps
+    # its savepoint whatever `FactoryBakery.savepoints` says: the rebuild
+    # re-runs declaration blocks, so a parent the lean attempt saved (one with
+    # a unique value, for example) would fail the rebuild if its rows stayed.
+    # A savepoint is lazy, so it costs nothing until a query runs inside it.
     def transaction(adapter, model_klass, &block)
-      return block.call unless adapter.transactional? && FactoryBakery.savepoints?
+      return block.call unless adapter.transactional?
 
       adapter.transaction(model_klass, &block)
     end

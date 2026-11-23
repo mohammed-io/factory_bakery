@@ -37,13 +37,13 @@ These are documented exceptions. Everything else in a `bake` is database-free.
 | `association :x, persist: true` | The target and its graph are saved with a nested `bake!`. |
 | A declaration block that calls `bake!` or `create!` | Whatever the block saves. |
 | `strategy: :reuse_non_unique` | No write, but it **reads** the database and takes an existing row. |
-| Required-only fallback | With [savepoints](#savepoints) on, the lean attempt is rolled back and nothing remains. With them off (the default), rows the lean attempt wrote stay. |
+| Required-only fallback | The lean attempt's rows are always rolled back, so one copy remains. | Same |
 
 If your tests run inside a transaction, rows from these cases roll back with it.
 
 ## Savepoints
 
-`FactoryBakery.savepoints` (default `false`) decides whether the gem wraps its own attempts in a nested transaction, which is a savepoint when your code already has a transaction. The default matches factory_bot: the gem opens none, so the cost is gone, and a failure leaves whatever it already wrote. Turn it on for atomic `bake!` and an exact fallback rebuild:
+`FactoryBakery.savepoints` (default `false`) decides whether the `bake!` envelope is wrapped in a nested transaction, which is a savepoint when your code already has a transaction. The default matches factory_bot: the gem opens none, so the cost is gone, and a failure leaves whatever `save!` already wrote. Turn it on for atomic `bake!`:
 
 ```ruby
 FactoryBakery.savepoints = true # or config.factory_bakery.savepoints = true in Rails
@@ -52,10 +52,10 @@ FactoryBakery.savepoints = true # or config.factory_bakery.savepoints = true in 
 | | `savepoints = false` (default) | `savepoints = true` |
 | --- | --- | --- |
 | `bake!` fails (invalid root, `IncompletePersistenceError`, `ReadOnlyTargetError`) | `save!` rolls back its own rows. Parents a declaration block or an FK-presence edge saved earlier stay | Every row the bake wrote is rolled back |
-| Verified fallback rebuild | A parent a declaration block saved in the lean attempt is saved again by the rebuild | The lean attempt's rows are rolled back first, so one copy remains |
+| Verified fallback rebuild | The lean attempt's rows are always rolled back, so one copy remains | Same |
 | Optional edges (`:all`) and polymorphic candidates that fail | Rolled back with the attempt, always | Same |
 
-The associations plugin's best-effort edges keep their savepoints with the setting off: they rescue a failed child and carry on, and on PostgreSQL a failed statement outside a savepoint would abort the whole transaction. Only the two envelopes in the table's first rows are switchable.
+The verified fallback's attempts keep their savepoints with the setting off: its rebuild re-runs declaration blocks, so a parent the lean attempt saved would have to be saved again (and a unique one could not be). The associations plugin's best-effort edges keep their savepoints too: they rescue a failed child and carry on, and on PostgreSQL a failed statement outside a savepoint would abort the whole transaction. Only the `bake!` envelope in the table's first row is switchable.
 
 Inside a transactional test none of this is visible: the test's own rollback removes every row.
 

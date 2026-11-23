@@ -63,6 +63,33 @@ RSpec.describe 'framework-managed timestamps' do
     expect(record.created_at).to be_present
   end
 
+  it 'still fills a timestamp a custom validate method demands' do
+    # Rails stamps the timestamps after validation, so a `validate` method that
+    # requires created_at would fail the save if the gem left it to the
+    # framework.
+    demanded = define_model('TsCustomValidated', created_at: timestamps.dup) do
+      validate :created_at_required
+
+      def created_at_required
+        errors.add(:created_at, :blank) if created_at.blank?
+      end
+    end
+
+    expect(FactoryBakery.bake(demanded).created_at).to be_present
+    expect(FactoryBakery.bake!(demanded).reload.created_at).to be_present
+  end
+
+  it 'fills a NOT NULL timestamp again once a baked model turns record_timestamps off' do
+    toggled = define_model('TsToggled', created_at: timestamps.dup)
+
+    expect(FactoryBakery.bake(toggled).created_at).to be_nil
+
+    toggled.record_timestamps = false
+
+    expect(FactoryBakery.bake(toggled).created_at).to be_present
+    expect(FactoryBakery.bake!(toggled)).to be_persisted
+  end
+
   it 'does not touch other datetime columns' do
     event = define_model('TsEvent', starts_at: timestamps.dup)
 

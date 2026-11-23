@@ -126,8 +126,12 @@ module FactoryBakery
       # framework-maintained counters. Counter names are reported separately
       # because the value side fills a NOT NULL counter without a default
       # with 0 instead of leaving it untouched.
+      # Framework-managed timestamps stay guarded only while they are truly
+      # framework-owned, so the cache key reads the live setting: flipping
+      # `record_timestamps` after a first bake must not serve the stale guard.
       def guard_columns(klass)
-        class_memo(klass, :guard_columns) do
+        key = klass.respond_to?(:record_timestamps) && klass.record_timestamps ? :guard_columns : :guard_columns_untimed
+        class_memo(klass, key) do
           FactoryBakery::MapperRegistry::GuardColumns.new(
             names: guard_names(klass).freeze, counter_names: counter_names(klass).freeze
           )
@@ -376,10 +380,14 @@ module FactoryBakery
       # framework writes "now" on `bake!`, and an unsaved `bake` leaves them
       # nil, as `FactoryBot.build` does. A column the app validates (for
       # example `validates :created_at, presence: true`) keeps being filled,
-      # and so does every column of a model that turned timestamps off.
+      # and so does every column of a model that turned timestamps off. A
+      # model with validation the gem cannot read keeps them too: Rails stamps
+      # the timestamps AFTER validation, so a `validate` method demanding
+      # `created_at` would fail the save if the column were left nil.
       def framework_timestamp_names(klass)
         return [] unless klass.respond_to?(:all_timestamp_attributes_in_model)
         return [] unless klass.record_timestamps
+        return [] if custom_validation?(klass)
 
         klass.all_timestamp_attributes_in_model.reject { |name| klass.validators_on(name).any? }
       end

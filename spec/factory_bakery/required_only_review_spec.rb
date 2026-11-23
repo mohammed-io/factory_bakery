@@ -104,7 +104,7 @@ RSpec.describe 'required-only review fixes' do
       end
     end
 
-    it 'leaves one parent row when a declaration block bakes the parent', :savepoints do
+    it 'leaves one parent row when a declaration block bakes the parent' do
       validator = credential_validator
       parent = define_model('ReviewDeclParent', name: :string)
       child = define_model('ReviewDeclChild', token: :string, secret: :string) do
@@ -133,7 +133,7 @@ RSpec.describe 'required-only review fixes' do
         FactoryBakery::Associations.reset_configuration!
       end
 
-      it 'leaves one parent row when the FK column carries the presence validator', :savepoints do
+      it 'leaves one parent row when the FK column carries the presence validator' do
         validator = credential_validator
         parent = define_model('ReviewFkParent', name: :string)
         child = define_model('ReviewFkChild', owner_id: :integer, token: :string, secret: :string) do

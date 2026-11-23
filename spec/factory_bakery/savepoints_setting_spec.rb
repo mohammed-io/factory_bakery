@@ -2,9 +2,11 @@
 
 require 'spec_helper'
 
-# `FactoryBakery.savepoints` decides whether the gem wraps its own attempts in a
-# nested transaction. Off (the default) behaves like factory_bot: nothing the
-# gem does is undone. On, a failed bake! leaves no rows (ADR-0006).
+# `FactoryBakery.savepoints` decides whether the `bake!` envelope is wrapped in
+# a nested transaction. Off (the default) behaves like factory_bot for `bake!`:
+# nothing its own save rolls back is undone. The verified fallback's attempts
+# keep their savepoints either way, so its rebuild always leaves one copy of
+# what a declaration block saved. On, a failed bake! leaves no rows (ADR-0006).
 RSpec.describe 'FactoryBakery.savepoints' do
   include DefineConstantMacros
 
@@ -64,12 +66,12 @@ RSpec.describe 'FactoryBakery.savepoints' do
       [account, owner]
     end
 
-    it 'leaves the first attempt\'s parent behind by default' do
+    it 'leaves one parent row by default' do
       account, owner = fallback_models
 
       expect(FactoryBakery.bake(owner)).to be_valid
 
-      expect(account.count).to eq(2)
+      expect(account.count).to eq(1)
     end
 
     it 'leaves one parent row when savepoints are on' do
@@ -79,6 +81,26 @@ RSpec.describe 'FactoryBakery.savepoints' do
       expect(FactoryBakery.bake(owner)).to be_valid
 
       expect(account.count).to eq(1)
+    end
+
+    it 'lets a declaration that bakes a unique parent succeed on the rebuild by default' do
+      # The declaration block runs in the lean attempt and again in the
+      # rebuild. Without the fallback's own savepoint, the rebuild's
+      # `bake!` of the same unique name would fail with "has already been
+      # taken" against the row the lean attempt left behind.
+      account = define_model('SpFbUniqueAccount', name: :string) do
+        validates :name, uniqueness: true
+      end
+      owner = define_model('SpFbUniqueOwner', name: :string, nickname: :string, account_id: :integer) do
+        belongs_to :account, class_name: 'SpFbUniqueAccount', optional: true
+        validate { errors.add(:nickname, :blank) if nickname.blank? }
+      end
+      FactoryBakery.define(owner) { account { FactoryBakery.bake!(account, name: 'acme') } }
+
+      baked = FactoryBakery.bake(owner)
+
+      expect(baked).to be_valid
+      expect(account.where(name: 'acme').count).to eq(1)
     end
   end
 

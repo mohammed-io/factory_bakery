@@ -46,12 +46,15 @@ module FactoryBakery
           end
         end
 
-        # `create_scope` lets a collection pass the owner's create scope once
-        # for all its children: it reads only the owner, which does not change
-        # while the children are built.
-        def bake_child(object, declaration, entry, automatic: false, create_scope: nil)
+        # `shared_scope` lets a collection pass the owner's create scope once
+        # for all its children, but only when the child class has no default
+        # scopes: `scope_for_create` reads the target's default_scope too, and
+        # a scope whose value changes per evaluation (a counter, a clock) must
+        # not be frozen onto every child. When it is nil, each child asks for
+        # its own.
+        def bake_child(object, declaration, entry, automatic: false, shared_scope: nil)
           klass = target_klass(object, declaration, entry)
-          overrides = child_overrides(object, entry, create_scope).merge(declaration.overrides)
+          overrides = child_overrides(object, entry, shared_scope).merge(declaration.overrides)
           return FactoryBakery.bake(klass, *declaration.traits, **overrides) unless automatic
 
           BuildContext.automatic_build { FactoryBakery.bake(klass, *declaration.traits, **overrides) }
@@ -64,9 +67,12 @@ module FactoryBakery
             return
           end
 
-          shared_scope = create_scope(object, entry)
+          klass = target_klass(object, declaration, entry)
+          if klass.respond_to?(:default_scopes) && klass.default_scopes.empty?
+            shared_scope = create_scope(object, entry)
+          end
           children = Array.new(count) do
-            bake_child(object, declaration, entry, automatic: automatic, create_scope: shared_scope)
+            bake_child(object, declaration, entry, automatic: automatic, shared_scope: shared_scope)
           end
           # concat is the public collection writer. It fires before_add/after_add
           # callbacks and sets the verified inverse on each child.
@@ -81,8 +87,8 @@ module FactoryBakery
           object.association(entry.name.to_sym).send(:scope_for_create)
         end
 
-        def child_overrides(object, entry, create_scope = nil)
-          scope_attributes = create_scope || create_scope(object, entry)
+        def child_overrides(object, entry, shared_scope = nil)
+          scope_attributes = shared_scope || create_scope(object, entry)
           overrides = scope_attributes.transform_keys(&:to_sym)
 
           # Only a verified reverse reflection may bind the inverse object.
