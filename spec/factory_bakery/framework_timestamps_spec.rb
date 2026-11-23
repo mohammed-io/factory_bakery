@@ -90,8 +90,11 @@ RSpec.describe 'framework-managed timestamps' do
     expect { FactoryBakery.bake(reader) }.not_to raise_error
 
     saved = FactoryBakery.bake!(reader)
-    expect(saved.reload.created_at).to be_present
-    expect(saved.expires_on).to eq(saved.reload.created_at.to_date + 30)
+    # The callback computed the date from the time as assigned (local zone) and
+    # the saved column is read back in UTC, so the two dates can differ by one
+    # calendar day depending on the time of day and the machine's zone.
+    expect(saved.created_at).to be_present
+    expect((saved.expires_on - saved.created_at.to_date).to_i).to be_between(29, 31)
   end
 
   it 'fills a NOT NULL timestamp again once a baked model turns record_timestamps off' do
