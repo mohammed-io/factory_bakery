@@ -52,16 +52,14 @@ module FactoryBakery
       # names walks validators, reflections and guard columns, which every
       # bake would otherwise repeat.
       def attribute_universe(klass)
-        class_memo(klass, :@factory_bakery_universe) { compute_attribute_universe(klass).freeze }
+        class_memo(klass, :universe) { compute_attribute_universe(klass).freeze }
       end
 
       # Class-level introspection facts are stable for a loaded class, so they
       # are computed once and kept on the class (a reload drops them with it).
       # Frozen classes are recomputed every time.
-      def class_memo(klass, ivar)
-        return yield if klass.frozen?
-
-        klass.instance_variable_get(ivar) || klass.instance_variable_set(ivar, yield)
+      def class_memo(klass, key, &block)
+        ClassCache.fetch(klass, key, &block)
       end
       private :class_memo
 
@@ -90,8 +88,6 @@ module FactoryBakery
         end
 
         cache = cache_for(klass)
-        return ConstraintReader.call(klass, attr_name.to_s) unless cache
-
         cache[attr_name.to_s] ||= ConstraintReader.call(klass, attr_name.to_s)
       end
 
@@ -102,9 +98,7 @@ module FactoryBakery
         return false unless klass.respond_to?(:validators_on)
 
         name = attr_name.to_s
-        memo = cache_for(klass) && (klass.instance_variable_get(:@factory_bakery_record_dependent) ||
-                                    klass.instance_variable_set(:@factory_bakery_record_dependent, {}))
-        return conditional_validators?(klass, name) unless memo
+        memo = ClassCache.table(klass, :record_dependent)
         return memo[name] if memo.key?(name)
 
         memo[name] = conditional_validators?(klass, name)
@@ -133,7 +127,7 @@ module FactoryBakery
       # because the value side fills a NOT NULL counter without a default
       # with 0 instead of leaving it untouched.
       def guard_columns(klass)
-        class_memo(klass, :@factory_bakery_guard_columns) do
+        class_memo(klass, :guard_columns) do
           FactoryBakery::MapperRegistry::GuardColumns.new(
             names: guard_names(klass).freeze, counter_names: counter_names(klass).freeze
           )
@@ -146,7 +140,7 @@ module FactoryBakery
       # `alias_attribute` names group with their column the same way, so the
       # alias and its column are decided once (issue #61).
       def alias_groups(klass)
-        class_memo(klass, :@factory_bakery_alias_groups) do
+        class_memo(klass, :alias_groups) do
           groups = association_alias_groups(klass)
           attribute_alias_groups(klass).each do |members|
             next if members.any? { |member| groups.key?(member) }
@@ -231,7 +225,7 @@ module FactoryBakery
       # expression index (`lower(name)`) reports its columns as one SQL string,
       # not a column list, so it names no foreign key and is left out.
       def unique_index_groups(klass)
-        class_memo(klass, :@factory_bakery_unique_index_groups) do
+        class_memo(klass, :unique_index_groups) do
           all_unique_indexes(klass)
             .select { |index| index.columns.is_a?(Array) }
             .map { |index| index.columns.map(&:to_s).freeze }.freeze
@@ -514,7 +508,7 @@ module FactoryBakery
       # attribute per bake (is it validated, does it fold case, which
       # validators run), and each ask walked and filtered `validators_on`.
       def uniqueness_validators_for(klass, attr_name)
-        memo = class_memo(klass, :@factory_bakery_uniqueness_validators) { {} }
+        memo = ClassCache.table(klass, :uniqueness_validators)
         memo[attr_name.to_s] ||= klass.validators_on(attr_name).select do |validator|
           validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
         end.freeze
@@ -529,7 +523,7 @@ module FactoryBakery
       # record. A composite index constrains a combination, never one column,
       # so its members are not flagged (the rule the Sequel mapper applies).
       def unique_index_columns(klass)
-        class_memo(klass, :@factory_bakery_unique_index_columns) do
+        class_memo(klass, :unique_index_columns) do
           compute_unique_index_columns(klass).freeze
         end
       end
@@ -552,7 +546,7 @@ module FactoryBakery
       # `notifications.data`). The SQL shapes are matched by the pure JsonCast
       # helper; the reads (index lists, column names) stay in the mapper.
       def json_text_columns(klass)
-        class_memo(klass, :@factory_bakery_json_text_columns) do
+        class_memo(klass, :json_text_columns) do
           compute_json_text_columns(klass).freeze
         end
       end
@@ -632,10 +626,7 @@ module FactoryBakery
       end
 
       def cache_for(klass)
-        return nil if klass.frozen?
-
-        klass.instance_variable_get(:@factory_bakery_constraints) ||
-          klass.instance_variable_set(:@factory_bakery_constraints, {})
+        ClassCache.table(klass, :constraints)
       end
     end
   end

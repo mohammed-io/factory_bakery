@@ -9,7 +9,10 @@ module FactoryBakery
 
     # A reload replaces model classes, so cached polymorphic candidates would
     # point at stale constants; to_prepare runs on boot and on every reload.
-    config.to_prepare { FactoryBakery::ActiveRecordMapper::PolymorphicTargetDiscovery.reset! }
+    config.to_prepare do
+      FactoryBakery::ClassCache.clear_all
+      FactoryBakery::ActiveRecordMapper::PolymorphicTargetDiscovery.reset!
+    end
 
     config.after_initialize do |app|
       FactoryBakery::Railtie.install_associations

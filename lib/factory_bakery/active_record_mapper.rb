@@ -17,6 +17,7 @@ rescue LoadError
 end
 
 if defined?(::ActiveRecord::Base)
+  require_relative 'active_record_mapper/schema_reload'
   require_relative 'active_record_mapper/reflection_cache'
   require_relative 'active_record_mapper/conditional'
   require_relative 'active_record_mapper/association_requirements'

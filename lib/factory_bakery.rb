@@ -6,6 +6,7 @@ require 'json'
 require 'time'
 require_relative 'factory_bakery/version'
 require_relative 'factory_bakery/plugin_registry'
+require_relative 'factory_bakery/class_cache'
 require_relative 'factory_bakery/constraint_set'
 require_relative 'factory_bakery/fill_optional'
 require_relative 'factory_bakery/seed'
@@ -109,6 +110,11 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
     # Test support: clears all plugins so examples stay isolated.
     def reset_plugins!
       PluginRegistry.reset!
+    end
+
+    # Drops every per-class fact the gem has cached (a schema changed under it).
+    def reset_cache!
+      ClassCache.clear_all
     end
 
     def define(target, klass: nil, &block)

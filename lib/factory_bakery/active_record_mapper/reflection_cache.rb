@@ -35,8 +35,7 @@ module FactoryBakery
         private
 
         def cache_for(model_class)
-          model_class.instance_variable_get(:@factory_bakery_reflections) ||
-            model_class.instance_variable_set(:@factory_bakery_reflections, {})
+          ClassCache.table(model_class, :reflections)
         end
       end
     end

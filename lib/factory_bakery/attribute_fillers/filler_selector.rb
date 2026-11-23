@@ -30,8 +30,7 @@ module FactoryBakery
         # bakes of the same class with different state.
         return new(model_class, attr_name).call if model_class.frozen? || record_dependent?(model_class, attr_name)
 
-        cache = model_class.instance_variable_get(:@factory_bakery_fillers) ||
-                model_class.instance_variable_set(:@factory_bakery_fillers, {})
+        cache = FactoryBakery::ClassCache.table(model_class, :fillers)
 
         key = attr_name.to_s
         cached = cache[key]

@@ -224,14 +224,10 @@ module FactoryBakery
       # `register` invalidates it. Frozen classes are resolved every time.
       def mapper_for(klass)
         subject = klass.is_a?(Class) ? klass : klass.class
-        return find_mapper(subject) if subject.frozen?
-
-        generation, mapper = subject.instance_variable_get(:@factory_bakery_mapper)
-        return mapper if generation == mappers.object_id
-
-        mapper = find_mapper(subject)
-        subject.instance_variable_set(:@factory_bakery_mapper, [mappers.object_id, mapper])
-        mapper
+        # The registry's generation (a new `mappers` array per `register`) is the
+        # key, so registering a mapper invalidates the answer; an Integer key
+        # allocates nothing, and this runs dozens of times per bake.
+        ClassCache.fetch(subject, mappers.object_id) { find_mapper(subject) }
       end
 
       def find_mapper(subject)

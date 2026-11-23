@@ -30,10 +30,7 @@ module FactoryBakery
       # like the default mapper does: a bake resolves the same pair many
       # times. Frozen targets are read without caching.
       def constraints_for(klass, attr_name)
-        cache = cache_for(klass)
-        return ConstraintReader.call(klass, attr_name.to_s) unless cache
-
-        cache[attr_name.to_s] ||= ConstraintReader.call(klass, attr_name.to_s)
+        cache_for(klass)[attr_name.to_s] ||= ConstraintReader.call(klass, attr_name.to_s)
       end
 
       # Attributes heuristics must never fill: the primary key plus the
@@ -164,10 +161,7 @@ module FactoryBakery
       # to the constraint cache: an index query per attribute per bake
       # would multiply schema round trips.
       def unique_index_columns(klass)
-        cache = cache_for(klass)
-        return unique_index_columns_uncached(klass) unless cache
-
-        cache[:unique_index_columns] ||= unique_index_columns_uncached(klass)
+        cache_for(klass)[:unique_index_columns] ||= unique_index_columns_uncached(klass)
       end
 
       def unique_index_columns_uncached(klass)
@@ -177,14 +171,11 @@ module FactoryBakery
              .map(&:to_s).uniq
       end
 
-      # The per-class memo shared by constraints and index facts; nil for
-      # frozen classes, which are read without caching (mirroring the
-      # default mapper).
+      # The per-class memo shared by constraints and index facts; a frozen
+      # class gets a throwaway Hash and is read without caching (mirroring
+      # the default mapper).
       def cache_for(klass)
-        return nil if klass.frozen?
-
-        klass.instance_variable_get(:@factory_bakery_sequel_cache) ||
-          klass.instance_variable_set(:@factory_bakery_sequel_cache, {})
+        FactoryBakery::ClassCache.table(klass, :sequel_cache)
       end
     end
   end

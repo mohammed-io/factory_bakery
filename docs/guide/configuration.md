@@ -69,6 +69,7 @@ Details and generators: [Rails](rails.md).
 | Call | Effect |
 | --- | --- |
 | `FactoryBakery.reset_plugins!` | Removes every plugin (associations and attachments included) |
+| `FactoryBakery.reset_cache!` | Drops every per-model-class fact the gem cached (columns, constraints, fillers, ...). Rails does this for you on code reload and on `reset_column_information`; call it yourself if you change a schema or a model's validations behind the gem's back |
 | `FactoryBakery::Associations.reset_configuration!` | Restores plugin defaults and clears this fiber's scope |
 | `FactoryBakery::FillOptional.reset!` | Restores `fill_optional` and clears the fiber scope. Internal, but handy in a spec of your own |
 
