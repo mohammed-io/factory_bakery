@@ -250,11 +250,40 @@ module FactoryBakery
         return unique_index_taken?(record, attr_name, value) if validators.empty?
 
         validators.any? do |validator|
+          if record.new_record? && plain_uniqueness?(validator, record.class)
+            next plain_value_taken?(record, attr_name, value)
+          end
+
           probe = build_probe(record, attr_name, value)
           validator.validate_each(probe, attr_name, value)
           taken_error?(probe.errors, attr_name)
         end
       end
+
+      # A uniqueness validator with no scope, conditions or case folding, on
+      # the class that declared it, asks the database exactly "is there a row
+      # with this value": the same `SELECT 1 ... LIMIT 1` it would run, minus
+      # copying the record and building an errors object around it. Anything
+      # more (a scope, `conditions:`, `case_sensitive: false`, an STI
+      # subclass whose validator the base class declared) keeps going through
+      # the validator itself.
+      PLAIN_UNIQUENESS_OPTIONS = %i[class message allow_nil allow_blank if unless on].freeze
+      private_constant :PLAIN_UNIQUENESS_OPTIONS
+
+      def plain_uniqueness?(validator, klass)
+        options = validator.options
+        options[:class].equal?(klass) &&
+          options[:case_sensitive] != false &&
+          (options.keys - PLAIN_UNIQUENESS_OPTIONS - [:case_sensitive]).empty?
+      end
+      private :plain_uniqueness?
+
+      # `unscoped` matches the validator, which ignores the default scope. The
+      # candidate is never persisted yet, so there is no own row to exclude.
+      def plain_value_taken?(record, attr_name, value)
+        record.class.unscoped.exists?(attr_name => value)
+      end
+      private :plain_value_taken?
 
       # Does the database already hold `value` in a unique-indexed column? The
       # record's own class scopes the query like the index's table (default
@@ -468,16 +497,19 @@ module FactoryBakery
         defined?(::ActiveRecord::Base) && klass < ::ActiveRecord::Base
       end
 
+      # The uniqueness validators of one attribute, memoized on the class like
+      # the other class-level facts: the enforcer asks several times per
+      # attribute per bake (is it validated, does it fold case, which
+      # validators run), and each ask walked and filtered `validators_on`.
       def uniqueness_validators_for(klass, attr_name)
-        klass.validators_on(attr_name).select do |validator|
+        memo = class_memo(klass, :@factory_bakery_uniqueness_validators) { {} }
+        memo[attr_name.to_s] ||= klass.validators_on(attr_name).select do |validator|
           validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
-        end
+        end.freeze
       end
 
       def uniqueness_validator?(klass, attr_name)
-        klass.validators_on(attr_name).any? do |validator|
-          validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
-        end
+        !uniqueness_validators_for(klass, attr_name).empty?
       end
 
       # Columns a single-column UNIQUE index protects, memoized beside the
