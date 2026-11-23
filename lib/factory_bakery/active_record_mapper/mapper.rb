@@ -212,6 +212,18 @@ module FactoryBakery
           unique_index_columns(klass).include?(attr_name.to_s)
       end
 
+      # An unconditional uniqueness validator runs on every `save!` and reports
+      # `:taken` on the attribute, so the value can be left to the save. One
+      # with `if:` / `unless:` / `on:` may be skipped by the save, and then a
+      # taken value would reach the database's own constraint instead.
+      def save_validates_uniqueness?(klass, attr_name)
+        return false unless active_record_class?(klass) && klass.respond_to?(:validators_on)
+
+        uniqueness_validators_for(klass, attr_name).any? do |validator|
+          (validator.options.keys & %i[if unless on]).empty?
+        end
+      end
+
       # Unique indexes as column-name arrays, composite included. The
       # associations strategy asks whether any index covers one of an edge's
       # foreign keys: any uniqueness there makes a reused row wrong, even when

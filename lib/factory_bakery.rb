@@ -47,6 +47,7 @@ require_relative 'factory_bakery/attribute_fillers/acceptance_filler'
 require_relative 'factory_bakery/attribute_fillers/confirmation_filler'
 require_relative 'factory_bakery/attribute_fillers/filler_selector'
 require_relative 'factory_bakery/uniqueness_enforcer'
+require_relative 'factory_bakery/uniqueness_retry'
 
 # Builds model instances from factory definitions and model validation rules.
 # Builds test records from factory declarations and model metadata.
@@ -192,11 +193,11 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
 
     # The root save is the one place a bake's record meets validation; a failure
     # there carries the explanation (see Explanation.around_failed_save).
-    def persist_build!(adapter)
+    def persist_build!(adapter, &build)
       mark = BuildContext.generated_records.length
-      record = yield
+      record = BuildContext.with_persist_root(&build)
       ReadOnlyGuard.new(record, adapter, BuildContext.records_in_current_build).call
-      Explanation.around_failed_save(record) { adapter.save!(record) }
+      Explanation.around_failed_save(record) { UniquenessRetry.save!(record, adapter) }
       BuildContext.finish_persistence!(mark, adapter)
       PersistenceVerifier.new(record, BuildContext.records_in_current_build, adapter).call
       record

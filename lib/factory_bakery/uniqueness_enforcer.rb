@@ -29,9 +29,14 @@ module FactoryBakery
     # Four random bytes as hex: eight characters behind a dash, drawn from the seeded generator.
     ENTROPY_HEX_BYTES = 4
 
-    def initialize(record, heuristic_attribute_names)
+    # `defer_to_save` lets a `bake!` root leave the database check of a value
+    # to the save that follows (see #taken_in_database?). Only the caller that
+    # knows no `valid?` will run before that save may ask for it: a `valid?`
+    # would read the still-unchecked collision as an invalid record.
+    def initialize(record, heuristic_attribute_names, defer_to_save: false)
       @record = record
       @heuristic_attribute_names = Array(heuristic_attribute_names)
+      @defer_to_save = defer_to_save
     end
 
     def call
@@ -64,8 +69,19 @@ module FactoryBakery
       FactoryBakery::BuildContext.unique_value_taken?(registry_key(attribute, value))
     end
 
+    # The root record of a `bake!` is saved by that same call, and a uniqueness
+    # validator checks it again then. Asking the database now as well would
+    # run the same query twice, so the value is left to the save, and
+    # UniquenessRetry regenerates it if the save finds it taken.
     def taken_in_database?(attribute, value)
+      return false if deferred_to_save?(attribute)
+
       FactoryBakery::MapperRegistry.uniqueness_check(@record, attribute, value)
+    end
+
+    def deferred_to_save?(attribute)
+      @defer_to_save && FactoryBakery::BuildContext.persist_root? &&
+        FactoryBakery::MapperRegistry.save_validates_uniqueness?(@record.class, attribute)
     end
 
     # An accepted value is remembered for the rest of this bake, so a sibling
