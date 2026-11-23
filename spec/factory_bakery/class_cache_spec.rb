@@ -66,6 +66,35 @@ RSpec.describe FactoryBakery::ClassCache do
     expect(values.uniq.size).to eq(1)
   end
 
+  it 'clears a class that was cached and then frozen, and still clears the others' do
+    klass = Class.new
+    other = Class.new
+    described_class.fetch(klass, :key) { :stale }
+    described_class.fetch(other, :key) { :kept }
+    klass.freeze
+
+    expect { FactoryBakery.reset_cache! }.not_to raise_error
+    expect(described_class.fetch(klass, :key) { :recomputed }).to eq(:recomputed)
+    # clear_all kept going past the frozen class, so the other class is cleared too.
+    expect(described_class.fetch(other, :key) { :recomputed }).to eq(:recomputed)
+  end
+
+  it 'does not re-publish a stale value whose computation was still in flight when the class was cleared' do
+    klass = Class.new
+    fiber = Fiber.new do
+      described_class.fetch(klass, :k) do
+        Fiber.yield
+        :stale
+      end
+    end
+    fiber.resume
+
+    described_class.clear(klass)
+    fiber.resume
+
+    expect(described_class.fetch(klass, :k) { :fresh }).to eq(:fresh)
+  end
+
   describe 'when a schema changes under a model' do
     include DefineConstantMacros
 

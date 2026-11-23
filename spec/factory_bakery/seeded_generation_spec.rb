@@ -140,5 +140,63 @@ RSpec.describe 'seeded generation' do
       expect { FactoryBakery.bake(named) }.to raise_error(/boom/)
       expect(FFaker::Random.seed).to eq(before_seed)
     end
+
+    it 'draws from its own generator outside a bake' do
+      FFaker::Random.seed = 5
+      first = FFaker::Name.name
+
+      FFaker::Random.seed = 5
+
+      expect(FFaker::Name.name).to eq(first)
+    end
+  end
+
+  describe 'overlapping bakes' do
+    let!(:alpha) do
+      define_model('SeedParallelAlpha', full_name: :string) { validates :full_name, presence: true }
+    end
+
+    let!(:beta) do
+      define_model('SeedParallelBeta', full_name: :string) { validates :full_name, presence: true }
+    end
+
+    def faker_bake(klass, suspend: false)
+      FactoryBakery::Randomness.top_level_bake(klass) do
+        Fiber.yield if suspend
+        FFaker::Name.name
+      end
+    end
+
+    # Each solo bake starts from a fresh seed, so its bake count for the model
+    # is zero and the generator derives from (seed, model, 0) exactly as an
+    # overlapping bake of the same class does.
+    def solo_values
+      [alpha, beta].map do |klass|
+        FactoryBakery.seed = 11
+        faker_bake(klass)
+      end
+    end
+
+    it 'gives two overlapping fibers the values their bakes get when run alone' do
+      solo = solo_values
+
+      FactoryBakery.seed = 11
+      fibers = [alpha, beta].map { |klass| Fiber.new { faker_bake(klass, suspend: true) } }
+      fibers.each(&:resume)
+      values = fibers.map(&:resume)
+
+      expect(values).to eq(solo)
+      expect(FFaker::Random.rng).to be_a(::Random)
+      expect(FFaker::Random.rng).not_to be_a(FactoryBakery::Randomness::LazyRandom)
+    end
+
+    it 'gives two threads baking different classes the values their bakes get when run alone' do
+      solo = solo_values
+
+      FactoryBakery.seed = 11
+      values = [alpha, beta].map { |klass| Thread.new { faker_bake(klass) } }.map(&:value)
+
+      expect(values).to eq(solo)
+    end
   end
 end

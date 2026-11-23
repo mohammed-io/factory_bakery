@@ -19,6 +19,11 @@ module FactoryBakery
       # both compute, and the first to store wins: the facts are pure functions
       # of the class, so the duplicate work is harmless.
       #
+      # The table is captured before the block runs, so a `clear` that happens
+      # while a miss is in flight detaches the table: the late result lands in
+      # the table that was current when the computation started, never in the
+      # fresh one a later `fetch` reads.
+      #
       # A hit is one instance-variable read and one Hash lookup: the class is
       # asked dozens of times per bake, so the hit path allocates nothing.
       def fetch(klass, key)
@@ -27,13 +32,14 @@ module FactoryBakery
         return value unless value.equal?(MISSING)
         return yield if klass.frozen?
 
+        store ||= store_for(klass)
         value = yield
-        store = store_for(klass)
         store.key?(key) ? store[key] : (store[key] = value)
       end
 
       # A per-class Hash for callers that keep a keyed map (a throwaway one for
-      # a frozen class, so writes to it simply do not stick).
+      # a frozen class, so writes to it simply do not stick). Like `fetch`, the
+      # table is read before anything is computed.
       def table(klass, key)
         store = klass.instance_variable_get(IVAR)
         hit = store && store[key]
@@ -43,11 +49,11 @@ module FactoryBakery
         fetch(klass, key) { {} }
       end
 
+      # Leaves a stale entry in the weak map on purpose: a WeakMap cannot
+      # delete (its `delete` arrived in Ruby 3.3), and an entry whose class no
+      # longer holds a table is inert. `clear_all` swaps the map wholesale.
       def clear(klass)
-        @mutex.synchronize do
-          drop(klass)
-          @classes.delete(klass)
-        end
+        @mutex.synchronize { drop(klass) }
       end
 
       def clear_all
@@ -59,8 +65,17 @@ module FactoryBakery
 
       private
 
+      # Never raises for a frozen class, so `clear_all` keeps going through
+      # every class. An unfrozen class loses its instance variable, which
+      # detaches any table a computation in flight still holds; a frozen class
+      # that was cached before it was frozen can only have its table emptied
+      # in place, since instance variables cannot be removed after freezing.
       def drop(klass)
-        klass.remove_instance_variable(IVAR) if klass.instance_variable_defined?(IVAR)
+        if klass.frozen?
+          klass.instance_variable_get(IVAR)&.clear
+        elsif klass.instance_variable_defined?(IVAR)
+          klass.remove_instance_variable(IVAR)
+        end
       end
 
       def store_for(klass)

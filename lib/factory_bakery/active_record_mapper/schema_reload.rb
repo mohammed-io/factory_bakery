@@ -8,9 +8,13 @@ module FactoryBakery
     # calls this on each subclass too, so they are cleared as well.
     module SchemaReload
       # The signature mirrors Rails' own, so the positional default stays.
+      # The cache is cleared only after Rails has reloaded its own schema, so
+      # a computation that runs during the reload reads the new schema rather
+      # than recomputing against the old one.
       def reload_schema_from_cache(recursive = true) # rubocop:disable Style/OptionalBooleanParameter
+        result = super
         FactoryBakery::ClassCache.clear(self)
-        super
+        result
       end
 
       protected :reload_schema_from_cache

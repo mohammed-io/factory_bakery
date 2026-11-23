@@ -186,6 +186,18 @@ RSpec.describe FactoryBakery::Railtie do
     expect { boot_app }.not_to raise_error
   end
 
+  # A reload replaces model classes, so the to_prepare callback must have
+  # cleared the class cache by the time boot finishes: a fact cached before
+  # the boot is recomputed afterwards, for the fresh constant.
+  it 'clears the class cache in the to_prepare callback run at boot' do
+    target = stub_target('RailtiePrepareTarget')
+    FactoryBakery::ClassCache.fetch(target, :fact) { :stale }
+
+    boot_app
+
+    expect(FactoryBakery::ClassCache.fetch(target, :fact) { :fresh }).to eq(:fresh)
+  end
+
   describe 'config.factory_bakery.associations' do
     def define_optional_parent_and_child(prefix)
       parent = define_model("#{prefix}Account", name: :string)
