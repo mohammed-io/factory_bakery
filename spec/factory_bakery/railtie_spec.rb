@@ -191,11 +191,11 @@ RSpec.describe FactoryBakery::Railtie do
   # the boot is recomputed afterwards, for the fresh constant.
   it 'clears the class cache in the to_prepare callback run at boot' do
     target = stub_target('RailtiePrepareTarget')
-    FactoryBakery::ClassCache.fetch(target, :fact) { :stale }
+    FactoryBakery::ClassCache.fetch(target, :@factory_bakery_fact) { :stale }
 
     boot_app
 
-    expect(FactoryBakery::ClassCache.fetch(target, :fact) { :fresh }).to eq(:fresh)
+    expect(FactoryBakery::ClassCache.fetch(target, :@factory_bakery_fact) { :fresh }).to eq(:fresh)
   end
 
   describe 'config.factory_bakery.associations' do

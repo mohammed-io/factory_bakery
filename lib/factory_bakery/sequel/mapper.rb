@@ -175,7 +175,7 @@ module FactoryBakery
       # class gets a throwaway Hash and is read without caching (mirroring
       # the default mapper).
       def cache_for(klass)
-        FactoryBakery::ClassCache.table(klass, :sequel_cache)
+        FactoryBakery::ClassCache.table(klass, FactoryBakery::ClassCache::SEQUEL_CACHE)
       end
     end
   end

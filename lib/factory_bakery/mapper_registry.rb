@@ -219,14 +219,21 @@ module FactoryBakery
       end
 
       # A bake asks for the same class's mapper dozens of times. The answer is
-      # memoized on the class, tagged with the registry generation so a later
-      # `register` invalidates it. Frozen classes are resolved every time.
+      # memoized on the class as a `[generation, mapper]` pair, the generation
+      # being the registry's `mappers` object id, so a later `register`
+      # invalidates it. Frozen classes are resolved every time.
       def mapper_for(klass)
         subject = klass.is_a?(Class) ? klass : klass.class
-        # The registry's generation (a new `mappers` array per `register`) is the
-        # key, so registering a mapper invalidates the answer; an Integer key
-        # allocates nothing, and this runs dozens of times per bake.
-        ClassCache.fetch(subject, mappers.object_id) { find_mapper(subject) }
+        # The hot path is one instance-variable read and no allocation: a
+        # fresh pair is only built when the remembered generation is stale
+        # (a new `mappers` array per `register`), and this runs dozens of
+        # times per bake.
+        entry = subject.instance_variable_get(ClassCache::MAPPER)
+        return entry[1] if entry && entry[0] == mappers.object_id
+
+        mapper = find_mapper(subject)
+        ClassCache.store(subject, ClassCache::MAPPER, [mappers.object_id, mapper])
+        mapper
       end
 
       def find_mapper(subject)

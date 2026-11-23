@@ -52,7 +52,7 @@ module FactoryBakery
       # names walks validators, reflections and guard columns, which every
       # bake would otherwise repeat.
       def attribute_universe(klass)
-        class_memo(klass, :universe) { compute_attribute_universe(klass).freeze }
+        class_memo(klass, ClassCache::UNIVERSE) { compute_attribute_universe(klass).freeze }
       end
 
       # Class-level introspection facts are stable for a loaded class, so they
@@ -98,7 +98,7 @@ module FactoryBakery
         return false unless klass.respond_to?(:validators_on)
 
         name = attr_name.to_s
-        memo = ClassCache.table(klass, :record_dependent)
+        memo = ClassCache.table(klass, ClassCache::RECORD_DEPENDENT)
         return memo[name] if memo.key?(name)
 
         memo[name] = conditional_validators?(klass, name)
@@ -131,7 +131,7 @@ module FactoryBakery
       # `record_timestamps` after a first bake must not serve the stale guard.
       def guard_columns(klass)
         timestamps = klass.respond_to?(:record_timestamps) && klass.record_timestamps
-        key = timestamps ? :guard_columns : :guard_columns_untimed
+        key = timestamps ? ClassCache::GUARD_COLUMNS : ClassCache::GUARD_COLUMNS_UNTIMED
         class_memo(klass, key) do
           FactoryBakery::MapperRegistry::GuardColumns.new(
             names: guard_names(klass, timestamps).freeze, counter_names: counter_names(klass).freeze
@@ -145,7 +145,7 @@ module FactoryBakery
       # `alias_attribute` names group with their column the same way, so the
       # alias and its column are decided once (issue #61).
       def alias_groups(klass)
-        class_memo(klass, :alias_groups) do
+        class_memo(klass, ClassCache::ALIAS_GROUPS) do
           groups = association_alias_groups(klass)
           attribute_alias_groups(klass).each do |members|
             next if members.any? { |member| groups.key?(member) }
@@ -218,7 +218,7 @@ module FactoryBakery
       # expression index (`lower(name)`) reports its columns as one SQL string,
       # not a column list, so it names no foreign key and is left out.
       def unique_index_groups(klass)
-        class_memo(klass, :unique_index_groups) do
+        class_memo(klass, ClassCache::UNIQUE_INDEX_GROUPS) do
           all_unique_indexes(klass)
             .select { |index| index.columns.is_a?(Array) }
             .map { |index| index.columns.map(&:to_s).freeze }.freeze
@@ -479,7 +479,7 @@ module FactoryBakery
       # attribute per bake (is it validated, does it fold case, which
       # validators run), and each ask walked and filtered `validators_on`.
       def uniqueness_validators_for(klass, attr_name)
-        memo = ClassCache.table(klass, :uniqueness_validators)
+        memo = ClassCache.table(klass, ClassCache::UNIQUENESS_VALIDATORS)
         memo[attr_name.to_s] ||= klass.validators_on(attr_name).select do |validator|
           validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
         end.freeze
@@ -494,7 +494,7 @@ module FactoryBakery
       # record. A composite index constrains a combination, never one column,
       # so its members are not flagged (the rule the Sequel mapper applies).
       def unique_index_columns(klass)
-        class_memo(klass, :unique_index_columns) do
+        class_memo(klass, ClassCache::UNIQUE_INDEX_COLUMNS) do
           compute_unique_index_columns(klass).freeze
         end
       end
@@ -517,7 +517,7 @@ module FactoryBakery
       # `notifications.data`). The SQL shapes are matched by the pure JsonCast
       # helper; the reads (index lists, column names) stay in the mapper.
       def json_text_columns(klass)
-        class_memo(klass, :json_text_columns) do
+        class_memo(klass, ClassCache::JSON_TEXT_COLUMNS) do
           compute_json_text_columns(klass).freeze
         end
       end
@@ -571,7 +571,7 @@ module FactoryBakery
       end
 
       def cache_for(klass)
-        ClassCache.table(klass, :constraints)
+        ClassCache.table(klass, ClassCache::CONSTRAINTS)
       end
     end
   end

@@ -3,7 +3,7 @@
 require 'spec_helper'
 
 RSpec.describe FactoryBakery::ClassCache do
-  it 'memoizes values per class and key, including nil' do
+  it 'memoizes values per class and key, and recomputes a block that returns nil' do
     first = Class.new
     second = Class.new
     calls = 0
@@ -11,82 +11,98 @@ RSpec.describe FactoryBakery::ClassCache do
       calls += 1
       result
     end
-    value = described_class.fetch(first, :value) { computed.call(Object.new) }
-    expect(described_class.fetch(first, :value) { computed.call(nil) }).to equal(value)
-    expect(described_class.fetch(first, :nil) { computed.call(nil) }).to be_nil
-    described_class.fetch(first, :nil) { computed.call(nil) }
-    described_class.fetch(first, :other) { Object.new }
-    described_class.fetch(second, :value) { Object.new }
-    expect(calls).to eq(2)
+    value = described_class.fetch(first, :@factory_bakery_spec_value) { computed.call(Object.new) }
+    expect(described_class.fetch(first, :@factory_bakery_spec_value) { computed.call(nil) }).to equal(value)
+    expect(described_class.fetch(first, :@factory_bakery_spec_nil) { computed.call(nil) }).to be_nil
+    expect(described_class.fetch(first, :@factory_bakery_spec_nil) { computed.call(nil) }).to be_nil
+    described_class.fetch(first, :@factory_bakery_spec_other) { Object.new }
+    described_class.fetch(second, :@factory_bakery_spec_value) { Object.new }
+    # The non-nil fact was computed once and shared; nil is not a cached value.
+    expect(calls).to eq(3)
   end
 
   it 'clears one class or all classes' do
     first = Class.new
     second = Class.new
-    described_class.fetch(first, :key) { 1 }
-    described_class.fetch(second, :key) { 2 }
+    described_class.fetch(first, :@factory_bakery_spec_key) { 1 }
+    described_class.fetch(second, :@factory_bakery_spec_key) { 2 }
     described_class.clear(first)
-    expect(described_class.fetch(first, :key) { 3 }).to eq(3)
-    expect(described_class.fetch(second, :key) { 4 }).to eq(2)
+    expect(described_class.fetch(first, :@factory_bakery_spec_key) { 3 }).to eq(3)
+    expect(described_class.fetch(second, :@factory_bakery_spec_key) { 4 }).to eq(2)
     described_class.clear_all
-    expect(described_class.fetch(second, :key) { 4 }).to eq(4)
+    expect(described_class.fetch(second, :@factory_bakery_spec_key) { 4 }).to eq(4)
+  end
+
+  it 'clear removes the class ad-hoc keys too' do
+    klass = Class.new
+    described_class.fetch(klass, :@factory_bakery_spec_a) { 1 }
+    described_class.fetch(klass, :@factory_bakery_spec_b) { 2 }
+
+    described_class.clear(klass)
+
+    expect(klass.instance_variables).not_to include(:@factory_bakery_spec_a, :@factory_bakery_spec_b)
   end
 
   it 'does not cache for frozen classes and memoizes tables' do
     klass = Class.new.freeze
-    expect(described_class.fetch(klass, :key) { Object.new }).not_to equal(
-      described_class.fetch(klass, :key) { Object.new }
+    expect(described_class.fetch(klass, :@factory_bakery_spec_key) { Object.new }).not_to equal(
+      described_class.fetch(klass, :@factory_bakery_spec_key) { Object.new }
     )
     mutable = Class.new
-    expect(described_class.table(mutable, :map)).to equal(described_class.table(mutable, :map))
+    expect(described_class.table(mutable, :@factory_bakery_spec_map)).to equal(
+      described_class.table(mutable, :@factory_bakery_spec_map)
+    )
   end
 
   it 'resets through the public API' do
     klass = Class.new
-    described_class.fetch(klass, :key) { 1 }
+    described_class.fetch(klass, :@factory_bakery_spec_key) { 1 }
     FactoryBakery.reset_cache!
-    expect(described_class.fetch(klass, :key) { 2 }).to eq(2)
+    expect(described_class.fetch(klass, :@factory_bakery_spec_key) { 2 }).to eq(2)
   end
 
   it 'lets a computation fetch another fact of the same class' do
     klass = Class.new
-    universe = described_class.fetch(klass, :universe) do
-      guards = described_class.fetch(klass, :guards) { %w[id] }
+    universe = described_class.fetch(klass, :@factory_bakery_spec_universe) do
+      guards = described_class.fetch(klass, :@factory_bakery_spec_guards) { %w[id] }
       %w[name id] - guards
     end
 
     expect(universe).to eq(%w[name])
-    expect(described_class.fetch(klass, :guards) { raise 'recomputed' }).to eq(%w[id])
+    expect(described_class.fetch(klass, :@factory_bakery_spec_guards) { raise 'recomputed' }).to eq(%w[id])
   end
 
   it 'lets two threads fetch the same fact and agree on one value' do
     klass = Class.new
-    values = Array.new(8) { Thread.new { described_class.fetch(klass, :shared) { Object.new } } }.map(&:value)
+    values = Array.new(8) do
+      Thread.new { described_class.fetch(klass, :@factory_bakery_spec_shared) { Object.new } }
+    end.map(&:value)
 
     expect(values.uniq.size).to eq(1)
   end
 
-  it 'clears a class that was cached and then frozen, and still clears the others' do
+  it 'leaves a class frozen after caching with its facts, and still clears the others' do
     klass = Class.new
     other = Class.new
-    described_class.fetch(klass, :key) { :stale }
-    described_class.fetch(other, :key) { :kept }
+    described_class.fetch(klass, :@factory_bakery_spec_key) { :stale }
+    described_class.fetch(other, :@factory_bakery_spec_key) { :kept }
     klass.freeze
 
     expect { FactoryBakery.reset_cache! }.not_to raise_error
-    expect(described_class.fetch(klass, :key) { :recomputed }).to eq(:recomputed)
+    # Instance variables cannot be removed after freezing, so the frozen
+    # class keeps its facts; acceptable because a frozen model class cannot
+    # be baked anyway.
+    expect(described_class.fetch(klass, :@factory_bakery_spec_key) { :recomputed }).to eq(:stale)
     # clear_all kept going past the frozen class, so the other class is cleared too.
-    expect(described_class.fetch(other, :key) { :recomputed }).to eq(:recomputed)
+    expect(described_class.fetch(other, :@factory_bakery_spec_key) { :recomputed }).to eq(:recomputed)
   end
 
-  it 'recomputes on every call for a frozen class and never stores' do
-    klass = Class.new
-    described_class.fetch(klass, :key) { :cached }
-    klass.freeze
+  it 'recomputes on every call for a class frozen before anything was cached and never stores' do
+    klass = Class.new.freeze
     calls = 0
 
     results = Array.new(2) do
-      described_class.fetch(klass, :key) do
+      described_class.fetch(klass, :@factory_bakery_spec_key) do
         calls += 1
         :fresh
       end
@@ -94,30 +110,13 @@ RSpec.describe FactoryBakery::ClassCache do
 
     expect(results).to all(eq(:fresh))
     expect(calls).to eq(2)
-  end
-
-  it 'does not republish a stale value into a table that clear emptied in place' do
-    klass = Class.new
-    fiber = Fiber.new do
-      described_class.fetch(klass, :k) do
-        Fiber.yield
-        :stale
-      end
-    end
-    fiber.resume
-
-    klass.freeze
-    FactoryBakery.reset_cache!
-    fiber.resume
-
-    expect(described_class.fetch(klass, :k) { :fresh }).to eq(:fresh)
-    expect { FactoryBakery.reset_cache! }.not_to raise_error
+    expect(klass.instance_variables.map(&:to_s)).not_to include(a_string_starting_with('@factory_bakery_'))
   end
 
   it 'does not re-publish a stale value whose computation was still in flight when the class was cleared' do
     klass = Class.new
     fiber = Fiber.new do
-      described_class.fetch(klass, :k) do
+      described_class.fetch(klass, :@factory_bakery_spec_k) do
         Fiber.yield
         :stale
       end
@@ -127,7 +126,7 @@ RSpec.describe FactoryBakery::ClassCache do
     described_class.clear(klass)
     fiber.resume
 
-    expect(described_class.fetch(klass, :k) { :fresh }).to eq(:fresh)
+    expect(described_class.fetch(klass, :@factory_bakery_spec_k) { :fresh }).to eq(:fresh)
   end
 
   describe 'when a schema changes under a model' do

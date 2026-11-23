@@ -35,7 +35,7 @@ module FactoryBakery
         private
 
         def cache_for(model_class)
-          ClassCache.table(model_class, :reflections)
+          ClassCache.table(model_class, ClassCache::REFLECTIONS)
         end
       end
     end

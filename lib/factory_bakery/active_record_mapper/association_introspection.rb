@@ -26,7 +26,7 @@ module FactoryBakery
       def for(klass)
         return nil unless klass.respond_to?(:reflect_on_all_associations)
 
-        ClassCache.fetch(klass, :associations) { build(klass) }
+        ClassCache.fetch(klass, ClassCache::ASSOCIATIONS) { build(klass) }
       end
 
       def build(klass)

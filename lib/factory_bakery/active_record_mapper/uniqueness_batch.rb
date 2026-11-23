@@ -134,7 +134,7 @@ module FactoryBakery
         # order (identifiers and placeholders, never a value), so it is
         # memoized on the class beside the other per-class facts.
         def cached_sql(klass, connection, attributes)
-          FactoryBakery::ClassCache.table(klass, :uniqueness_batch)[attributes.join(',')] ||=
+          FactoryBakery::ClassCache.table(klass, FactoryBakery::ClassCache::UNIQUENESS_BATCH)[attributes.join(',')] ||=
             build_sql(klass, connection, attributes)
         end
 
