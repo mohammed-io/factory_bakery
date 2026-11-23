@@ -62,12 +62,13 @@ module FactoryBakery
       end
 
       # Normalizes a bake target into the class to instantiate and the
-      # declaration block to apply. Classes bake with or without registration;
+      # declaration block to apply. Classes bake with or without registration
+      # (a subclass without its own definition uses its nearest ancestor's);
       # symbols must be registered and never fall back to constantization here.
       def resolve(target)
         case target
         when Class
-          [target, definitions[target]&.builder_proc]
+          [target, nearest_definition(target)&.builder_proc]
         when Symbol
           definition = definitions[target]
           raise FactoryBakery::Error, "No factory is registered for #{target.inspect}" unless definition
@@ -80,6 +81,17 @@ module FactoryBakery
       end
 
       private
+
+      # An exact class definition always wins. Otherwise the nearest ancestor
+      # class with one applies, and modules never match. The bake still
+      # instantiates the subclass; only the declarations are inherited.
+      # Object and BasicObject are never inherited from: every class descends
+      # from them, so a definition there would apply to everything.
+      def nearest_definition(klass)
+        definitions[klass] ||
+          klass.ancestors.grep(Class).take_while { |ancestor| ancestor != Object }
+               .lazy.filter_map { |ancestor| definitions[ancestor] }.first
+      end
 
       # Resolves :admin_user to AdminUser without eval. Called at bake time so
       # definition files can load before the model constants they name exist.
@@ -141,6 +153,7 @@ module FactoryBakery
         apply_values(object, resolved_values(overrides, object), explicit_names(overrides))
         run_after_instantiate(object)
       end
+      announce_left_blank_writers(object, overrides)
       object
     ensure
       @build_is_in_progress = false
@@ -588,6 +601,21 @@ module FactoryBakery
         setter = "#{attribute_name}="
         object.public_send(setter, source_value) if object.respond_to?(setter)
       end
+    end
+
+    # A remote-URL writer that is still blank after the bake, and that nothing
+    # declared or passed (skip counts as declared), was left blank on purpose.
+    def announce_left_blank_writers(object, overrides)
+      supplied = raw_taken_names(overrides).map(&:to_s)
+
+      candidate_attribute_names
+        .reject { |name| supplied.include?(name) }
+        .select { |name| ConstraintSet.for(@model_klass, name).guarded_writer && blank_value?(object, name) }
+        .each { |name| RemoteUrlNotice.announce(@model_klass, name) }
+    end
+
+    def blank_value?(object, name)
+      object.respond_to?(name) && object.public_send(name).to_s.strip.empty?
     end
 
     def normalize_keys(hash)

@@ -41,6 +41,9 @@ Gem::Specification.new do |spec|
 
   # Production
   spec.add_dependency 'ffaker'
+  # FactoryBakery.logger defaults to a stdlib Logger; Ruby 4.0 no longer ships
+  # logger as a default gem.
+  spec.add_dependency 'logger'
   spec.add_dependency 'regexp_parser', '~> 2.9'
 
   # Development

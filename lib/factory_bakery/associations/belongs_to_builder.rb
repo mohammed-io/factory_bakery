@@ -37,10 +37,29 @@ module FactoryBakery
         # object: apps routinely require them to differ.
         def build_value(klass, entry, siblings)
           parent = build_parent(klass, entry, siblings)
-          return [entry.name, parent] unless column_fk?(klass, entry)
+          return [entry.name, parent] unless foreign_key_assigned?(klass, entry)
 
+          [entry.foreign_keys.first, assign_foreign_key_value(parent)]
+        end
+
+        # True when the edge points the record at its parent through the foreign
+        # key column instead of the association writer: the HABTM join model's
+        # synthetic `left_side`, and a belongs_to whose class has no constant
+        # (the writer cannot run without it).
+        def foreign_key_assigned?(klass, entry)
+          column_fk?(klass, entry) || (entry.kind == :belongs_to && entry.class_missing.call)
+        end
+
+        # Stores the parent's id on the owner. A parent with no id yet (an
+        # unsaved parent under a plain bake) leaves the column nil. Under
+        # `bake!` the parent is saved first, so the constraint is satisfied.
+        def assign_foreign_key!(owner, entry, parent)
+          owner.public_send("#{entry.foreign_keys.first}=", assign_foreign_key_value(parent))
+        end
+
+        def assign_foreign_key_value(parent)
           persist_column_fk!(parent) if parent
-          [entry.foreign_keys.first, parent.respond_to?(:id) ? parent.id : nil]
+          parent.respond_to?(:id) ? parent.id : nil
         end
 
         # True for a collection on `klass` that points back to the class whose
@@ -234,7 +253,7 @@ module FactoryBakery
 
         def optional_candidate(klass, entry)
           parent = build_required_parent(klass, entry)
-          persist_column_fk!(parent) if column_fk?(klass, entry)
+          persist_column_fk!(parent) if foreign_key_assigned?(klass, entry)
           raise FactoryBakery::FallbackBuilder::DiscardAttempt if invalid_child?(parent)
 
           parent

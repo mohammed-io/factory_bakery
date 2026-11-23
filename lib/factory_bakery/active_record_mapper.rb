@@ -18,6 +18,7 @@ end
 
 if defined?(::ActiveRecord::Base)
   require_relative 'active_record_mapper/reflection_cache'
+  require_relative 'active_record_mapper/foreign_key_targets'
   require_relative 'active_record_mapper/conditional'
   require_relative 'active_record_mapper/association_requirements'
   require_relative 'active_record_mapper/natural_key'

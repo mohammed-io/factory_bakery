@@ -3,6 +3,7 @@ PATH
   specs:
     factory_bakery (0.0.2.0)
       ffaker
+      logger
       regexp_parser (~> 2.9)
 
 GEM

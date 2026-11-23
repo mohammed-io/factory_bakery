@@ -80,6 +80,9 @@ module FactoryBakery
         end
 
         def assign(object, entry, target)
+          by_foreign_key = BelongsToBuilder.foreign_key_assigned?(object.class, entry)
+          return BelongsToBuilder.assign_foreign_key!(object, entry, target) if by_foreign_key
+
           object.public_send("#{entry.name}=", target)
         end
 

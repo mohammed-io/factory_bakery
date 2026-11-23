@@ -30,11 +30,12 @@ module FactoryBakery
           discovered
         end
 
-        # Test isolation and reload safety: drop cached results and the one-time
-        # eager-load flag.
+        # Test isolation and reload safety: drop cached results, the one-time
+        # eager-load flag and the foreign key constraints read from the database.
         def reset!
           @cache = {}
           @eager_loaded = false
+          ForeignKeyTargets.reset!
         end
 
         # The single descendants read, kept separate so the cache is observable
@@ -60,8 +61,23 @@ module FactoryBakery
           end
 
           FactoryBakery::MapperRegistry::DiscoveredTargets.new(
-            candidates: order(candidates), sources: sources(entry, eager_load)
+            candidates: order(narrow_to_foreign_key(klass, entry, candidates)), sources: sources(entry, eager_load)
           )
+        end
+
+        # A foreign key constraint on the `<assoc>_id` column names the one table
+        # the row may reference, so only candidates stored there can satisfy it.
+        # Doorkeeper's owner_id references users, and an Account candidate would
+        # break that constraint. When no candidate is stored there, the single
+        # loaded model that is may be used, as a missing constant is resolved.
+        def narrow_to_foreign_key(klass, entry, candidates)
+          table = ForeignKeyTargets.referenced_table(klass, entry.foreign_keys)
+          return candidates unless table
+
+          matching = candidates.select { |candidate| ForeignKeyTargets.stores?(candidate, table) }
+          return matching unless matching.empty?
+
+          [ForeignKeyTargets.model_for_table(table)].compact
         end
 
         # A nil domain means no static restriction. An empty intersection

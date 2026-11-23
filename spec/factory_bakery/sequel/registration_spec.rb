@@ -14,7 +14,7 @@ RSpec.describe 'Sequel mapper registration' do
   include DefineSequelModelMacros
 
   it 'raises a helpful FactoryBakery::Error when the sequel gem is absent' do
-    dependency_libs = %w[ffaker regexp_parser].flat_map do |name|
+    dependency_libs = %w[ffaker logger regexp_parser].flat_map do |name|
       ['-I', File.join(Gem::Specification.find_by_name(name).gem_dir, 'lib')]
     end
     code = <<~RUBY

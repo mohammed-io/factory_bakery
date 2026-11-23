@@ -116,7 +116,10 @@ module FactoryBakery
       :inverse_kind,
       # Proc -> (record) => bool: a presence validator on this association
       # whose if:/unless: conditions hold for the given record
-      :presence_applicable
+      :presence_applicable,
+      # Proc -> bool: the declared class has no constant, so the association
+      # writer cannot run and the foreign key is assigned instead
+      :class_missing
     ) do
       # Follow an edge. A target that cannot be resolved is an error at the
       # point of use, but it is reported with the association's name rather

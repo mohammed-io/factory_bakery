@@ -194,19 +194,33 @@ module FactoryBakery
           target: -> { resolve_target(klass, reflection) },
           inverse_name: -> { inverse.call&.name },
           inverse_kind: -> { inverse.call&.macro },
-          presence_applicable: ->(record) { AssociationRequirements.presence_applicable?(klass, reflection, record) }
+          presence_applicable: ->(record) { AssociationRequirements.presence_applicable?(klass, reflection, record) },
+          class_missing: -> { class_missing?(reflection) }
         }
+      end
+
+      # Rails resolves the declared class for its own writer and reader. Without
+      # a constant those raise, so the foreign key is the only way to point the
+      # record at a parent. Polymorphic edges have no single class to ask.
+      def class_missing?(reflection)
+        return false unless reflection.macro == :belongs_to && !reflection.polymorphic?
+
+        reflection.klass
+        false
+      rescue NameError
+        true
       end
 
       # `reflection.klass` is the ordinary resolution. An application may map a
       # stored class name to a class of its own (Discourse maps "ChatMessage" to
-      # Chat::Message), and a belongs_to whose declared class name has no
-      # constant (Chat::MessageSearchData belongs_to :chat_message) still has a
-      # target through that mapping, so the owner is asked before giving up.
+      # Chat::Message), so the owner is asked next. A class name with no constant
+      # at all can still resolve through the database: the owner's foreign key
+      # constraint names the table the row points at. Only then does the original
+      # NameError surface.
       def resolve_target(klass, reflection)
         reflection.klass
-      rescue NameError
-        mapped_target(klass, reflection) || raise
+      rescue NameError => e
+        mapped_target(klass, reflection) || foreign_key_target(klass, reflection) || raise(e)
       end
 
       def mapped_target(klass, reflection)
@@ -216,6 +230,11 @@ module FactoryBakery
         candidate.is_a?(Class) ? candidate : nil
       rescue StandardError
         nil
+      end
+
+      def foreign_key_target(klass, reflection)
+        table = ForeignKeyTargets.referenced_table(klass, reflection.foreign_key)
+        table && ForeignKeyTargets.model_for_table(table)
       end
     end
   end
