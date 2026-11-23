@@ -63,6 +63,29 @@ RSpec.describe 'seeded generation' do
     expect(widget_values).not_to eq(later)
   end
 
+  it 'does not build a random generator when the definition supplies every value' do
+    FactoryBakery.seed = 7
+    FactoryBakery.define(widget) do
+      name { 'fixed' }
+      count { 3 }
+    end
+
+    expect(Random).not_to receive(:new)
+
+    expect(FactoryBakery.bake(widget).attributes.values_at('name', 'count')).to eq(['fixed', 3])
+  end
+
+  it 'builds one random generator shared by generated values and FFaker' do
+    FactoryBakery.seed = 7
+    FactoryBakery.define(widget) do
+      name { FFaker::Name.name }
+    end
+
+    expect(Random).to receive(:new).once.and_call_original
+
+    expect(FactoryBakery.bake(widget).count).to be_a(Integer)
+  end
+
   describe 'FFaker' do
     let!(:named) do
       define_model('SeedNamed', full_name: :string) do

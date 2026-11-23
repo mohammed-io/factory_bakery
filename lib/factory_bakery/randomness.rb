@@ -12,10 +12,37 @@ module FactoryBakery
   # process-wide Random derived from the seed alone.
   #
   # FFaker draws from its own global generator. For the duration of a
-  # top-level bake that generator is seeded from the bake's Random, and its
-  # previous seed is restored afterwards.
+  # top-level bake it is handed the bake's generator, so both share one stream,
+  # and its own generator and seed are put back afterwards.
   module Randomness
     STORAGE_KEY = :factory_bakery_random_scope
+
+    # A generator that builds the real `Random` on its first draw. A
+    # `Random.new` costs 8-13 us (it initializes a 624-word state), and a bake
+    # whose definition supplies every value draws nothing, so it pays nothing.
+    # It answers the calls the gem and FFaker make: `rand`, `bytes`, and
+    # `random:` for `Array#sample` / `#shuffle` (both call `rand`).
+    class LazyRandom
+      attr_reader :seed
+
+      def initialize(seed)
+        @seed = seed
+      end
+
+      def rand(*args)
+        generator.rand(*args)
+      end
+
+      def bytes(count)
+        generator.bytes(count)
+      end
+
+      private
+
+      def generator
+        @generator ||= ::Random.new(seed)
+      end
+    end
 
     # The generator of the top-level bake in flight, with the bake it belongs to.
     Scope = Data.define(:rng, :model, :ordinal)
@@ -47,7 +74,7 @@ module FactoryBakery
         seed = Seed.current.value
         model = model_klass.name || model_klass.inspect
         ordinal = next_ordinal(model)
-        rng = Random.new(derive(seed, model, ordinal))
+        rng = LazyRandom.new(derive(seed, model, ordinal))
         previous = Fiber[STORAGE_KEY]
         Fiber[STORAGE_KEY] = Scope.new(rng:, model:, ordinal:)
         with_faker_generator(rng, &block)
@@ -72,11 +99,11 @@ module FactoryBakery
       end
 
       def process_rng
-        @process_rng ||= Random.new(derive(Seed.current.value, '', 0))
+        @process_rng ||= LazyRandom.new(derive(Seed.current.value, '', 0))
       end
 
       def derive(seed, model, ordinal)
-        Digest::SHA256.digest("#{seed}\0#{model}\0#{ordinal}").unpack1('Q>')
+        Digest::SHA256.digest("#{seed}\0#{model}\0#{ordinal}").unpack1('N')
       end
 
       # FFaker draws from FFaker::Random's generator. Its public `seed=` builds
