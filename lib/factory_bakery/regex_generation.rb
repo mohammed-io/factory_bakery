@@ -3,7 +3,6 @@
 require 'regexp_parser'
 
 require_relative 'regex_generation/limits'
-require_relative 'regex_generation/window'
 require_relative 'regex_generation/codepoints'
 require_relative 'regex_generation/universe'
 require_relative 'regex_generation/node_kind'
@@ -36,14 +35,22 @@ module FactoryBakery
         return nil unless regexp.is_a?(Regexp)
 
         plan = TreeCache.fetch(regexp)
-        window = Window.new(min_length.to_i, max_length || Float::INFINITY)
+        low = min_length.to_i
+        high = max_length || Float::INFINITY
         Limits::MAX_ATTEMPTS.times do
-          candidate = Generator.new(plan, random).call(window)
-          return candidate if candidate && window.cover?(candidate.length) && regexp.match?(candidate)
+          candidate = Generator.new(plan, random).call(low, high)
+          return candidate if fits?(candidate, low, high, regexp)
         end
         nil
       rescue StandardError
         nil
+      end
+
+      private
+
+      # Whether the candidate exists, honours the length bounds and matches.
+      def fits?(candidate, low, high, regexp)
+        !candidate.nil? && candidate.length.between?(low, high) && regexp.match?(candidate)
       end
     end
   end
