@@ -39,7 +39,7 @@ The seed covers only what the gem draws: FFaker inside a bake is seeded, includi
 
 1. Start from the original suite command and its test-order seed. A narrower run changes which bakes ran before, and with them the ordinal.
 2. Once the failure reproduces, narrow it. Check that the error still says the same `bake #N of Model`.
-3. To replay bake #3 of `User` outside the suite, run the two bakes before it, then explain the third. Run it in a transaction that rolls back — the failing model's own pool: `User.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` — plus the same wrapper around any other pool the graph writes to, because `bake!` commits, plain `bake` can still insert raw-FK parents, and a wrapper covers exactly one connection pool:
+3. To replay bake #3 of `User` outside the suite, run the two bakes before it, then explain the third. Run it in a transaction that rolls back — the failing model's own pool: `User.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` — plus the same wrapper around any other pool the graph writes to, because `bake!` commits, plain `bake` can still insert raw-FK parents, and a wrapper covers exactly one connection pool; a plain ActiveModel target writes nothing, so it needs no wrapper:
 
 ```sh
 bundle exec rspec --seed 12345                                 # the original command. Minitest: bin/rails test --seed 12345
@@ -128,7 +128,7 @@ domain { 'example.com' }
 skip :moved_to_account
 ```
 
-**`*_remote_url` writers.** The gem never assigns them, because assigning downloads the URL. Each is left blank, with one WARN per model and attribute. The WARN records a skipped inferred assignment, so keep checking the bake result: a validator may still need that attribute. When blank is not acceptable, supply a value through a definition or an override (and stub the HTTP call). `skip` only omits the assignment and suppresses the WARN. It does not make an invalid record valid.
+**`*_remote_url` writers.** The gem leaves them blank (a NOT NULL column without a default receives `''` through the writer), because assigning downloads the URL. Each gets one WARN per model and attribute. The WARN records a skipped inferred assignment, so keep checking the bake result: a validator may still need that attribute. When blank is not acceptable, supply a value through a definition or an override (and stub the HTTP call). `skip` omits the assignment and suppresses the WARN; on a NOT NULL column without a default it also drops the `''` the gem would write, and `bake!` fails with `NotNullViolation`. It does not make an invalid record valid.
 
 A subclass needs no definition when its parent's inherited one bakes it. A subclass definition replaces the inherited one, so repeat the lines it needs.
 
@@ -152,7 +152,7 @@ Include `FactoryBakery::VERSION`, the validator, the exact message, the seed and
 
 ### 6. Verify
 
-- `FactoryBakery.bake(Model).valid?` is `true`, and `FactoryBakery.bake!(Model)` succeeds twice in a row (catches uniqueness collisions). Bake the failing target — the class, or the named target with its traits and overrides — and put all three calls in the **same** `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` (the failing model's pool, plus the same wrapper around any other pool the graph writes to; for a Sequel model, `model.db.transaction(rollback: :always)`) in the test environment: doctor rolls each probe back separately, so it cannot catch a collision between two consecutive `bake!` calls.
+- `FactoryBakery.bake(Model).valid?` is `true`, and `FactoryBakery.bake!(Model)` succeeds twice in a row (catches uniqueness collisions). Bake the failing target — the class, or the named target with its traits and overrides — and put all three calls in the **same** `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` (the failing model's pool, plus the same wrapper around any other pool the graph writes to; for a Sequel model, `model.db.transaction(rollback: :always)`; a plain ActiveModel target writes nothing, so no wrapper needed) in the test environment: doctor rolls each probe back separately, so it cannot catch a collision between two consecutive `bake!` calls.
 - Replay with the original seed **and** with two other seeds (`FACTORY_BAKERY_SEED=1`, `=2`). A fix that holds for one seed only is a coincidence.
 - With the associations plugin, if the project uses `:all`: `FactoryBakery::Associations.with(mode: :all) { FactoryBakery.bake(Model) }`, inside the transaction wrapper, `RAILS_ENV=test`.
 - Run the affected tests. They must pass exactly as before.

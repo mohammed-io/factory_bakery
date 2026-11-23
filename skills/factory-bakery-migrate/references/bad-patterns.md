@@ -35,9 +35,10 @@ FactoryBakery.define(User) do
 end
 
 # after the approved reduce step: nothing is left to say. A named definition never merges
-# with the class-keyed one: reduced by the same keep rules on its own, it carries its own
-# lines and traits plus every line define(User) keeps, and is empty only when nothing is
-# left under those rules
+# with the class-keyed one: apply the keep rules per target and trait, repeating a class
+# line only when the original named factory had it (parent:/nested) or the model cannot
+# bake without it — never a copied retained line from the regular factory (probed: it
+# turns a nil name into the parent's kept value)
 ```
 
 ## 3. Static `name 'x'`
@@ -149,7 +150,7 @@ To share a record between two blocks of one definition, read the sibling: declar
 
 **Why it hurts.** A class with no definition uses the nearest ancestor class's definition, traits included. An STI subclass often needs nothing: `bake!(Admin)` with `Admin < User` already uses `User`'s definition. A subclass definition **replaces** it entirely (definitions do not merge), so a copy drifts from the original, and a half-copy silently loses lines and traits.
 
-This applies in Phase 7. In the 1:1 step (Phase 3) a subclass factory with its own body is translated with the parent's lines copied in; falling back to inheritance is a Phase 7 drop.
+This applies in Phase 7. In the 1:1 step (Phase 3) a `parent:`/nested subclass factory with its own body is translated with the parent's lines copied in, and a bare `class:` factory keeps only its own lines (an exact `define`, even an empty one — a bare `class:` inherits nothing in factory_bot); falling back to inheritance is a Phase 7 drop.
 
 ```ruby
 # factory_bot

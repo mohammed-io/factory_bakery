@@ -31,11 +31,11 @@ Attributes given on the command line become commented examples. For a model with
 ## Model generator hook
 
 ```sh
-bin/rails g model Post title:string
+bin/rails g model Post title:string        # run with RAILS_ENV=test when the gem is only in group :test
 bin/rails g scaffold Post title:string
 ```
 
-Both also write the stub. The hook takes Rails' `fixture_replacement` slot, so Rails does not write a fixtures file while it is active. `bin/rails g model Child --parent=Parent` generates a subclass, so the stub written for it is **not** inert: an exact `define(Child)` shadows the parent's definition. Delete the stub or fill it (see "Where definitions are written" above).
+Both also write the stub. The hook takes Rails' `fixture_replacement` slot, so Rails does not write a fixtures file while it is active. With the gem only in `group :test`, run these generators with `RAILS_ENV=test`, or the hook is not wired in the current environment (see [troubleshooting.md](troubleshooting.md)). `bin/rails g model Child --parent=Parent` generates a subclass, so the stub written for it is **not** inert: an exact `define(Child)` shadows the parent's definition. Delete the stub or fill it (see "Where definitions are written" above).
 
 `config.factory_bakery.generators`:
 

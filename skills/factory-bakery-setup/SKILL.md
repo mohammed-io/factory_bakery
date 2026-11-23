@@ -159,9 +159,9 @@ Run in order. Stop at the first failure. Rails commands run in the test environm
    The plugin count is `1` with the associations config, and `2` when the attachments plugin is also required. `definition_paths` must list the directory from step 4.
 2. One bake of a real model. It must abort when the record is invalid, so a bad bake cannot print as a pass. Rails, rolled back:
    ```sh
-   RAILS_ENV=test bin/rails runner 'ActiveRecord::Base.transaction { record = FactoryBakery.bake(RealModel); abort FactoryBakery.explain(record) unless record.valid?; puts "#{RealModel} baked and valid"; raise ActiveRecord::Rollback }'
+   RAILS_ENV=test bin/rails runner 'RealModel.transaction(requires_new: true) { record = FactoryBakery.bake(RealModel); abort FactoryBakery.explain(record) unless record.valid?; puts "#{RealModel} baked and valid"; raise ActiveRecord::Rollback }'
    ```
-   Outside Rails, the same check as a script run with `bundle exec ruby`:
+   A wrapper covers one pool; wrap any other pool the graph writes to the same way, each with its own raise. Outside Rails, the same check as a script run with `bundle exec ruby`:
    ```ruby
    require 'factory_bakery'
    # load the app's models here

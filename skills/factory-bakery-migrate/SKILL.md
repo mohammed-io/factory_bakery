@@ -100,7 +100,8 @@ For each factory, write the translation in the **new** directory, following [`tr
 | `strategy: :create` | `persist: true` |
 | `author { create(:user) }` | `association :author, User, persist: true`. Keep it saved: the old factory saved the parent. If a sibling block reads `author`, keep `author { FactoryBakery.bake!(User) }`: with an explicit `association`, a sibling block that reads it gets nil and the edge is then not built at all (the record can end up invalid). Keep the attribute block |
 | `parent:` / nested factory, same class | `define(:admin, klass: User)` repeating the parent's lines, so the call stays a pure rename: `bake!(:admin)`. Not a trait, not a call-site argument |
-| `class: 'Admin'` where `Admin < User` | Register an exact `define(Admin)` with the factory's own lines — also when the body is empty (`define(Admin) {}`): a bare `class:` inherits no factory_bot factory, and the empty exact definition shadows the unintended ancestor definition. Falling back to inheritance is a Phase 7 drop |
+| A factory naming a subclass with no `parent:` (`class: 'Admin'`, `Admin < User`) | Register an exact `define(Admin)` with the factory's own lines — even when the body is empty (`define(Admin) {}`), because a bare `class:` inherits no factory_bot factory and the empty exact definition shadows the unintended ancestor definition. Falling back to inheritance is a Phase 7 drop |
+| `parent:` / nested factory with `class: 'Admin'` (`Admin < User`) | An empty body translates to nothing: `bake!(Admin)` uses `define(User)`. With a body, in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
 | `skip_create`, `to_create` | **Blocker.** `bake!` always calls `save!` |
 | a construct in the "not supported" class | Do not guess. Note it in the blocker list |
 
@@ -114,12 +115,12 @@ Run doctor in the test environment, naming the translated models. It runs `bake`
 RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'
 ```
 
-If the task is missing (older gem), run `FactoryBakery.bake(Model).valid?` and `bake!` per model inside `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }`. Failures go to the diagnostics skill. Do not simplify anything yet.
+If the task is missing (older gem), run `FactoryBakery.bake(Model).valid?` and `bake!` per model inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` — the model's own class. A wrapper covers one pool; wrap any other pool the graph writes to the same way, each with its own raise. Failures go to the diagnostics skill. Do not simplify anything yet.
 
-Doctor bakes actual class targets only; a named target (`bake(:admin)`) never reaches it. Verify each used named target and trait combination directly, with the verb the migrated call sites use — `bake!` for a former `create` call, then `persisted?` — in the test environment, inside `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }`, and repeat the check after simplifying:
+Doctor bakes actual class targets only; a named target (`bake(:admin)`) never reaches it. Verify each used named target and trait combination directly, with the verb the migrated call sites use — `bake!` for a former `create` call, then `persisted?` — in the test environment, inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` (the target's own class), and repeat the check after simplifying:
 
 ```sh
-RAILS_ENV=test bin/rails runner 'ActiveRecord::Base.transaction { r = FactoryBakery.bake!(:admin, :published); abort FactoryBakery.explain(r) unless r.valid? && r.persisted?; raise ActiveRecord::Rollback }'
+RAILS_ENV=test bin/rails runner 'User.transaction(requires_new: true) { r = FactoryBakery.bake!(:admin, :published); abort FactoryBakery.explain(r) unless r.valid? && r.persisted?; raise ActiveRecord::Rollback }'
 ```
 
 ### Phase 5. Rewrite call sites. Renames only (two-way)
@@ -150,7 +151,7 @@ Any `FAIL` means stop and revert that change. Read every `REVIEW`.
 | Full suite vs baseline | Same example count, same failures, same pending/skipped |
 | Test diff | Renames only (rename check clean or fully reviewed) |
 | `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'` for every baked model | Passes |
-| Every used named target + trait combination (`bake!(:admin, :published)`) exercised directly with the migrated verb — `bake!` plus `persisted?` for a former `create` call — in the test environment, inside `ActiveRecord::Base.transaction { ...; raise ActiveRecord::Rollback }`. Doctor runs for class targets only | Passes; repeated after simplifying a named definition |
+| Every used named target + trait combination (`bake!(:admin, :published)`) exercised directly with the migrated verb — `bake!` plus `persisted?` for a former `create` call — in the test environment, inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` (the target's own class). Doctor runs for class targets only | Passes; repeated after simplifying a named definition |
 | Suite run with two different seeds (`rspec --seed A`, then `--seed B`, or `FACTORY_BAKERY_SEED`) | Same result |
 | No leftover use of the old library in tests | Search `create(`, `build(`, `FactoryBot`, `Fabricate`, `.make` |
 
@@ -177,7 +178,7 @@ Start only when Phase 6 is green and committed.
 5. Keep a line only for one of these reasons, and say which:
    - **A test depends on that exact value** (asserts on it, or looks the record up by it).
    - **The model cannot bake without it** (custom validator, registry, format, side-effecting setter, cross-record rule, cycle, read-only view, `persist:` need). The gem does not search for an enum, boolean or STI value that passes a custom validator ([ADR-0008](../../docs/adr/0008-user-chooses-domain-values.md)), so that line stays.
-6. Keep every **named** definition (`define(:admin, klass: User)`): without it `bake!(:admin)` raises `No factory is registered for :admin`. A named definition never merges with the class-keyed one. Reduce it by the same keep rules on its own: it carries its own lines and traits plus every line `define(User)` keeps, because the model cannot bake without them. It may be empty only when nothing is left under those rules.
+6. Keep every **named** definition (`define(:admin, klass: User)`): without it `bake!(:admin)` raises `No factory is registered for :admin`. A named definition never merges with the class-keyed one. Apply the keep rules per target and trait: the named definition repeats a class line only when the original named factory had it (inherited via `parent:`/nested) or the model cannot bake without it. Never copy a regular factory's retained line into an independent named factory: it changes the bake (probed: the copy turns a nil name into the parent's kept value). It may be empty only when nothing is left under those rules.
 7. Re-run the Phase 6 checks. Commit.
 
 ### Phase 8. Report blockers and results (two-way)
