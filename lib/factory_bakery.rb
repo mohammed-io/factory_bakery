@@ -13,6 +13,7 @@ require_relative 'factory_bakery/randomness'
 require_relative 'factory_bakery/provenance'
 require_relative 'factory_bakery/explanation'
 require_relative 'factory_bakery/seed_api'
+require_relative 'factory_bakery/savepoint_setting'
 require_relative 'factory_bakery/required_attribute'
 require_relative 'factory_bakery/fallback_builder'
 require_relative 'factory_bakery/mapper_registry'
@@ -57,6 +58,7 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
   class ReadOnlyTargetError < Error; end
 
   extend SeedApi
+  extend SavepointSetting
 
   class << self
     attr_writer :definition_paths, :max_bake_depth
@@ -76,25 +78,6 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
     # `%w[bio]` behave the same and a typo such as `'true'` raises.
     def fill_optional=(value)
       FillOptional.global = value.nil? ? false : normalize_fill_optional(value)
-    end
-
-    # Whether the gem wraps its own all-or-nothing envelopes in a nested
-    # transaction (a savepoint when the caller already holds a transaction):
-    # the `bake!` wrapper and the verified fallback's attempts. Off by default,
-    # which is how factory_bot behaves: a failed `bake!` or a discarded
-    # fallback attempt can leave the rows it already wrote (a spec's own
-    # transaction cleans them up). Turn it on to have them rolled back
-    # (ADR-0006). The associations plugin's best-effort edges keep their
-    # savepoints either way: they rescue a failed child and carry on, and on
-    # PostgreSQL a failed statement outside a savepoint would poison the whole
-    # transaction. Only targets whose mapper reports them as transactional are
-    # affected.
-    def savepoints=(value)
-      @savepoints = value ? true : false
-    end
-
-    def savepoints?
-      @savepoints == true
     end
 
     # No paths are configured until the host app (or the Railtie) sets them.
