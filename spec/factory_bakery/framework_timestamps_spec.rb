@@ -1,0 +1,71 @@
+# frozen_string_literal: true
+
+require 'spec_helper'
+
+# ActiveRecord stamps created_at / updated_at itself on save, so a bake leaves
+# them to the framework instead of generating random past times for them.
+RSpec.describe 'framework-managed timestamps' do
+  let(:timestamps) { { type: :datetime, null: false } }
+
+  let!(:article) do
+    define_model('TsArticle', title: :string, created_at: timestamps.dup, updated_at: timestamps.dup) do
+      validates :title, presence: true
+    end
+  end
+
+  it 'leaves the timestamps of an unsaved bake empty, like FactoryBot.build' do
+    record = FactoryBakery.bake(article)
+
+    expect([record.created_at, record.updated_at]).to all(be_nil)
+    expect(record.title).to be_present
+  end
+
+  it 'lets ActiveRecord stamp "now" when the record is saved' do
+    before = Time.now.utc - 1
+    record = FactoryBakery.bake!(article)
+
+    expect(record).to be_persisted
+    expect(record.created_at).to be >= before
+    expect(record.updated_at).to be >= before
+  end
+
+  it 'keeps an explicit override' do
+    stamp = Time.utc(2020, 1, 2, 3, 4, 5)
+
+    record = FactoryBakery.bake!(article, created_at: stamp)
+
+    expect(record.created_at).to eq(stamp)
+  end
+
+  it 'keeps a value declared by a definition' do
+    stamp = Time.utc(2019, 6, 7, 8, 9, 10)
+    FactoryBakery.define(article) { created_at { stamp } }
+
+    expect(FactoryBakery.bake(article).created_at).to eq(stamp)
+  end
+
+  it 'still fills a timestamp the model validates' do
+    validated = define_model('TsValidated', created_at: timestamps.dup) do
+      validates :created_at, presence: true
+    end
+
+    expect(FactoryBakery.bake(validated).created_at).to be_present
+  end
+
+  it 'still fills the timestamps of a model that turned record_timestamps off' do
+    manual = define_model('TsManual', created_at: timestamps.dup, updated_at: timestamps.dup) do
+      self.record_timestamps = false
+    end
+
+    record = FactoryBakery.bake!(manual)
+
+    expect(record).to be_persisted
+    expect(record.created_at).to be_present
+  end
+
+  it 'does not touch other datetime columns' do
+    event = define_model('TsEvent', starts_at: timestamps.dup)
+
+    expect(FactoryBakery.bake(event).starts_at).to be_present
+  end
+end

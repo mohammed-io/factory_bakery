@@ -274,6 +274,27 @@ RSpec.describe 'FactoryBakery plugin registry' do
       expect(FactoryBakery.bake(model).nickname).not_to eq('from-plugin')
     end
 
+    it 'stops offering a plugin DSL method once the plugin is unregistered, after bakes already used it' do
+      model = define_model('DslLifecycleUser', name: :string, nickname: :string)
+      plugin = plugin_with(dsl: recording_dsl(:nickname_tag), after: uppercasing_after)
+      FactoryBakery.register_plugin(plugin)
+      FactoryBakery.define(model) { nickname_tag 'nickname' }
+      expect { FactoryBakery.bake(model, nickname: 'ada') }.not_to raise_error
+
+      FactoryBakery.unregister_plugin(plugin)
+
+      expect { FactoryBakery.bake(model) }.to raise_error(FactoryBakery::Error, /Use nickname_tag|Static attributes/)
+    end
+
+    it 'offers a DSL method of a plugin registered after earlier bakes' do
+      model = define_model('DslLateUser', name: :string, nickname: :string)
+      FactoryBakery.bake(model)
+      FactoryBakery.register_plugin(plugin_with(dsl: recording_dsl(:nickname_tag), after: uppercasing_after))
+      FactoryBakery.define(model) { nickname_tag 'nickname' }
+
+      expect(FactoryBakery.bake(model, nickname: 'ada').nickname).to eq('ADA')
+    end
+
     it 'leaves the no-plugin path unchanged' do
       model = define_model('NoPluginUser', name: :string, city: :string)
       FactoryBakery.define(model) do

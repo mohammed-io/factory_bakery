@@ -46,9 +46,12 @@ module FactoryBakery
           end
         end
 
-        def bake_child(object, declaration, entry, automatic: false)
+        # `create_scope` lets a collection pass the owner's create scope once
+        # for all its children: it reads only the owner, which does not change
+        # while the children are built.
+        def bake_child(object, declaration, entry, automatic: false, create_scope: nil)
           klass = target_klass(object, declaration, entry)
-          overrides = child_overrides(object, entry).merge(declaration.overrides)
+          overrides = child_overrides(object, entry, create_scope).merge(declaration.overrides)
           return FactoryBakery.bake(klass, *declaration.traits, **overrides) unless automatic
 
           BuildContext.automatic_build { FactoryBakery.bake(klass, *declaration.traits, **overrides) }
@@ -61,7 +64,10 @@ module FactoryBakery
             return
           end
 
-          children = Array.new(count) { bake_child(object, declaration, entry, automatic: automatic) }
+          shared_scope = create_scope(object, entry)
+          children = Array.new(count) do
+            bake_child(object, declaration, entry, automatic: automatic, create_scope: shared_scope)
+          end
           # concat is the public collection writer. It fires before_add/after_add
           # callbacks and sets the verified inverse on each child.
           object.public_send(entry.name).concat(children)
@@ -69,10 +75,14 @@ module FactoryBakery
 
         private
 
-        def child_overrides(object, entry)
-          # Rails keeps build-time attributes on the association itself; they
-          # are exactly what `association.build` writes to a new record.
-          scope_attributes = object.association(entry.name.to_sym).send(:scope_for_create)
+        # Rails keeps build-time attributes on the association itself; they
+        # are exactly what `association.build` writes to a new record.
+        def create_scope(object, entry)
+          object.association(entry.name.to_sym).send(:scope_for_create)
+        end
+
+        def child_overrides(object, entry, create_scope = nil)
+          scope_attributes = create_scope || create_scope(object, entry)
           overrides = scope_attributes.transform_keys(&:to_sym)
 
           # Only a verified reverse reflection may bind the inverse object.

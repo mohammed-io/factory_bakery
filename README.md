@@ -390,6 +390,7 @@ A column filled only because you opted in is verified as well: when a custom val
 | `belongs_to` foreign keys and polymorphic pairs | `account_id`, `commentable_type` / `commentable_id` | Left `nil`; a made-up row or class name would dangle |
 | STI inheritance column | `type` | Left to Rails (the subclass's name, or `nil` on the base) |
 | Counter cache | `comments_count` | Left to Rails: the DB default is kept, else `0` if NOT NULL with no default, else `nil` |
+| Framework timestamps | `created_at`, `updated_at` | Left to ActiveRecord: `nil` on an unsaved `bake`, the current time after `bake!`. A validated timestamp or `record_timestamps = false` is still filled |
 | No information | A nullable column or PORO attribute with no validator | Left `nil` |
 
 Name-, title-, slug-, key- and label-like string attributes get a six-digit random suffix (`"Voluptas 482193"`, `"voluptas-482193"`) so values your app derives from them — a `slug` computed from `name`, a normalized key — stay distinct across bakes even though that derivation is invisible to validators. Emails, identifier-like names (`username`, `login`, …), declared formats and explicit values are unaffected, and length limits truncate the base while keeping the suffix.

@@ -16,7 +16,6 @@ module FactoryBakery
   # previous seed is restored afterwards.
   module Randomness
     STORAGE_KEY = :factory_bakery_random_scope
-    FFAKER_SEED_LIMIT = 2**62
 
     # The generator of the top-level bake in flight, with the bake it belongs to.
     Scope = Data.define(:rng, :model, :ordinal)
@@ -51,7 +50,7 @@ module FactoryBakery
         rng = Random.new(derive(seed, model, ordinal))
         previous = Fiber[STORAGE_KEY]
         Fiber[STORAGE_KEY] = Scope.new(rng:, model:, ordinal:)
-        with_faker_seed(rng.rand(FFAKER_SEED_LIMIT), &block)
+        with_faker_generator(rng, &block)
       ensure
         Fiber[STORAGE_KEY] = previous
       end
@@ -80,12 +79,21 @@ module FactoryBakery
         Digest::SHA256.digest("#{seed}\0#{model}\0#{ordinal}").unpack1('Q>')
       end
 
-      def with_faker_seed(seed)
-        previous = FFaker::Random.seed
-        FFaker::Random.seed = seed
+      # FFaker draws from FFaker::Random's generator. Its public `seed=` builds
+      # a new Random (about 12-20 us on Ruby 4), and restoring the previous seed
+      # builds another, so a bake that went through it paid for three
+      # generators. The bake's own generator is handed over instead, and FFaker's
+      # previous generator and seed are put back untouched afterwards, so
+      # FFaker's own stream also resumes exactly where the bake interrupted it.
+      def with_faker_generator(rng)
+        faker = FFaker::Random
+        previous = [faker.instance_variable_get(:@seed), faker.instance_variable_get(:@rng)]
+        faker.instance_variable_set(:@seed, rng.seed)
+        faker.instance_variable_set(:@rng, rng)
         yield
       ensure
-        FFaker::Random.seed = previous
+        faker.instance_variable_set(:@seed, previous[0])
+        faker.instance_variable_set(:@rng, previous[1])
       end
     end
   end

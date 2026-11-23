@@ -335,6 +335,7 @@ module FactoryBakery
       def guard_names(klass)
         names = belongs_to_guard_names(klass)
         names.concat(counter_names(klass))
+        names.concat(framework_timestamp_names(klass))
         names << sti_discriminator_name(klass)
         names << primary_key_name(klass)
         names.compact.uniq
@@ -342,6 +343,20 @@ module FactoryBakery
 
       def counter_names(klass)
         CounterCacheDetector.new(klass).column_names
+      end
+
+      # `created_at` / `updated_at` (and the `_on` spellings) that ActiveRecord
+      # stamps itself on save. A NOT NULL column without a default would count
+      # as required and get a random past time, which is wasted work: the
+      # framework writes "now" on `bake!`, and an unsaved `bake` leaves them
+      # nil, as `FactoryBot.build` does. A column the app validates (for
+      # example `validates :created_at, presence: true`) keeps being filled,
+      # and so does every column of a model that turned timestamps off.
+      def framework_timestamp_names(klass)
+        return [] unless klass.respond_to?(:all_timestamp_attributes_in_model)
+        return [] unless klass.record_timestamps
+
+        klass.all_timestamp_attributes_in_model.reject { |name| klass.validators_on(name).any? }
       end
 
       # Columns behind a belongs_to cannot be guessed: a random FK dangles

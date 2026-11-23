@@ -97,5 +97,25 @@ RSpec.describe 'seeded generation' do
 
       expect(FFaker::Random.seed).to eq(previous)
     end
+
+    it 'leaves FFaker\'s own value stream where it was, as if the bake never drew from it' do
+      FFaker::Random.seed = 1234
+      expected = Array.new(3) { FFaker::Name.name }
+
+      FFaker::Random.seed = 1234
+      FactoryBakery.seed = 7
+      FactoryBakery.bake(named)
+
+      expect(Array.new(3) { FFaker::Name.name }).to eq(expected)
+    end
+
+    it 'restores FFaker even when the bake raises' do
+      FFaker::Random.seed = 99
+      before_seed = FFaker::Random.seed
+      FactoryBakery.define(named) { full_name { raise 'boom' } }
+
+      expect { FactoryBakery.bake(named) }.to raise_error(/boom/)
+      expect(FFaker::Random.seed).to eq(before_seed)
+    end
   end
 end

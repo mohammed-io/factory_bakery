@@ -8,13 +8,19 @@
 
 ### Reproducible seeds and explained rejections
 
-- Every generated value now derives from one seed, resolved on first use: `FACTORY_BAKERY_SEED`, then `FactoryBakery.seed =` (one setting: an Integer, or a callable such as `-> { MyCI.build_number }` that returns one, called lazily when the seed is resolved; anything else raises `ArgumentError`), then the test framework's seed (`require 'factory_bakery/rspec'` for RSpec's seed, `require 'factory_bakery/minitest'` for Minitest's), else a random seed per process. Each top-level bake draws from its own generator derived from the seed, the model's class name and its bake count, so a model's values do not depend on which models were baked before it. FFaker is seeded per top-level bake and restored afterwards.
+- Every generated value now derives from one seed, resolved on first use: `FACTORY_BAKERY_SEED`, then `FactoryBakery.seed =` (one setting: an Integer, or a callable such as `-> { MyCI.build_number }` that returns one, called lazily when the seed is resolved; anything else raises `ArgumentError`), then the test framework's seed (`require 'factory_bakery/rspec'` for RSpec's seed, `require 'factory_bakery/minitest'` for Minitest's), else a random seed per process. Each top-level bake draws from its own generator derived from the seed, the model's class name and its bake count, so a model's values do not depend on which models were baked before it. FFaker draws from that same generator for the duration of the bake, and its own generator and seed are put back afterwards.
 - Each seed resolution is announced once through `FactoryBakery.logger` (stderr by default; `nil` silences it): INFO when the test framework supplied the seed, WARN otherwise, naming the source and the reproduce command.
 - A `bake!` whose root record fails validation raises the same error class with the explanation appended after Rails' original message: the invalid attributes and errors, the random values FactoryBakery chose, the seed with its reproduce command (`rspec --seed N` under RSpec, `FACTORY_BAKERY_SEED=N` otherwise), and a `FactoryBakery.define` snippet that pins each value. There is no retry.
 - `FactoryBakery.explain(record)` returns the same text for a record built with plain `bake`, after running `valid?`.
 - `bin/rails factory_bakery:doctor` prints the explanation under each failing model. New diagnostics entry: [random-value-rejected-by-app-rule](docs/diagnostics.md#random-value-rejected-by-app-rule).
 - The install generator's initializer requires the test framework's seed integration when it finds a `spec` or `test` directory.
 - **Behavior change:** generated values now differ from earlier releases for the same run, because the gem no longer draws from Ruby's global RNG (`srand` no longer makes baked values repeatable; use the seed settings above). Relative dates are still computed from the clock.
+
+### Performance
+
+- A bake builds one random generator instead of three (FFaker now shares the bake's generator rather than being reseeded and restored), the plugin DSL is attached once per builder class instead of once per bake, and `has_many` children read the owner's create scope once. Flat `bake` is about 40% faster, a three-model `belongs_to` chain about 30%.
+- **Behavior change:** `created_at` / `updated_at` (and `_on`) are no longer generated when ActiveRecord manages them (`record_timestamps` on, no validator on the column). An unsaved `bake` leaves them `nil`, like `FactoryBot.build`; `bake!` lets ActiveRecord stamp the current time. Pass a value (`bake(Post, created_at: 3.days.ago)` or a `define` block) to set one. A validated timestamp, or a model with `record_timestamps = false`, is still filled.
+- Values generated for a given seed differ from the previous unreleased build, because FFaker and the bake share one generator.
 
 ### Association DSL
 

@@ -97,6 +97,7 @@ Not covered: a unique **composite** index, a unique rule enforced in a callback,
 | Polymorphic `*_type` / `*_id` | A made-up class name dangles | Same |
 | STI `type` column | Owned by Rails | Bake the subclass |
 | Counter caches | Maintained by Rails. A NOT NULL counter with no default gets `0` | |
+| `created_at` / `updated_at` (`_on` too) | ActiveRecord stamps them on save. An unsaved `bake` leaves them `nil`, like `FactoryBot.build`; a validated one, or a model with `record_timestamps = false`, is still filled | An override or a `define` block |
 | Writers named `*_remote_url`, `remote_url`, `remote_*url` | They usually download. A NOT NULL column with no default gets `''` | Declare it, override it, or use `skip` |
 | Optional columns (default mode) | Nothing needs them | `fill_optional` |
 | `has_many_attached` | No single file to pick | Declare it |

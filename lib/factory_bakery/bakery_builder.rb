@@ -54,6 +54,19 @@ module FactoryBakery
     class << self
       attr_reader :definitions
 
+      # The builder class for the plugins registered right now: this class with
+      # the plugins' DSL module included. Extending every new builder with the
+      # module created a singleton class per bake; the class is built once per
+      # module instead, and is kept on the module so it goes away with it when
+      # the registry rebuilds (a plugin registered or removed).
+      def for_current_plugins
+        scope = PluginRegistry.dsl_scope_module
+        return self unless scope
+
+        scope.instance_variable_get(:@factory_bakery_builder_class) ||
+          scope.instance_variable_set(:@factory_bakery_builder_class, Class.new(self) { include scope })
+      end
+
       # Registers a definition under a class or a symbol name. Class and symbol
       # keys are independent, and re-registering a key overwrites it so
       # definition files can be reloaded safely.
@@ -184,8 +197,10 @@ module FactoryBakery
 
     def evaluate_declarations(traits)
       @plugin_declarations = Hash.new { |hash, plugin| hash[plugin] = [] }
+      # A builder made through `for_current_plugins` already carries the DSL;
+      # one made with `new` is extended here, at the cost of a singleton class.
       scope = PluginRegistry.dsl_scope_module
-      extend(scope) if scope
+      extend(scope) if scope && !is_a?(scope)
 
       @methods_to_be_called_on_object = []
       instance_eval(&@builder_proc) if @builder_proc

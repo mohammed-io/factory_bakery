@@ -40,7 +40,7 @@ module FactoryBakery
     end
 
     def build_object(model_klass, definition, overrides, traits, mode)
-      builder = BakeryBuilder.new(model_klass, definition, fill_optional: mode)
+      builder = BakeryBuilder.for_current_plugins.new(model_klass, definition, fill_optional: mode)
       object = builder.build(overrides: overrides, traits: traits)
       BuildContext.with_record(object) do
         UniquenessEnforcer.new(object, builder.unchecked_heuristic_names).call
