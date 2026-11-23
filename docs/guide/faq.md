@@ -80,7 +80,7 @@ Discovered from an `inclusion` validator on the type column or `as:` inverses. O
 Not on its own, except for [raw-FK presence parents](associations.md#raw-fk-presence-parents), `persist: true`, and your own `bake!` calls in blocks.
 
 **Does `bake!` roll back on failure?**
-Yes, the whole graph, even inside an outer transaction. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
+With `FactoryBakery.savepoints = true`, yes: the whole graph, even inside an outer transaction. By default (`false`, like factory_bot) only `save!`'s own transaction rolls back, and rows saved earlier by a declaration block stay. See [`bake` vs `bake!`](bake-vs-bake-bang.md#savepoints).
 
 **A view (read-only model).**
 `bake` works. `bake!` raises `ReadOnlyTargetError`. See [Associations](associations.md#read-only-targets).

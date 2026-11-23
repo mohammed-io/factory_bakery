@@ -78,6 +78,25 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
       FillOptional.global = value.nil? ? false : normalize_fill_optional(value)
     end
 
+    # Whether the gem wraps its own all-or-nothing envelopes in a nested
+    # transaction (a savepoint when the caller already holds a transaction):
+    # the `bake!` wrapper and the verified fallback's attempts. Off by default,
+    # which is how factory_bot behaves: a failed `bake!` or a discarded
+    # fallback attempt can leave the rows it already wrote (a spec's own
+    # transaction cleans them up). Turn it on to have them rolled back
+    # (ADR-0006). The associations plugin's best-effort edges keep their
+    # savepoints either way: they rescue a failed child and carry on, and on
+    # PostgreSQL a failed statement outside a savepoint would poison the whole
+    # transaction. Only targets whose mapper reports them as transactional are
+    # affected.
+    def savepoints=(value)
+      @savepoints = value ? true : false
+    end
+
+    def savepoints?
+      @savepoints == true
+    end
+
     # No paths are configured until the host app (or the Railtie) sets them.
     def definition_paths
       @definition_paths ||= []
@@ -153,13 +172,13 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
 
             return bake_untransactional(target, adapter, overrides, traits, mode) unless adapter.transactional?
 
-            object = nil
-            adapter.transaction(model_klass) do
-              object = BuildContext.push(model_klass) do
+            # A proc: the transaction yields its own argument, which is unused.
+            build = proc do
+              BuildContext.push(model_klass) do
                 persist_build!(adapter) { build_with_fallback(model_klass, definition, overrides, traits, mode) }
               end
             end
-            object
+            savepoints? ? adapter.transaction(model_klass, &build) : build.call
           end
         end
       end

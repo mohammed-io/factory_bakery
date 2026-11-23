@@ -339,7 +339,7 @@ RSpec.describe 'FactoryBakery association collections and has_one (A12)' do
         .to raise_error(RuntimeError, /boom from before_add/)
     end
 
-    it 'raises the persistence-contract error for an autosave: false collection and leaves no rows' do
+    it 'raises the persistence-contract error for an autosave: false collection and leaves no rows', :savepoints do
       comment_model = define_model('CollNoAutosaveComment', body: :string, post_id: :integer) do
         belongs_to :post, class_name: 'CollNoAutosavePost', optional: false
       end

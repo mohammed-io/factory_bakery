@@ -78,7 +78,7 @@ RSpec.describe 'Sequel mapper persistence contract', :sequel_mapper do
     end
   end
 
-  describe 'atomicity' do
+  describe 'atomicity', :savepoints do
     it 'leaves no rows from a nested bake! when the root save fails' do
       sibling_model = define_sequel_model('SeqSibling', name: { type: :string, null: false })
       define_nested_bake_declaration!(sibling_model)
@@ -125,7 +125,7 @@ RSpec.describe 'Sequel mapper persistence contract', :sequel_mapper do
     end
   end
 
-  describe 'verify and raise' do
+  describe 'verify and raise', :savepoints do
     it 'raises IncompletePersistenceError when a declaration leaves a generated record unsaved' do
       sibling_model = define_sequel_model('SeqUnsavedSibling', name: { type: :string, null: false })
       define_nested_unsaved_declaration!(sibling_model)

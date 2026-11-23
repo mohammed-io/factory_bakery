@@ -19,7 +19,7 @@ RSpec.describe 'FactoryBakery bake! persistence contract' do
     ActiveSupport::Notifications.unsubscribe(subscriber)
   end
 
-  describe 'atomicity' do
+  describe 'atomicity', :savepoints do
     it 'leaves no rows from a nested bake! when the root save! fails' do
       account_model = define_model('ContractAccount', name: :string)
       user_model = define_model('ContractUser', name: :string, account_id: :integer) do
@@ -82,7 +82,7 @@ RSpec.describe 'FactoryBakery bake! persistence contract' do
     end
   end
 
-  describe 'verify and raise' do
+  describe 'verify and raise', :savepoints do
     it 'raises IncompletePersistenceError when autosave: false leaves a generated parent unsaved' do
       account_model = define_model('NoAutosaveAccount', name: :string)
       user_model = define_model('NoAutosaveUser', name: :string, account_id: :integer) do

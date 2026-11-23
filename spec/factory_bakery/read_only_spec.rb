@@ -73,7 +73,7 @@ RSpec.describe 'read-only bake targets' do
     expect(model.count).to eq(0)
   end
 
-  it 'rolls back a parent inserted before the read-only check' do
+  it 'rolls back a parent inserted before the read-only check', :savepoints do
     parent = define_model('ViewFkParent', name: :string)
     model = define_model('ViewFkChild', name: :string, parent_id: :integer) do
       belongs_to :parent, class_name: 'ViewFkParent', optional: true

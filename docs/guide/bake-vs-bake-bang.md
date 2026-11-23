@@ -37,13 +37,31 @@ These are documented exceptions. Everything else in a `bake` is database-free.
 | `association :x, persist: true` | The target and its graph are saved with a nested `bake!`. |
 | A declaration block that calls `bake!` or `create!` | Whatever the block saves. |
 | `strategy: :reuse_non_unique` | No write, but it **reads** the database and takes an existing row. |
-| Required-only fallback | A savepoint is opened so the lean attempt can be rolled back. Nothing remains. |
+| Required-only fallback | With [savepoints](#savepoints) on, the lean attempt is rolled back and nothing remains. With them off (the default), rows the lean attempt wrote stay. |
 
 If your tests run inside a transaction, rows from these cases roll back with it.
 
+## Savepoints
+
+`FactoryBakery.savepoints` (default `false`) decides whether the gem wraps its own attempts in a nested transaction, which is a savepoint when your code already has a transaction. The default matches factory_bot: the gem opens none, so the cost is gone, and a failure leaves whatever it already wrote. Turn it on for atomic `bake!` and an exact fallback rebuild:
+
+```ruby
+FactoryBakery.savepoints = true # or config.factory_bakery.savepoints = true in Rails
+```
+
+| | `savepoints = false` (default) | `savepoints = true` |
+| --- | --- | --- |
+| `bake!` fails (invalid root, `IncompletePersistenceError`, `ReadOnlyTargetError`) | `save!` rolls back its own rows. Parents a declaration block or an FK-presence edge saved earlier stay | Every row the bake wrote is rolled back |
+| Verified fallback rebuild | A parent a declaration block saved in the lean attempt is saved again by the rebuild | The lean attempt's rows are rolled back first, so one copy remains |
+| Optional edges (`:all`) and polymorphic candidates that fail | Rolled back with the attempt, always | Same |
+
+The associations plugin's best-effort edges keep their savepoints with the setting off: they rescue a failed child and carry on, and on PostgreSQL a failed statement outside a savepoint would abort the whole transaction. Only the two envelopes in the table's first rows are switchable.
+
+Inside a transactional test none of this is visible: the test's own rollback removes every row.
+
 ## `bake!`: build, save, verify
 
-`bake!` runs these steps inside one transaction opened with `requires_new`. Inside your own transaction that is a savepoint.
+`bake!` runs these steps inside one transaction opened with `requires_new` when [savepoints](#savepoints) are on. Inside your own transaction that is a savepoint.
 
 1. Build the graph (nested `bake!` calls from declaration blocks included).
 2. Check that no record in the graph is read-only. A read-only record raises `FactoryBakery::ReadOnlyTargetError`. See [read-only targets](associations.md#read-only-targets).
@@ -51,7 +69,7 @@ If your tests run inside a transaction, rows from these cases roll back with it.
 4. Run work that waits for the owner to be saved (for example optional `has_one` children under `:all`).
 5. Verify that every record the bake generated reached the database.
 
-If any step raises, every row the bake wrote is rolled back, even when you rescue the error inside an outer transaction.
+If any step raises and savepoints are on, every row the bake wrote is rolled back, even when you rescue the error inside an outer transaction. With them off, only `save!`'s own transaction rolls back.
 
 ```ruby
 ActiveRecord::Base.transaction do

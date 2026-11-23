@@ -14,5 +14,6 @@ Rails.application.config.factory_bakery.tap do |config|
   # config.definition_paths = ['custom/factories']
 <% end -%>
   # config.fill_optional = true
+  # config.savepoints = true # roll back what a failed bake! or a discarded fallback attempt wrote
   # config.generators = false
 end

@@ -200,7 +200,7 @@ RSpec.describe 'association options' do
         expect(record.user_id).not_to eq(record.invited_by_id)
       end
 
-      it 'reports a sibling skipped by autosave on the outer invite and rolls back both saves' do
+      it 'reports a sibling skipped by autosave on the outer invite and rolls back both saves', :savepoints do
         user = define_model('AssocPersistSiblingUser', name: :string)
         invite = define_invite(user, autosave: false)
         FactoryBakery.define(invite) do

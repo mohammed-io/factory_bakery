@@ -498,7 +498,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 ### declaration-blocks-run-twice
 
 - **Symptom:** A counter, a log line, an HTTP stub or a setting changes twice per bake.
-- **Cause:** The verified fallback discarded the lean attempt and rebuilt. Database writes are rolled back, other side effects are not.
+- **Cause:** The verified fallback discarded the lean attempt and rebuilt. Database writes are rolled back only with `FactoryBakery.savepoints = true`, other side effects never are.
 - **Fix:** Make the block idempotent, or guard it. Give the model's custom validation what it needs in the definition so the lean attempt is valid.
 
 ### stale-class-definitions

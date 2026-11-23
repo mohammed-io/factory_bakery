@@ -65,7 +65,7 @@ module FactoryBakery
       probe = nil
       errors = []
       begin
-        adapter.transaction(model_klass) do
+        transaction(adapter, model_klass) do
           attempt = build_object(model_klass, definition, overrides, traits, @mode)
           probe = fallback_probe(*attempt)
           errors = missing_attributes(attempt.first) if probe == :invalid
@@ -112,9 +112,12 @@ module FactoryBakery
     end
 
     # A mapper whose targets open no transactions has no savepoint to rebuild
-    # in; the plain build is the same thing without one.
+    # in; the plain build is the same thing without one. So is every attempt
+    # while `FactoryBakery.savepoints` is off: the discard stays in-memory (the
+    # exception, the generated-record and unique-value bookkeeping), and the
+    # rows the attempt wrote stay.
     def transaction(adapter, model_klass, &block)
-      return block.call unless adapter.transactional?
+      return block.call unless adapter.transactional? && FactoryBakery.savepoints?
 
       adapter.transaction(model_klass, &block)
     end

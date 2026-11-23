@@ -42,4 +42,14 @@ RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
+
+  # Savepoints are off by default (like factory_bot), so every example runs
+  # that way unless it is about rolling back what a failed bake wrote: those
+  # say `:savepoints` and run with the setting on.
+  config.around(:each, :savepoints) do |example|
+    FactoryBakery.savepoints = true
+    example.run
+  ensure
+    FactoryBakery.savepoints = false
+  end
 end

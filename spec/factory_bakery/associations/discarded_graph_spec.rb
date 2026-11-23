@@ -71,7 +71,7 @@ RSpec.describe 'FactoryBakery discarded association graphs' do
     expect(profile.count).to eq(1)
   end
 
-  it 'still rejects a superseded parent that another retained edge needs' do
+  it 'still rejects a superseded parent that another retained edge needs', :savepoints do
     sender = define_model('DiscardSharedSender', name: :string)
     sender.create!(name: 'Existing sender')
     event = define_model('DiscardSharedEvent', sender_id: :integer, backup_sender_id: :integer) do
@@ -102,7 +102,7 @@ RSpec.describe 'FactoryBakery discarded association graphs' do
     expect(role.count).to eq(0)
   end
 
-  it 'still rejects a user-declared parent displaced by a callback' do
+  it 'still rejects a user-declared parent displaced by a callback', :savepoints do
     sender = define_model('DiscardDeclaredSender', name: :string)
     sender.create!(name: 'Existing sender')
     event = define_model('DiscardDeclaredEvent', sender_id: :integer) do
@@ -116,7 +116,7 @@ RSpec.describe 'FactoryBakery discarded association graphs' do
     expect(event.count).to eq(0)
   end
 
-  it 'still verifies a declared descendant of a displaced automatic parent' do
+  it 'still verifies a declared descendant of a displaced automatic parent', :savepoints do
     define_model('DiscardNestedProfile', bio: :string)
     sender = define_model('DiscardNestedSender', profile_id: :integer) do
       belongs_to :profile, class_name: 'DiscardNestedProfile', optional: true, autosave: false
@@ -184,7 +184,7 @@ RSpec.describe 'FactoryBakery discarded association graphs' do
     expect(detail.count).to eq(0)
   end
 
-  it 'rolls back only the lean attempt when fallback rebuilds a definition with a nested bake!' do
+  it 'rolls back only the lean attempt when fallback rebuilds a definition with a nested bake!', :savepoints do
     writer = define_model('DiscardLeanWriter', name: :string)
     article = define_model('DiscardLeanArticle', writer_id: :integer, title: :string) do
       belongs_to :writer, class_name: 'DiscardLeanWriter', optional: false

@@ -7,6 +7,7 @@ Every setting, with its default and how to change it. FactoryBakery has no confi
 | Setting | Default | Set with | Notes |
 | --- | --- | --- | --- |
 | `fill_optional` | `false` | `FactoryBakery.fill_optional = true`, `FactoryBakery.configure { \|c\| c.fill_optional = ... }`, or `bake(X, fill_optional: ...)` | `true`, `false`, or an Array of names. `nil` is treated as `false`. Invalid values raise `ArgumentError`. See [Heuristics](heuristics.md#fill_optional) |
+| `savepoints` | `false` | `FactoryBakery.savepoints = true`, `FactoryBakery.configure { \|c\| c.savepoints = true }`, or `config.factory_bakery.savepoints = true` in Rails | Off: the gem opens no transaction of its own, like factory_bot, so a failed `bake!` or a discarded fallback attempt leaves the rows it already wrote (a transactional test cleans them up). On: `bake!` and each fallback attempt run in a savepoint and roll back whole. The associations plugin's best-effort edges keep their savepoints either way. See [`bake` vs `bake!`](bake-vs-bake-bang.md#savepoints) |
 | `max_bake_depth` | `10` | `FactoryBakery.max_bake_depth = n` | Nested bakes past this raise `NestingTooDeepError` |
 | `definition_paths` | `[]` | `FactoryBakery.definition_paths = [...]` | A String or an Array. Rails sets it for you. See [Definitions](definitions.md#loading-definition-files) |
 
@@ -57,6 +58,7 @@ Restore defaults in tests: `FactoryBakery::Associations.reset_configuration!`. D
 | --- | --- | --- |
 | `config.factory_bakery.associations` | unset (core only) | `true`, a mode symbol, or a Hash of the plugin settings |
 | `config.factory_bakery.fill_optional` | unset (core default, `false`) | `true`, `false` or an Array of attribute names. Assigned to `FactoryBakery.fill_optional` at boot |
+| `config.factory_bakery.savepoints` | unset (core default, `false`) | `true` or `false`. Assigned to `FactoryBakery.savepoints` at boot |
 | `config.factory_bakery.definition_paths` | unset (`spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`) | A String or an Array. Relative paths resolve against `Rails.root` |
 | `config.factory_bakery.generators` | unset (the model-generator hook is on unless another `fixture_replacement` is selected) | `true` always selects FactoryBakery. `false` turns the hook off. See [Rails](rails.md#model-generator-hook) |
 

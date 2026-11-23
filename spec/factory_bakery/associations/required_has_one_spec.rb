@@ -166,7 +166,7 @@ RSpec.describe 'FactoryBakery associations required has_one (issue #53)' do
       expect(owner.profile.owner_id).to eq(owner.id)
     end
 
-    it 'rolls back both records when the child fails validation' do
+    it 'rolls back both records when the child fails validation', :savepoints do
       owner_model, profile_model = define_required_pair('ReqHoRollback')
       profile_model.validates :nickname, inclusion: { in: ['ok'] }
       FactoryBakery.define(profile_model) { nickname { 'bad' } }
