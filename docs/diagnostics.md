@@ -343,7 +343,7 @@ Fixed in Unreleased. Nested `bake!` used to raise `IncompletePersistenceError` w
 
 ### format-exhaustion
 
-- **Message:** `could not generate a format-compliant value for User#code (with: /\A...\z/; length constraints: {...}): "x" failed after 10 attempts. Pass an explicit value with an override or relax the constraints.` For a text column cast to JSON the first words read `could not generate a JSON value for`.
+- **Message:** `could not generate a format-compliant value for User#code (with: /\A...\z/; length constraints: {...}): "x" failed after 10 attempts.` The message goes on with a line saying that the regex generator cannot solve the regex for this attribute (unsatisfiable, too large or too complex, or in conflict with another rule), then shows the fix as code: a `FactoryBakery.define(User) do code { '<a value matching /\A...\z/>' } end` block and the call-site `FactoryBakery.bake(User, code: '<a value matching /\A...\z/>')`. For a text column cast to JSON the first words read `could not generate a JSON value for`.
 - **Cause:** The regex cannot be satisfied (`/\Afoo(?=bar)\z/`), exceeds the generator's bounds (256 characters, depth), uses a construct `regexp_parser` cannot parse, or clashes with a `length` rule or a second regex.
 - **Where to look:** gem `AttributeFillers::StringFiller`, `RegexGeneration`. App: the `format:` options.
 - **Fix:** Give the value: a definition line or an override.

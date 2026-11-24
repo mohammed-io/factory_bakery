@@ -309,9 +309,31 @@ module FactoryBakery
         FactoryBakery::Error.new(
           "could not generate a #{@json_text ? 'JSON' : 'format-compliant'} value for " \
           "#{@model_class}##{@attr_name} (#{format_constraints_description}): " \
-          "#{value.inspect} failed after #{MAX_ATTEMPTS} attempts. " \
-          'Pass an explicit value with an override or relax the constraints.'
+          "#{value.inspect} failed after #{MAX_ATTEMPTS} attempts.\n" \
+          "#{exhaustion_cause}\n" \
+          "#{OverrideHint.call(@model_class, @attr_name, exhaustion_value_hint)}"
         )
+      end
+
+      # Why generation gave up, in the terms an agent can act on: the
+      # generator cannot solve this combination of rules, so the value has to
+      # be supplied.
+      def exhaustion_cause
+        if @json_text
+          'The generator could not produce a JSON document that satisfies this attribute\'s rules.'
+        elsif @with_regexes.any?
+          "The regex generator cannot solve #{@with_regexes.map(&:inspect).join(' together with ')} " \
+            'for this attribute: the regex is unsatisfiable, too large or too complex for the generator ' \
+            '(256 characters, bounded depth), or it conflicts with another rule such as a length or a second format.'
+        else
+          'The generator could not produce a value that satisfies this attribute\'s rules together.'
+        end
+      end
+
+      def exhaustion_value_hint
+        return 'a value that satisfies the rules above' if @with_regexes.empty?
+
+        "a value matching #{@with_regexes.map(&:inspect).join(' and ')}"
       end
 
       def format_constraints_description
