@@ -202,7 +202,9 @@ RSpec.describe 'FactoryBakery associations configuration' do
            FactoryBakery::Associations.mode]
         end.resume
       end
-      expect(inside).to eq(%i[all none all])
+      # A child fiber does not inherit its parent's scope: it starts from the
+      # global setting.
+      expect(inside).to eq(%i[required_only none required_only])
 
       scoped = Fiber.new { FactoryBakery::Associations.with(mode: :none) { :ok } }
       other = Fiber.new { FactoryBakery::Associations.mode }

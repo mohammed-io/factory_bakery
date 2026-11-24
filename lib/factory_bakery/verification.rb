@@ -1,17 +1,16 @@
 # frozen_string_literal: true
 
+require_relative 'fiber_local'
+
 module FactoryBakery
-  # The per-call (or nested-scope) `validate:` value, fiber-local like
-  # FillOptional's scope so a bake made by a definition block inherits the
-  # caller's choice.
+  # The per-call (or nested-scope) `validate:` value. It lives in fiber-local
+  # storage that child fibers do not inherit (see FiberLocal): a bake made by a
+  # definition block, on the same fiber, inherits the caller's choice, while a
+  # fiber or thread started inside a bake is an independent unit of work and
+  # sees the global setting, whether the bake that started it is still running
+  # or not.
   module Verification
     SCOPE_KEY = :factory_bakery_validate_override
-
-    # The active per-call override with whether its bake is still running.
-    # `Fiber[]` storage is inherited by child fibers, so a fiber created
-    # inside a bake and resumed after the bake returned must not keep the
-    # override -- `active` says when it has expired, like Randomness::Scope.
-    Scope = Struct.new(:value, :active)
 
     class << self
       # Scopes the block to an explicit `validate:` value. `nil` changes
@@ -20,22 +19,17 @@ module FactoryBakery
       def with(value)
         return yield if value.nil?
 
-        previous = Fiber[SCOPE_KEY]
-        scope = Scope.new(value, true)
-        Fiber[SCOPE_KEY] = scope
+        previous = FiberLocal[SCOPE_KEY]
+        FiberLocal[SCOPE_KEY] = value
         yield
       ensure
-        # The previous override is restored on every exit of a scoping call,
-        # and the scope is deactivated before it is, so a child fiber that
-        # inherited the storage stops seeing it too.
-        scope&.active = false
-        Fiber[SCOPE_KEY] = previous if scope
+        # The previous override is restored on every exit of a scoping call.
+        FiberLocal[SCOPE_KEY] = previous unless value.nil?
       end
 
       # The active per-call override, or nil when the global setting applies.
       def override
-        stored = Fiber[SCOPE_KEY]
-        stored.value if stored&.active
+        FiberLocal[SCOPE_KEY]
       end
     end
   end

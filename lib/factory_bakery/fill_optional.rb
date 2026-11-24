@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'fiber_local'
+
 module FactoryBakery
   # Controls whether a default bake fills columns a valid record does not
   # need. Off by default; opt in globally with `FactoryBakery.fill_optional =`
@@ -24,7 +26,7 @@ module FactoryBakery
       attr_writer :global
 
       def current
-        scoped = Fiber[SCOPE_KEY]
+        scoped = FiberLocal[SCOPE_KEY]
         scoped.nil? ? global : scoped
       end
 
@@ -42,28 +44,28 @@ module FactoryBakery
       # `PostValidator` adding "Topic can't be blank") demands it even though
       # no discovered constraint does.
       def with_rebuild(depth, error_attributes: nil, &block)
-        previous = Fiber[REBUILD_DEPTH_KEY]
-        previous_errors = Fiber[REBUILD_ERRORS_KEY]
-        Fiber[REBUILD_DEPTH_KEY] = depth
-        Fiber[REBUILD_ERRORS_KEY] = Array(error_attributes).map(&:to_s).freeze
+        previous = FiberLocal[REBUILD_DEPTH_KEY]
+        previous_errors = FiberLocal[REBUILD_ERRORS_KEY]
+        FiberLocal[REBUILD_DEPTH_KEY] = depth
+        FiberLocal[REBUILD_ERRORS_KEY] = Array(error_attributes).map(&:to_s).freeze
         with(true, &block)
       ensure
-        Fiber[REBUILD_DEPTH_KEY] = previous
-        Fiber[REBUILD_ERRORS_KEY] = previous_errors
+        FiberLocal[REBUILD_DEPTH_KEY] = previous
+        FiberLocal[REBUILD_ERRORS_KEY] = previous_errors
       end
 
       # True for a bake at `depth` that is nested inside a rebuild, i.e. not
       # the record the rebuild is filling. The rebuild's own build never goes
       # through `FactoryBakery.bake`, so every call that sees this is nested.
       def nested_in_rebuild?(depth)
-        floor = Fiber[REBUILD_DEPTH_KEY]
+        floor = FiberLocal[REBUILD_DEPTH_KEY]
         !floor.nil? && depth >= floor
       end
 
       # The names the lean probe of the rebuild currently in flight blamed, or
       # [] outside one. Read by the belongs_to auto-build.
       def rebuild_error_attributes
-        Fiber[REBUILD_ERRORS_KEY] || []
+        FiberLocal[REBUILD_ERRORS_KEY] || []
       end
 
       # Normalizes a call-site or global `fill_optional` value: `nil` falls
@@ -84,19 +86,19 @@ module FactoryBakery
       def for_bake_at(depth)
         return yield unless nested_in_rebuild?(depth) && rebuild_error_attributes.any?
 
-        previous = Fiber[REBUILD_ERRORS_KEY]
-        Fiber[REBUILD_ERRORS_KEY] = [].freeze
+        previous = FiberLocal[REBUILD_ERRORS_KEY]
+        FiberLocal[REBUILD_ERRORS_KEY] = [].freeze
         yield
       ensure
-        Fiber[REBUILD_ERRORS_KEY] = previous if previous
+        FiberLocal[REBUILD_ERRORS_KEY] = previous if previous
       end
 
       def with(value)
-        previous = Fiber[SCOPE_KEY]
-        Fiber[SCOPE_KEY] = value
+        previous = FiberLocal[SCOPE_KEY]
+        FiberLocal[SCOPE_KEY] = value
         yield
       ensure
-        Fiber[SCOPE_KEY] = previous
+        FiberLocal[SCOPE_KEY] = previous
       end
 
       # The scope stack every public bake runs under: the rebuild scoping for
@@ -116,9 +118,9 @@ module FactoryBakery
       # Test support: restores the default and clears this fiber's scope.
       def reset!
         @global = false
-        Fiber[SCOPE_KEY] = nil
-        Fiber[REBUILD_DEPTH_KEY] = nil
-        Fiber[REBUILD_ERRORS_KEY] = nil
+        FiberLocal[SCOPE_KEY] = nil
+        FiberLocal[REBUILD_DEPTH_KEY] = nil
+        FiberLocal[REBUILD_ERRORS_KEY] = nil
       end
     end
   end

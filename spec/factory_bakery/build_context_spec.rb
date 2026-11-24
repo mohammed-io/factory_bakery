@@ -35,7 +35,8 @@ RSpec.describe FactoryBakery::BuildContext do
         inner_path
       end.resume
 
-      expect(child_path).to eq([parent_class, child_class])
+      # A fiber is an independent unit of work: its path starts from nothing.
+      expect(child_path).to eq([child_class])
       expect(parent_context.path).to eq([parent_class])
       expect(described_class.current.path).to eq([parent_class])
       expect(described_class.unique_value_taken?(key)).to be(false)
