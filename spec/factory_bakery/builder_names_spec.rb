@@ -18,7 +18,7 @@ RSpec.describe FactoryBakery::BakeryBuilder::Names do
 
   subject(:names) do
     described_class.new(
-      declaration_stream: declaration_stream,
+      declared: FactoryBakery::DeclarationSet.new(declaration_stream).names,
       plugin_declarations: plugin_declarations,
       overrides: overrides,
       initialize_with: initialize_with

@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Changed
+
+- A `define` block and each `trait` block now run once and what they declared is reused by every later bake (ADR-0008), instead of re-running on every bake. Definitions must declare statically: the same attributes every time, with anything dynamic inside the value blocks, including locals the values use (a local computed in the `define` block outside a value block is now computed once). A block that calls `initialize_with` or declares through a plugin (`association`) is not reused. Defining the target again replaces what was recorded. See the Definitions guide.
+
 ### Fixes
 
 - The batched uniqueness statement is cached per adapter, table and column list, so a class baked under one database role (say SQLite in tests) and then another (PostgreSQL) no longer reuses the first adapter's placeholder style; each connection gets its own statement.

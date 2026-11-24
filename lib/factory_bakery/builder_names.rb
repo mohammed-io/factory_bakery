@@ -25,11 +25,13 @@ module FactoryBakery
                   :override_keys, :init_with_keys, :explicit,
                   :suppression_seeds
 
-      def initialize(declaration_stream:, plugin_declarations:, overrides:, initialize_with:)
+      # `declared` is the frozen list of declared names a `DeclarationSet`
+      # already holds; only the override-dependent lists are built here.
+      def initialize(declared:, plugin_declarations:, overrides:, initialize_with:)
         @plugin_declarations = plugin_declarations
         @overrides = normalize_keys(overrides).freeze
         @initialize_with = normalize_keys(initialize_with).freeze
-        @declared = declared_names(declaration_stream)
+        @declared = declared
         @override_keys = @overrides.keys.freeze
         @init_with_keys = @initialize_with.keys.freeze
         @explicit = combine(@declared, @override_keys)
@@ -55,10 +57,6 @@ module FactoryBakery
         declarations.values.flatten.map do |entry|
           entry.respond_to?(:name) ? entry.name.to_s : entry.to_s
         end.freeze
-      end
-
-      def declared_names(stream)
-        stream.map { |name, _block| name.to_s }.freeze
       end
 
       # Freezes the shared derived list, so a reader cannot corrupt a list

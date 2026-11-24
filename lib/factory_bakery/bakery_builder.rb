@@ -109,6 +109,8 @@ module FactoryBakery
     end
 
     def initialize_with(attributes)
+      # Its values are read as given, so a layer that sets them is not recorded.
+      @layer_uncacheable = true
       @initialize_with_attributes = attributes
     end
 
@@ -152,7 +154,7 @@ module FactoryBakery
       # One name-list snapshot for this build: every layer below reads from it
       # instead of re-deriving the same lists from the same inputs.
       @names = Names.new(
-        declaration_stream: @methods_to_be_called_on_object,
+        declared: @declaration_set.names,
         plugin_declarations: @plugin_declarations,
         overrides: overrides,
         initialize_with: @initialize_with_attributes
@@ -198,12 +200,20 @@ module FactoryBakery
       plugin = PluginRegistry.current
       raise FactoryBakery::Error, 'No plugin DSL call is in progress' unless plugin
 
+      # A plugin's declaration is replayed by its own hook each build, so a
+      # layer that made one is not recorded.
+      @layer_uncacheable = true
       plugin_declarations(plugin) << entry
       entry
     end
 
     private
 
+    # Leaves `@declaration_set` (the declarations of the base block followed by
+    # the requested traits, in that order, so later assignments win for
+    # duplicate attributes) and `@methods_to_be_called_on_object` for the rest
+    # of the build. The definition's cache supplies each layer it already has;
+    # the rest are recorded by running their block once (ADR-0008).
     def evaluate_declarations(traits)
       @plugin_declarations = Hash.new { |hash, plugin| hash[plugin] = [] }
       # A builder made through `for_current_plugins` already carries the DSL;
@@ -211,18 +221,52 @@ module FactoryBakery
       scope = PluginRegistry.dsl_scope_module
       extend(scope) if scope && !is_a?(scope)
 
-      @methods_to_be_called_on_object = []
-      instance_eval(&@builder_proc) if @builder_proc
+      cache = DeclarationCache.for(@builder_proc)
+      @declaration_set = cache&.composed(traits) || collect_declarations(traits, cache)
+      @methods_to_be_called_on_object = @declaration_set.pairs
+    end
 
-      # Traits are appended after the base declarations and applied in the
-      # order requested, so later assignments win for duplicate attributes.
-      traits.each do |name|
-        unless @traits.key?(name)
-          raise FactoryBakery::Error, "Trait #{name.inspect} is not declared for #{@model_klass}"
-        end
+    def collect_declarations(traits, cache)
+      @all_layers_cacheable = true
+      base = base_layer(cache)
+      return base if traits.empty?
 
-        instance_eval(&@traits[name])
+      @traits = base.trait_procs.dup
+      layers = traits.map { |name| trait_layer(name, cache) }
+      DeclarationSet.compose(base, layers).tap do |set|
+        cache.store_composed(traits, set) if cache && @all_layers_cacheable
       end
+    end
+
+    def base_layer(cache)
+      return DeclarationSet::EMPTY unless @builder_proc
+      return cache.base if cache&.base
+
+      pairs = record_layer { instance_eval(&@builder_proc) if @builder_proc }
+      remember(DeclarationSet.new(pairs, @traits.dup), cache, &:store_base)
+    end
+
+    def trait_layer(name, cache)
+      raise FactoryBakery::Error, "Trait #{name.inspect} is not declared for #{@model_klass}" unless @traits.key?(name)
+      return cache.trait(name) if cache&.trait(name)
+
+      pairs = record_layer { instance_eval(&@traits[name]) }
+      remember(DeclarationSet.new(pairs), cache) { |store, set| store.store_trait(name, set) }
+    end
+
+    # Runs one layer's block and returns the pairs it declared. The DSL calls
+    # that make a layer unsafe to reuse flag it while it runs.
+    def record_layer
+      @layer_uncacheable = false
+      @methods_to_be_called_on_object = []
+      yield
+      @methods_to_be_called_on_object
+    end
+
+    def remember(set, cache)
+      @all_layers_cacheable &&= !@layer_uncacheable
+      yield cache, set if cache && !@layer_uncacheable
+      set
     end
 
     # Construction goes through the mapper so a framework whose models raise in
