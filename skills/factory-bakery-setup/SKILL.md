@@ -161,14 +161,17 @@ Run in order. Stop at the first failure. Rails commands run in the test environm
    ```sh
    RAILS_ENV=test bin/rails runner 'RealModel.transaction(requires_new: true) { record = FactoryBakery.bake(RealModel); abort FactoryBakery.explain(record) unless record.valid?; puts "#{RealModel} baked and valid"; raise ActiveRecord::Rollback }'
    ```
-   A wrapper covers one pool; wrap any other pool the graph writes to the same way, each with its own raise. Outside Rails, the same check as a script run with `bundle exec ruby`:
+   A wrapper covers one pool; wrap every other pool or Sequel database the graph writes to the same way, each with its own raise (a Sequel model: `Model.db.transaction(rollback: :always)`). Omit a wrapper only when the whole call — declarations and callbacks included — performs no database writes. Outside Rails, the same check as a script run with `bundle exec ruby`; a plain `bake` can still insert raw-FK parents, so it stays inside the wrapper:
    ```ruby
    require 'factory_bakery'
    # load the app's models here
    FactoryBakery.definition_paths = ['spec/bakery']
    FactoryBakery.find_definitions
-   record = FactoryBakery.bake(RealModel)
-   abort FactoryBakery.explain(record) unless record.valid?
+   RealModel.transaction(requires_new: true) do
+     record = FactoryBakery.bake(RealModel)
+     abort FactoryBakery.explain(record) unless record.valid?
+     raise ActiveRecord::Rollback
+   end
    puts "#{RealModel} baked and valid"
    ```
 3. Doctor, every concrete model, rolled back:

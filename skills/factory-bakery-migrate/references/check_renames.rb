@@ -1,332 +1,323 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Checks that every changed line in the test files is a factory-call rename.
+# Judges a test diff: every changed line must be a factory-call rename.
 #
 # Usage (from the migration worktree):
-#   git diff -U0 --no-color HEAD -- spec test | ruby check_renames.rb              # uncommitted work
-#   git diff -U0 --no-color <start-sha> HEAD -- spec test | ruby check_renames.rb  # the whole migration
+#   git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test | ruby check_renames.rb
 #
-# Read-only. It reads a unified diff from stdin and prints a report.
+# Read-only. It reads a unified diff from stdin and prints a report. Exit
+# status is 1 only when a FAIL appears.
 #
-# FAIL  (exit 1): a changed line that is not a factory call, a build_stubbed
-#                 call (a documented blocker), or a hunk whose removed and
-#                 added line counts differ.
-# REVIEW (exit 0): a verb that does not map (create -> bake, build -> bake!,
-#                 attributes_for -> bakery_attributes_for), a changed bake
-#                 target (a quoted symbol like :"admin/post", a namespaced
-#                 class like Admin::Post reached from :admin_post, or a symbol
-#                 whose case changed, like :admin -> :Admin, always reports),
-#                 a changed list count, a scalar call that becomes
-#                 Array.new(n), a *_pair that does not become Array.new(2),
-#                 a changed list argument, or a pair whose text differs by
-#                 more than the call. A human or the agent must look at each.
-# LIST (exit 0): a create_list/build_list/*_pair rename to Array.new(n) whose
-#                 count and arguments are unchanged (create_pair/build_pair
-#                 mean 2).
-# CLEAN on a call split over lines: an opener line (`create(` / `build(` at
-#                 the end) whose verb maps to `FactoryBakery.bake!(` / `bake(`
-#                 at the end, and a target alone on its line (`:post,` ->
-#                 `Post,`) when it follows the camelize rule. Other
-#                 continuation lines must be unchanged apart from indentation,
-#                 and only count as continuations while a `(` is unbalanced.
-# SUPPORT FILE: a helper, definition or suite-wiring file (spec|test bakery or
-#                 support directories, spec/rails_helper.rb, spec/spec_helper.rb,
-#                 test/test_helper.rb). Listed, never judged.
-# NEW / DELETED FILE: listed, never judged here (the final deletion commit is
-#                 checked by hand).
+# FAIL (exit 1): a changed line that is not a factory-call change (a
+#                non-factory edit), a build_stubbed / build_stubbed_list /
+#                build_stubbed_pair call (a documented blocker), a hunk whose
+#                removed and added line counts differ, or an edited tracked
+#                file under spec/factories, test/factories or factories/
+#                (never touch the old factories).
+# REVIEW (exit 0): anything the whitelist does not accept, and a human reads
+#                each one: every call split over lines, a changed target or
+#                namespace, a changed verb or count, a changed literal or
+#                argument, two calls on one line, a scalar call that becomes
+#                Array.new(n), a whitespace-only change.
+#                Action: a changed verb or count is never fine -- restore the
+#                mapped verb (create -> bake!, build -> bake) and the count.
+#                A changed target is fine only when it is the class the old
+#                factory built (namespaced class, quoted symbol's class,
+#                acronym class); otherwise restore it. For a split call or
+#                anything else: if only the call's spelling changed, fine;
+#                otherwise revert that line.
+# LIST (exit 0): a create_list / build_list / *_pair rename to
+#                Array.new(n) { ... } whose count, verb, target and arguments
+#                are unchanged (create_pair / build_pair mean 2).
+# SUPPORT FILE (exit 0): a change under spec|test/(bakery|support), or in
+#                spec/rails_helper.rb, spec/spec_helper.rb,
+#                test/test_helper.rb. Listed, never judged.
+# NEW FILE / DELETED FILE / RENAMED FILE (exit 0): file events a rename does
+#                not produce, except the final deletion commit. Listed, never
+#                judged here. A human looks at each.
+#
+# The CLEAN whitelist, judged per removed/added pair (exactly one call per
+# line):
+#   create(:x)         -> FactoryBakery.bake!(X)   (or .bake!(X))
+#   build(:x)          -> FactoryBakery.bake(X)    (or .bake(X))
+#   attributes_for(:x) -> bakery_attributes_for(X)
+# The target stays the same symbol, or becomes the class the factory name
+# camelizes to (:admin_post -> AdminPost; per segment, w[0].upcase + rest).
+# The text before the call and after the target must be unchanged (whitespace
+# ignored). That comparison is also what rejects an Array.new(n) wrapper
+# appearing on one side only; a wrapper already present on both lines with
+# the same text stays clean.
 
-OLD_CALL = /\b(?:FactoryBot\.)?(?:create|build|build_stubbed|create_list|build_list|create_pair|build_pair|
-                                  build_stubbed_list|attributes_for|Fabricate|Fabricate\.build|Fabricate\.times|
-                                  Fabricate\.attributes_for)\b|\.make!?\b|\.plan\b/x
-NEW_CALL = /FactoryBakery\.bake!?\(|\bbake!?\(|\bbakery_attributes_for\(|Array\.new\(\d+\)\s*\{/
+SUPPORT_PATH = %r{\A(?:spec|test)/(?:bakery|support)/}.freeze
+SUPPORT_FILES = %w[spec/rails_helper.rb spec/spec_helper.rb test/test_helper.rb].freeze
+FACTORY_DIR = %r{\A(?:spec/factories|test/factories|factories)/}.freeze
 
-# Every factory call on a line, with its target. Removed lines scan OLD_CALLS,
-# added lines NEW_CALLS; the two lists of [verb, target] pairs must match.
-OLD_CALLS = /\b(?:FactoryBot\.)?(create|build|attributes_for)(?:_list|_pair)?\(\s*:(\w+)/
-NEW_CALLS = /\b(?:FactoryBakery\.)?(bake!?|bakery_attributes_for)\(\s*([A-Z][\w:]*|:\w+)/
-
-# The FactoryBakery verb each removed factory_bot verb must map to.
+OLD_CALL = /\b(?:FactoryBot\.)?(create|build|attributes_for)\(\s*:(\w+)/
+NEW_CALL = /\b(?:FactoryBakery\.)?(bake!?|bakery_attributes_for)\(\s*([A-Z][\w:]*|:\w+)/
+OLD_TOKEN = /\b(?:FactoryBot\.)?(?:create|build|attributes_for)(?:_list|_pair)?\(|\bbuild_stubbed(?:_list|_pair)?\(|\bFabricate\b|\.make!?\(|\.plan\(/
+NEW_TOKEN = /\b(?:FactoryBakery\.)?bake!?\(|\bbakery_attributes_for\(|\battributes_for\(/
+OLD_LIST = /\b(?:FactoryBot\.)?(create|build)_(list|pair)\(\s*:(\w+)\s*(?:,\s*(\d+))?/
+NEW_WRAPPER = /\bArray\.new\(\s*(\d+)\s*\)\s*\{\s*/
 OLD_VERBS = { 'create' => 'bake!', 'build' => 'bake', 'attributes_for' => 'bakery_attributes_for' }.freeze
+LIST_VERBS = { 'create' => 'bake!', 'build' => 'bake' }.freeze
+SPLIT_OPENER = /\b(?:FactoryBot\.)?(?:create|build|attributes_for)\(\s*\z/
+TARGET_ONLY_OLD = /\A\s*:\w/
+TARGET_ONLY_NEW = /\A\s*(?:[A-Z][\w:]*|:\w+)/
+SPLIT_NOTE = 'split call: check by hand'
 
-# The factory_bot calls residue() normalizes away. create_pair/build_pair are
-# not here: residue() pins them to a count of 2 before this runs.
-OLD_RESIDUE = /\b(?:FactoryBot\.)?(?:create_list|build_list|
-                               create|build|build_stubbed|attributes_for)\(\s*:\w+/x
+module DiffPaths
+  module_function
 
-# An opener line: the call name with its `(` at the end of the line, the
-# target on the next line.
-OPENER_OLD = /\b(?:FactoryBot\.)?(create|build)\(\s*\z/
-OPENER_NEW = /\b(?:FactoryBakery\.)?(bake!?)\(\s*\z/
+  # "a/spec/models/caf\303\251_spec.rb" -> spec/models/café_spec.rb
+  def clean(token)
+    path = token.strip
+    path = path.delete_prefix('"').delete_suffix('"') if path.start_with?('"')
+    path = path.delete_prefix('a/').delete_prefix('b/')
+    return path unless path.include?('\\')
 
-# The target alone on its line (a call split over at least three lines). The
-# optional leading [-+] is the diff marker.
-TARGET_ONLY_OLD = /\A[-+]?\s*:(\w+)\s*[,)]?\s*\z/
-TARGET_ONLY_NEW = /\A[-+]?\s*([A-Z][\w:]*|:\w+)\s*[,)]?\s*\z/
-
-# A helper or definition file, and the test-suite wiring files. Changes there
-# are printed and never judged.
-SUPPORT_PATH = %r{\A(?:(?:spec|test)/(?:bakery|support)/|spec/rails_helper\.rb\z|
-                        spec/spec_helper\.rb\z|test/test_helper\.rb\z)}x
-
-# Camelize a factory_bot target so :admin_post compares equal to AdminPost.
-# Each segment keeps its case after the first letter is upcased: per word,
-# w[0].to_s.upcase + w[1..].to_s (not capitalize, so inner capitals survive;
-# not a bare w[0], so an empty segment from :a__b or :_admin raises nothing).
-def camelize_target(token)
-  token.delete_prefix(':').split('::').map do |part|
-    part.split('_').map { |word| word[0].to_s.upcase + word[1..].to_s }.join
-  end.join('::')
-end
-
-# A removed symbol target matches the added line's symbol spelling exactly
-# (:admin stays :admin; :admin -> :Admin differs) or the class its name
-# camelizes to (:admin_post -> AdminPost). Namespaces and case compare
-# exactly, so :admin_post -> Admin::Post differs and a human decides.
-def targets_match?(old_target, new_target)
-  if new_target.start_with?(':')
-    ":#{old_target}" == new_target
-  else
-    camelize_target(":#{old_target}") == new_target
+    path.gsub(/\\([0-7]{3})/) { [$1.to_i(8)].pack('C').force_encoding(Encoding::UTF_8) }
+        .gsub(/\\([ntr"\\])/) { { 'n' => "\n", 't' => "\t", 'r' => "\r", '"' => '"', '\\' => '\\' }[$1] }
+        .scrub
   end
 end
 
-# An opener pair is clean when the verb maps: create( -> bake!( and
-# build( -> bake( at the end of the line.
-def opener_rename?(old_line, new_line)
-  old = old_line.match(OPENER_OLD)
-  new = new_line.match(OPENER_NEW)
-  return false unless old && new
+class RenameCheck
+  attr_reader :fails
 
-  new[1] == (old[1] == 'create' ? 'bake!' : 'bake')
-end
-
-# All factory calls on a removed line, as an ordered list of [mapped verb,
-# raw target word] pairs. The target stays raw; targets_match? compares it
-# against the added line's.
-def old_calls(line)
-  line.scan(OLD_CALLS).map { |verb, target| [OLD_VERBS.fetch(verb), target] }
-end
-
-# All factory calls on an added line, as an ordered list of [verb, target]
-# pairs. Array.new(n) { wrappers are ignored here (the LIST branch checks the
-# count); the verb and target stay as written.
-def new_calls(line)
-  body = line.sub(/\A\+/, '').gsub(/Array\.new\(\d+\)\s*\{\s*/, '')
-  body.scan(NEW_CALLS)
-end
-
-# Quoted literals must carry over unchanged. residue ignores whitespace, so a
-# changed literal word is caught here.
-def literals(line)
-  line.scan(/'[^']*'|"[^"]*"/)
-end
-
-# Reduces a line to what must stay identical across a rename. The list count
-# and the pair's count of 2 are kept, so a changed count is visible; the LIST
-# branch strips them again.
-def residue(line)
-  line.sub(/\A[-+]/, '')
-      .gsub(/Array\.new\(\d+\)\s*\{\s*/, '')
-      .gsub(/(\s*\})+\s*(?=\)|\z)/, '')
-      # create_pair/build_pair mean count 2: pinned before the generic gsub,
-      # so a pair that does not become Array.new(2) cannot compare clean.
-      .gsub(/\b(?:FactoryBot\.)?(?:create|build)_pair\(\s*:\w+/, 'CALL(,2')
-      .gsub(OLD_RESIDUE, 'CALL(')
-      .gsub(/\b(?:FactoryBakery\.)?bake!?\(\s*(?:[A-Z][\w:]*|:\w+)/, 'CALL(')
-      .gsub(/\bbakery_attributes_for\(\s*(?:[A-Z][\w:]*|:\w+)/, 'CALL(')
-      .gsub(/CALL\(\s*/, 'CALL(')
-      .gsub(/\s+/, '')
-end
-
-# residue with a pinned count stripped, so a list (or pair) rename compares by
-# its arguments and traits alone. The old side carries the count inside the
-# call (`CALL(,3,title:`), the new side loses it with Array.new, so the comma
-# after CALL( goes too, on both sides.
-def residue_without_count(line)
-  residue(line).sub(/CALL\(,\d+(?=[,)])/, 'CALL(').sub(/CALL\(\,/, 'CALL(')
-end
-
-def review(file, old_line, new_line)
-  puts "REVIEW #{file}\n         - #{old_line[1..].strip}\n         + #{new_line[1..].strip}"
-end
-
-fail_count = 0
-review_count = 0
-new_files = []
-deleted_files = []
-support_files = []
-file = nil
-removed = []
-added = []
-
-flush = lambda do
-  next if removed.empty? && added.empty?
-
-  if file.is_a?(String) && file.match?(SUPPORT_PATH)
-    support_files << file
-    removed = []
-    added = []
-    next
+  def initialize
+    @fails = 0
+    @reviews = 0
   end
 
-  if removed.length != added.length
-    puts "FAIL   #{file}: #{removed.length} line(s) removed, #{added.length} added (a rename is line for line)"
-    removed.each { |l| puts "         #{l}" }
-    added.each { |l| puts "         #{l}" }
-    fail_count += 1
-  else
-    removed.zip(added).each_with_index do |(old_line, new_line), index|
-      # A call split over several lines passes when its continuation lines are
-      # unchanged apart from indentation. The shortcut applies only to lines
-      # that follow an unbalanced `(` on the removed side.
-      inside_call = removed[0...index].sum { |l| l.count('(') - l.count(')') }.positive?
-      next if inside_call && !old_line.match?(OLD_CALL) && !new_line.match?(NEW_CALL) &&
-              old_line[1..].strip == new_line[1..].strip
+  def judged?(file)
+    !file.nil? && file[:event] == :edit && !support_file?(file) && !factory_file?(file)
+  end
 
-      # An opener pair (`create(`/`build(` at the end of the line) is clean
-      # when the added line ends in the mapped verb.
-      next if opener_rename?(old_line, new_line)
+  def report_event(file)
+    return if file.nil?
 
-      # The target alone on its line is clean when it follows the camelize
-      # rule (`:post,` -> `Post,`); any other target-only change reports.
-      if old_line.match?(TARGET_ONLY_OLD) || new_line.match?(TARGET_ONLY_NEW)
-        old_t = old_line.match(TARGET_ONLY_OLD)
-        new_t = new_line.match(TARGET_ONLY_NEW)
-        next if old_t && new_t && targets_match?(old_t[1], new_t[1])
+    label = file[:event] == :deleted ? file[:old] : (file[:new] || file[:old])
+    if support_file?(file)
+      shown = file[:event] == :rename ? "#{file[:old]} -> #{file[:new]}" : label
+      puts "SUPPORT FILE #{shown}"
+      return
+    end
+    case file[:event]
+    when :new then puts "NEW FILE     #{label}"
+    when :deleted then puts "DELETED FILE #{label}"
+    when :rename then puts "RENAMED FILE #{file[:old]} -> #{file[:new]}"
+    when :edit
+      return unless factory_file?(file)
 
-        review(file, old_line, new_line)
-        review_count += 1
-        next
-      end
-
-      unless old_line.match?(OLD_CALL)
-        puts "FAIL   #{file}: removed line is not a factory call: #{old_line.strip}"
-        fail_count += 1
-        next
-      end
-
-      # build_stubbed has no FactoryBakery equivalent (a documented blocker).
-      if old_line.match?(/build_stubbed\(/)
-        puts "FAIL   #{file}: build_stubbed has no FactoryBakery equivalent (blocker): #{old_line.strip}"
-        fail_count += 1
-        next
-      end
-
-      # attributes_for maps to bakery_attributes_for. The bare factory_bot
-      # name on the added line is not the helper: report it.
-      if old_line.match?(/\b(?:FactoryBot\.)?attributes_for\(/) &&
-         new_line.match?(/\battributes_for\(/) && !new_line.match?(/\bbakery_attributes_for\(/)
-        review(file, old_line, new_line)
-        review_count += 1
-        next
-      end
-
-      unless new_line.match?(NEW_CALL)
-        puts "FAIL   #{file}: added line is not a FactoryBakery call: #{new_line.strip}"
-        fail_count += 1
-        next
-      end
-
-      # Every call on the line must map: same verbs and matching targets, in
-      # order. A symbol compares by exact spelling or by its camelized class;
-      # namespaces compare exactly.
-      old_verb_targets = old_calls(old_line)
-      new_verb_targets = new_calls(new_line)
-      if !old_verb_targets.empty? && !new_verb_targets.empty? &&
-         (old_verb_targets.length != new_verb_targets.length ||
-          old_verb_targets.zip(new_verb_targets).any? do |(old_verb, old_target), (new_verb, new_target)|
-            old_verb != new_verb || !targets_match?(old_target, new_target)
-          end)
-        review(file, old_line, new_line)
-        review_count += 1
-        next
-      end
-
-      # A changed literal in the arguments is never clean (residue ignores
-      # whitespace).
-      old_lits = literals(old_line)
-      new_lits = literals(new_line)
-      if !old_lits.empty? && !new_lits.empty? && old_lits != new_lits
-        review(file, old_line, new_line)
-        review_count += 1
-        next
-      end
-
-      # A scalar call that becomes a counted Array.new changes the row count.
-      if !old_line.match?(/_(?:list|pair)\b/) && new_line.match?(/Array\.new\(\s*\d+\s*\)/)
-        review(file, old_line, new_line)
-        review_count += 1
-        next
-      end
-
-      next if residue(old_line) == residue(new_line)
-
-      # create_list / build_list / *_pair become Array.new(n) { ... }. LIST
-      # only when the count matches (a pair means 2) and the arguments and
-      # traits are unchanged; anything else is a REVIEW.
-      if old_line.match?(/_(?:list|pair)\b/) && new_line.match?(/Array\.new\(\d+\)/)
-        count_old = old_line.match?(/_pair\b/) ? '2' : old_line[/_(?:list|pair)\(\s*:\w+\s*,\s*(\d+)/, 1]
-        count_new = new_line[/Array\.new\(\s*(\d+)\s*\)/, 1]
-        if count_old && count_new && count_old == count_new &&
-           residue_without_count(old_line) == residue_without_count(new_line)
-          puts "LIST   #{file}: #{old_line[1..].strip}  =>  #{new_line[1..].strip}"
-          next
-        end
-      end
-
-      review(file, old_line, new_line)
-      review_count += 1
+      @fails += 1
+      puts "FAIL   #{label}: edited factory definition (never touch the old factories)"
     end
   end
-  removed = []
-  added = []
+
+  def judge_hunk(file, removed, added)
+    if removed.length != added.length
+      @fails += 1
+      puts "FAIL   #{file[:new]}: #{removed.length} line(s) removed, #{added.length} added (a rename is line for line)"
+      removed.each { |l| puts "         #{l}" }
+      added.each { |l| puts "         #{l}" }
+      return
+    end
+
+    removed.zip(added).each do |old_line, new_line|
+      verdict, note = judge_pair(old_line[1..].to_s, new_line[1..].to_s)
+      case verdict
+      when :fail
+        @fails += 1
+        puts "FAIL   #{file[:new]}: #{note}"
+        puts "         - #{old_line[1..].to_s.strip}"
+        puts "         + #{new_line[1..].to_s.strip}"
+      when :review
+        @reviews += 1
+        puts "REVIEW #{file[:new]}"
+        puts "         - #{old_line[1..].to_s.strip}"
+        puts "         + #{new_line[1..].to_s.strip}"
+        puts "         (#{note})" if note
+      when :list
+        puts "LIST   #{file[:new]}: #{old_line[1..].to_s.strip}  =>  #{new_line[1..].to_s.strip}"
+      end
+    end
+  end
+
+  def summary
+    puts "\nsummary: #{@fails} fail, #{@reviews} review"
+  end
+
+  private
+
+  def support_file?(file)
+    [file[:old], file[:new]].compact.any? do |path|
+      path.match?(SUPPORT_PATH) || SUPPORT_FILES.include?(path)
+    end
+  end
+
+  def factory_file?(file)
+    [file[:old], file[:new]].compact.any? { |path| path.match?(FACTORY_DIR) }
+  end
+
+  # One whitelist for CLEAN. Anything it does not accept is REVIEW (or FAIL
+  # for build_stubbed and a non-factory edit, judged before this runs).
+  def judge_pair(o, n)
+    return [:fail, 'build_stubbed has no FactoryBakery equivalent (blocker)'] if o.match?(/\bbuild_stubbed(?:_list|_pair)?\(/)
+
+    return [:review, SPLIT_NOTE] if o.match?(SPLIT_OPENER) || (o.match?(TARGET_ONLY_OLD) && n.match?(TARGET_ONLY_NEW))
+
+    list = list_verdict(o, n)
+    return [:list, nil] if list == :list
+    return [:review, 'list/pair rename changed the count, verb, target or arguments'] if list == :review
+
+    return [:clean, nil] if clean_rename?(o, n)
+
+    unless o.match?(OLD_TOKEN) && n.match?(NEW_TOKEN)
+      return [:review, 'whitespace-only change: check by hand'] if flat(o) == flat(n)
+
+      return [:fail, 'non-factory change']
+    end
+
+    [:review, 'differs by more than the call spelling: verb, target or arguments changed']
+  end
+
+  def clean_rename?(o, n)
+    old_calls = matches(o, OLD_CALL)
+    new_calls = matches(n, NEW_CALL)
+    return false unless old_calls.size == 1 && new_calls.size == 1
+
+    om = old_calls[0]
+    nm = new_calls[0]
+
+    old_tokens = matches(o, OLD_TOKEN)
+    return false unless old_tokens.size == 1 && old_tokens[0].begin(0) == om.begin(0)
+    new_tokens = matches(n, NEW_TOKEN)
+    return false unless new_tokens.size == 1 && new_tokens[0].begin(0) == nm.begin(0)
+
+    return false unless OLD_VERBS[om[1]] == nm[1]
+    return false unless targets_match?(om[2], nm[2])
+
+    flat(o[0...om.begin(0)]) == flat(n[0...nm.begin(0)]) &&
+      flat(o[om.end(0)..]) == flat(n[nm.end(0)..])
+  end
+
+  # create_list(:post, 3) -> Array.new(3) { FactoryBakery.bake!(Post) }.
+  # A pair means 2. nil when the removed line is no list call at all.
+  def list_verdict(o, n)
+    lists = matches(o, OLD_LIST)
+    return nil unless lists.size == 1 && matches(o, OLD_TOKEN).size == 1
+
+    om = lists[0]
+    old_count = om[2] == 'pair' ? '2' : om[4]
+    wrappers = matches(n, NEW_WRAPPER)
+    return :review if wrappers.size != 1
+    return :review if old_count.nil? || old_count != wrappers[0][1]
+
+    stripped = n.sub(NEW_WRAPPER, '').sub(/\}\s*\z/, '')
+    inners = matches(stripped, NEW_CALL)
+    return :review if inners.size != 1
+
+    im = inners[0]
+    return :review unless LIST_VERBS[om[1]] == im[1]
+    return :review unless targets_match?(om[3], im[2])
+
+    flat(o[0...om.begin(0)]) == flat(stripped[0...im.begin(0)]) &&
+      flat(o[om.end(0)..]) == flat(stripped[im.end(0)..]) ? :list : :review
+  end
+
+  # The removed symbol target matches the added spelling exactly (:admin ->
+  # :admin, :admin -> :Admin differs) or the class its name camelizes to
+  # (:admin_post -> AdminPost). Namespaces compare exactly, so
+  # :admin_post -> Admin::Post differs and a human decides.
+  def targets_match?(old_word, new_token)
+    return ":#{old_word}" == new_token if new_token.start_with?(':')
+
+    camelize(old_word) == new_token
+  end
+
+  def camelize(word)
+    word.split('::').map do |part|
+      part.split('_').map { |w| w[0].to_s.upcase + w[1..].to_s }.join
+    end.join('::')
+  end
+
+  def matches(str, regex)
+    str.to_enum(:scan, regex).map { Regexp.last_match }
+  end
+
+  def flat(str)
+    str.to_s.gsub(/\s+/, '')
+  end
 end
 
-$stdin.each_line(chomp: true) do |line|
+$stdin.set_encoding(Encoding::UTF_8)
+
+checker = RenameCheck.new
+state = { file: nil, removed: [], added: [], in_hunk: false }
+
+flush_hunk = lambda do
+  next if state[:removed].empty? && state[:added].empty?
+
+  checker.judge_hunk(state[:file], state[:removed], state[:added]) if checker.judged?(state[:file])
+  state[:removed] = []
+  state[:added] = []
+end
+
+finish_file = lambda do
+  flush_hunk.call
+  checker.report_event(state[:file]) if state[:file] && !state[:file][:reported]
+  state = { file: nil, removed: [], added: [], in_hunk: false }
+end
+
+$stdin.each_line(chomp: true) do |raw|
+  line = raw.scrub
   case line
   when /\Adiff --git /
-    flush.call
-    file = nil
-  when %r{\A--- (?:a/(.+)|/dev/null)\z}
-    flush.call
-    deleted_marker = Regexp.last_match(1).nil?
-    file = Regexp.last_match(1)
-    new_files << :pending if deleted_marker
-  when %r{\A\+\+\+ (?:b/(.+)|/dev/null)\z}
-    path = Regexp.last_match(1)
-    if file.nil? && path
-      new_files.pop if new_files.last == :pending
-      if path.match?(SUPPORT_PATH)
-        support_files << path
-      else
-        new_files << path
-      end
-      file = :new
-    elsif path.nil? && file
-      if file.is_a?(String) && file.match?(SUPPORT_PATH)
-        support_files << file
-      else
-        deleted_files << file
-      end
-      file = :deleted
-    else
-      new_files.delete(:pending)
-      file = path || file
+    finish_file.call
+    rest = line.delete_prefix('diff --git ')
+    split = rest.rindex(/ "b\//) || rest.rindex(/ b\//)
+    state[:file] = {
+      old: split ? DiffPaths.clean(rest[0...split]) : nil,
+      new: split ? DiffPaths.clean(rest[split + 1..]) : DiffPaths.clean(rest),
+      event: :edit, reported: false
+    }
+  when /\Anew file mode/
+    state[:file][:event] = :new if state[:file] && !state[:in_hunk]
+  when /\Adeleted file mode/
+    state[:file][:event] = :deleted if state[:file] && !state[:in_hunk]
+  when /\Arename from /
+    if state[:file] && !state[:in_hunk]
+      state[:file][:old] = DiffPaths.clean(line.delete_prefix('rename from '))
+      state[:file][:event] = :rename
+    end
+  when /\Arename to /
+    if state[:file] && !state[:in_hunk]
+      state[:file][:new] = DiffPaths.clean(line.delete_prefix('rename to '))
+      state[:file][:event] = :rename
+    end
+  when /\A--- /
+    if state[:file] && !state[:in_hunk]
+      body = line[4..].to_s
+      state[:file][:old] = DiffPaths.clean(body) unless body.strip == '/dev/null'
+    end
+  when /\A\+\+\+ /
+    if state[:file] && !state[:in_hunk]
+      body = line[4..].to_s
+      state[:file][:new] = DiffPaths.clean(body) unless body.strip == '/dev/null'
     end
   when /\A@@/
-    flush.call
+    flush_hunk.call
+    state[:in_hunk] = true
+    checker.report_event(state[:file]) unless state[:file][:reported]
+    state[:file][:reported] = true
   when /\A-/
-    removed << line unless %i[new deleted].include?(file)
+    state[:removed] << line unless state[:file] && %i[new deleted rename].include?(state[:file][:event])
   when /\A\+/
-    added << line unless %i[new deleted].include?(file)
+    state[:added] << line unless state[:file] && %i[new deleted rename].include?(state[:file][:event])
   end
 end
-flush.call
+finish_file.call
 
-new_files.reject! { |f| f == :pending }
-support_files.uniq.each { |f| puts "SUPPORT FILE #{f}" }
-puts "NEW FILE     #{new_files.join(', ')}" unless new_files.empty?
-puts "DELETED FILE #{deleted_files.join(', ')}" unless deleted_files.empty?
-puts "\nsummary: #{fail_count} fail, #{review_count} review"
-exit(fail_count.zero? ? 0 : 1)
+checker.summary
+exit(checker.fails.zero? ? 0 : 1)

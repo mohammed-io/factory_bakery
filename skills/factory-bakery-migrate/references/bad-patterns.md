@@ -38,7 +38,7 @@ end
 # with the class-keyed one: apply the keep rules per target and trait, repeating a class
 # line only when the original named factory had it (parent:/nested) or the model cannot
 # bake without it — never a copied retained line from the regular factory (probed: it
-# turns a nil name into the parent's kept value)
+# turns a nil name into the class-keyed definition's kept value)
 ```
 
 ## 3. Static `name 'x'`
@@ -150,7 +150,7 @@ To share a record between two blocks of one definition, read the sibling: declar
 
 **Why it hurts.** A class with no definition uses the nearest ancestor class's definition, traits included. An STI subclass often needs nothing: `bake!(Admin)` with `Admin < User` already uses `User`'s definition. A subclass definition **replaces** it entirely (definitions do not merge), so a copy drifts from the original, and a half-copy silently loses lines and traits.
 
-This applies in Phase 7. In the 1:1 step (Phase 3) a `parent:`/nested subclass factory with its own body is translated with the parent's lines copied in, and a bare `class:` factory keeps only its own lines (an exact `define`, even an empty one — a bare `class:` inherits nothing in factory_bot); falling back to inheritance is a Phase 7 drop.
+This applies in Phase 7. In the 1:1 step (Phase 3) a `parent:`/nested subclass factory with its own body is translated with the parent's lines copied in, and a bare `class:` factory keeps only its own lines (an exact `define`, even an empty one — a bare `class:` inherits nothing in factory_bot). For the bare `class:` case, keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. It may go only when the ancestor's reduced definition is empty.
 
 ```ruby
 # factory_bot
@@ -160,7 +160,10 @@ factory :admin, parent: :user, class: 'Admin' do ... end
 FactoryBakery.define(Admin) { name { 'x' }; email { 'y' } }
 
 # good: nothing. bake!(Admin) uses User's definition.
-# When one is needed, it carries every line: the parent's kept lines (name, email)
+FactoryBakery.define(Admin) do
+end
+
+# when one is needed, it carries every line: the parent's kept lines (name, email)
 # plus the subclass's own (role)
 FactoryBakery.define(Admin) { name { 'x' }; email { 'y' }; role { 'admin' } }
 ```

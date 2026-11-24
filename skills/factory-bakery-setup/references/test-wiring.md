@@ -1,6 +1,6 @@
 # Test framework wiring
 
-`FactoryBakery::Methods` is the only helper module. It defines exactly two methods, `bake` and `bake!`, and installs nothing globally. Both take the same arguments as `FactoryBakery.bake` and `FactoryBakery.bake!`, except `fill_optional:`: it is a keyword of the module-level API only, so use the fully qualified call there (`FactoryBakery.bake(Model, fill_optional: true)`).
+`FactoryBakery::Methods` is the only helper module. It defines exactly two methods, `bake` and `bake!`, and installs nothing globally. Both take the same arguments as `FactoryBakery.bake` and `FactoryBakery.bake!` (fill_optional: included; it forwards with the other arguments).
 
 ## RSpec
 
@@ -87,3 +87,5 @@ Run with YJIT (`RUBY_YJIT_ENABLE=1`). It makes `bake` about 2.2x faster on Ruby 
 RAILS_ENV=test bin/rails runner 'include FactoryBakery::Methods; User.transaction(requires_new: true) { record = bake(User); abort FactoryBakery.explain(record) unless record.valid?; p record.class; raise ActiveRecord::Rollback }'
 bundle exec rspec        # the suite must pass exactly as before
 ```
+
+A wrapper covers one pool. Wrap every other pool or Sequel database the graph writes to the same way (`Model.db.transaction(rollback: :always)` for Sequel), and omit a wrapper only when the whole call — declarations and callbacks included — performs no database writes.

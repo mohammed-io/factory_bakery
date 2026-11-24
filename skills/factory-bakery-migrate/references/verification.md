@@ -46,23 +46,24 @@ After the migration, the same `--seed N` also fixes FactoryBakery's generated va
 Every changed test line must be a factory-call rename. The helper [`check_renames.rb`](check_renames.rb) reads a unified diff and judges it. It is read-only.
 
 ```sh
-git diff -U0 --no-color HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb              # uncommitted work, before each commit
-git diff -U0 --no-color <start-sha> HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb   # the whole migration, at the end
+git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb              # uncommitted work, before each commit
+git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ <start-sha> HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb   # the whole migration, at the end
 ```
 
 Run it from the worktree. `<skill-dir>` is the absolute path of the `factory-bakery-migrate` skill directory (the script is not in the project). `<start-sha>` is the commit the worktree started from (Phase 0: `git rev-parse HEAD`). The first form checks each batch before it is committed. Only staged or tracked changes appear in a diff, so `git add` a new file first. The second form catches anything an earlier check missed.
 
 | Output | Meaning | Action |
 | --- | --- | --- |
-| nothing for a line | A clean rename | Fine |
-| `LIST` | `create_list`/`build_list`/`*_pair` became `Array.new(n) { ... }` with the count and arguments unchanged | Glance at it |
-| `REVIEW` | The pair differs by more than the call: a changed verb (`create` -> `bake`, `build` -> `bake!`), an argument, a literal, a trait, a different bake target, or a changed list count | A changed verb, count or target is never fine: restore the mapped verb (create->bake!, build->bake), the count and the target. Otherwise open it: if only the call's spelling changed, fine; if anything else changed, **revert that line** |
-| `FAIL` | A changed line is not a factory call, a `build_stubbed` call (a documented blocker), or line counts differ | **Stop.** Revert the change. Report a blocker |
+| nothing for a line | A clean rename: the whitelist accepted it (one factory call per line, the verb mapped, the target kept or camelized, the text before and after the call unchanged) | Fine |
+| `LIST` | `create_list`/`build_list`/`*_pair` became `Array.new(n) { ... }` with the count, verb, target and arguments unchanged (a pair means 2) | Glance at it |
+| `REVIEW` | Anything the whitelist does not accept, and a human reads each: every call split over lines, a changed target or namespace, a changed verb or count, a changed literal or argument, two calls on one line, a scalar call that becomes `Array.new(n)`, a whitespace-only change | A changed verb or count is never fine: restore the mapped verb (create -> bake!, build -> bake) and the count. A changed target is fine only when it is the class the old factory built (namespaced class, quoted symbol's class, acronym class); otherwise restore it. For a split call or anything else: if only the call's spelling changed, fine; otherwise revert that line |
+| `FAIL` | A non-factory edit, a `build_stubbed` / `build_stubbed_list` / `build_stubbed_pair` call (a documented blocker), a hunk whose removed and added line counts differ, or an edited tracked file under `spec/factories`, `test/factories` or `factories/` | **Stop.** Revert the change. Report a blocker |
 | `SUPPORT FILE` | A change in a helper, definition or suite-wiring file: `spec`/`test` `bakery`/`support` directories, `spec/rails_helper.rb`, `spec/spec_helper.rb`, `test/test_helper.rb` | Listed, never judged. Review by hand. New files under `spec/support` and `spec/bakery` are expected |
 | `NEW FILE` | A new file under `spec` or `test` outside the bakery and support directories, typically a new spec | Not expected: a rename adds no test file. Review by hand |
 | `DELETED FILE` | A file was deleted | Expected **only** in the final deletion commit (the last door) |
+| `RENAMED FILE` | A file under `spec` or `test` was renamed | Not expected: a rename moves no test file. Review by hand |
 
-Exit status is `1` when any `FAIL` appears. A call split over several lines passes when its continuation lines are unchanged apart from indentation, including an opener line and a target on its own line (`:post,` -> `Post,`). A quoted symbol target (`:"admin/post"`) and a namespaced class target reached from a flat symbol (`:admin_post` -> `Admin::Post`) always report REVIEW; a human decides. The script judges lines. It does not understand Ruby, so it can miss a rename that also alters a nearby token on the same line. Read every `REVIEW` and skim the whole `git diff --stat` too.
+Exit status is `1` when any `FAIL` appears. The script judges lines. It does not understand Ruby, so it can miss a rename that also alters a nearby token on the same line. Read every `REVIEW` and skim the whole `git diff --stat` too.
 
 Manual cross-checks:
 
@@ -101,7 +102,7 @@ Remove lines **one factory at a time**, not in bulk.
    ```
 3. Re-run the tests that bake that model (search for the class name, or run the whole suite).
 4. If a test or a seed now fails, **restore the line** and note the reason ("a test depends on this value" or "the model cannot bake without it"). One green run is not enough to drop a line.
-5. Keep named definitions (`define(:admin, klass: User)`). A named definition never merges with the class-keyed one. Apply the keep rules per target and trait: repeat a class line only when the original named factory had it (inherited via `parent:`/nested) or the model cannot bake without it; never copy a regular factory's retained line in. After simplifying a named definition, exercise each used symbol + trait combination directly with the migrated verb — `bake!` plus `persisted?` for a former `create` call — in the test environment inside `User.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }`: doctor runs for class targets only.
+5. Keep named definitions (`define(:admin, klass: User)`). A named definition never merges with the class-keyed one. Apply the keep rules per target and trait: repeat a class line only when the original named factory had it (inherited via `parent:`/nested) or the model cannot bake without it; never copy a regular factory's retained line in. After simplifying a named definition, exercise each used symbol + trait combination directly with the migrated verb — `bake!` plus `persisted?` for a former `create` call — in the test environment inside `User.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }`, plus the same wrapper around every other pool or Sequel database the graph writes to (omit a wrapper only when the whole call, declarations and callbacks included, performs no database writes): doctor runs for class targets only.
 6. Repeat for the next model.
 
 Run the whole suite at the end, twice with different seeds (`bundle exec rspec --seed 1`, then `--seed 2`). If a run fails, replay it with the seed it printed (or the one in the FactoryBakery log line or error text) before changing anything, and use the [`factory-bakery-diagnostics`](../../factory-bakery-diagnostics/SKILL.md) skill.

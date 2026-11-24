@@ -97,11 +97,11 @@ For each factory, write the translation in the **new** directory, following [`tr
 | `sequence(:email) { \|n\| ... }` | A counter local at the top of the file |
 | `association :x, name: 'a'` | `association :x, with: { name: 'a' }` |
 | `association :x, :admin` | `association :x, :admin`. `:admin` is a trait on the **target's** definition, so declare it there |
-| `strategy: :create` | `persist: true` |
+| `strategy: :create` | `persist: true`. Keep the ordered attribute block or a preserving helper when an owner setter or another declaration needs the parent saved earlier than the association phase |
 | `author { create(:user) }` | `association :author, User, persist: true`. Keep it saved: the old factory saved the parent. If a sibling block reads `author`, keep `author { FactoryBakery.bake!(User) }`: with an explicit `association`, a sibling block that reads it gets nil and the edge is then not built at all (the record can end up invalid). Keep the attribute block |
 | `parent:` / nested factory, same class | `define(:admin, klass: User)` repeating the parent's lines, so the call stays a pure rename: `bake!(:admin)`. Not a trait, not a call-site argument |
-| A factory naming a subclass with no `parent:` (`class: 'Admin'`, `Admin < User`) | Register an exact `define(Admin)` with the factory's own lines — even when the body is empty (`define(Admin) {}`), because a bare `class:` inherits no factory_bot factory and the empty exact definition shadows the unintended ancestor definition. Falling back to inheritance is a Phase 7 drop |
-| `parent:` / nested factory with `class: 'Admin'` (`Admin < User`) | An empty body translates to nothing: `bake!(Admin)` uses `define(User)`. With a body, in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
+| A factory naming a subclass with no `parent:` (`class: 'Admin'`, `Admin < User`) | Register an exact `define(Admin)` with the factory's own lines — even when the body is empty (`define(Admin) {}`), because a bare `class:` inherits no factory_bot factory and the empty exact definition shadows the unintended ancestor definition. Keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. It may go only when the ancestor's reduced definition is empty |
+| `parent:` / nested factory with `class: 'Admin'` (`Admin < User`) | An empty body may translate to nothing: `bake!(Admin)` uses `define(User)`, but only when the effective ancestor definition already reproduces the selected parent's declarations, traits and defaults for every used call (a different named parent or a factory-level trait means register an exact subclass definition instead). With a body, in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
 | `skip_create`, `to_create` | **Blocker.** `bake!` always calls `save!` |
 | a construct in the "not supported" class | Do not guess. Note it in the blocker list |
 
@@ -115,9 +115,9 @@ Run doctor in the test environment, naming the translated models. It runs `bake`
 RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'
 ```
 
-If the task is missing (older gem), run `FactoryBakery.bake(Model).valid?` and `bake!` per model inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` — the model's own class. A wrapper covers one pool; wrap any other pool the graph writes to the same way, each with its own raise. Failures go to the diagnostics skill. Do not simplify anything yet.
+If the task is missing (older gem), run `FactoryBakery.bake(Model).valid?` and `bake!` per model inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` — the model's own class. A wrapper covers one pool; wrap any other pool the graph writes to the same way, each with its own raise (a Sequel model: `Model.db.transaction(rollback: :always)`); omit a wrapper only when the whole call (declarations and callbacks included) performs no database writes. Failures go to the diagnostics skill. Do not simplify anything yet.
 
-Doctor bakes actual class targets only; a named target (`bake(:admin)`) never reaches it. Verify each used named target and trait combination directly, with the verb the migrated call sites use — `bake!` for a former `create` call, then `persisted?` — in the test environment, inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` (the target's own class), and repeat the check after simplifying:
+Doctor bakes actual class targets only; a named target (`bake(:admin)`) never reaches it. Verify each used named target and trait combination directly, with the verb the migrated call sites use — `bake!` for a former `create` call, then `persisted?` — in the test environment, inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` (the target's own class, plus the same wrapper around every other pool or Sequel database the graph writes to; omit a wrapper only when the whole call (declarations and callbacks included) performs no database writes), and repeat the check after simplifying:
 
 ```sh
 RAILS_ENV=test bin/rails runner 'User.transaction(requires_new: true) { r = FactoryBakery.bake!(:admin, :published); abort FactoryBakery.explain(r) unless r.valid? && r.persisted?; raise ActiveRecord::Rollback }'
@@ -138,8 +138,8 @@ While rewriting: edit **only** the factory call, and let arguments after the nam
 After each batch run the suite, compare with the baseline, then the rename check ([`verification.md`](references/verification.md#3-the-rename-check)). `<skill-dir>` is the absolute path of this skill's directory. Run it on the **uncommitted** work before each commit, and against the starting SHA at the end:
 
 ```sh
-git diff -U0 --no-color HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb              # before each commit
-git diff -U0 --no-color <start-sha> HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb   # at the end
+git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb              # before each commit
+git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ <start-sha> HEAD -- spec test | ruby <skill-dir>/references/check_renames.rb   # at the end
 ```
 
 Any `FAIL` means stop and revert that change. Read every `REVIEW`.
@@ -178,7 +178,7 @@ Start only when Phase 6 is green and committed.
 5. Keep a line only for one of these reasons, and say which:
    - **A test depends on that exact value** (asserts on it, or looks the record up by it).
    - **The model cannot bake without it** (custom validator, registry, format, side-effecting setter, cross-record rule, cycle, read-only view, `persist:` need). The gem does not search for an enum, boolean or STI value that passes a custom validator ([ADR-0008](../../docs/adr/0008-user-chooses-domain-values.md)), so that line stays.
-6. Keep every **named** definition (`define(:admin, klass: User)`): without it `bake!(:admin)` raises `No factory is registered for :admin`. A named definition never merges with the class-keyed one. Apply the keep rules per target and trait: the named definition repeats a class line only when the original named factory had it (inherited via `parent:`/nested) or the model cannot bake without it. Never copy a regular factory's retained line into an independent named factory: it changes the bake (probed: the copy turns a nil name into the parent's kept value). It may be empty only when nothing is left under those rules.
+6. Keep every **named** definition (`define(:admin, klass: User)`): without it `bake!(:admin)` raises `No factory is registered for :admin`. A named definition never merges with the class-keyed one. Apply the keep rules per target and trait: the named definition repeats a class line only when the original named factory had it (inherited via `parent:`/nested) or the model cannot bake without it. Never copy a regular factory's retained line into an independent named factory: it changes the bake (probed: the copy turns a nil name into the class-keyed definition's kept value). It may be empty only when nothing is left under those rules.
 7. Re-run the Phase 6 checks. Commit.
 
 ### Phase 8. Report blockers and results (two-way)
@@ -205,7 +205,7 @@ Full list with before/after code: [`references/bad-patterns.md`](references/bad-
 | Drop a line on one green doctor run | Re-run that model's tests, and doctor under `FACTORY_BAKERY_SEED=1,2,3` |
 | Keep `name 'x'` | `name { 'x' }` |
 | `FactoryBakery.bake!(X)` in an attribute block when `association` fits | `association :x, X, persist: true` (or `association :x, X`). Keep the block only when a sibling block reads that attribute |
-| `persist: true` on every association | Only where a validator reads the parent's id, or the old factory saved the parent |
+| `persist: true` on every association | Only where a validator reads the parent's id, or the old factory saved the parent. Keep the ordered attribute block or a preserving helper when an owner setter or another declaration needs the parent saved earlier than the association phase |
 | `strategy: :fresh` on every edge | It is the default. Only where a global `:reuse_non_unique` is on |
 | Cache a record in a file-level local and reuse it across bakes | One record per bake, from inside the block |
 | Rely on `:reuse_non_unique` for test isolation | It reads existing rows. Use `:fresh` |

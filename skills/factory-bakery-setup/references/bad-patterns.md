@@ -30,7 +30,7 @@ end
 config.definition_paths = [Rails.root.join('spec/bakery').to_s]
 ```
 
-`RAILS_ENV=test bin/rails g factory_bakery:install` writes this line when it detects factory_bot. The generator writes `config.definition_paths = ["spec/bakery"]` (relative); the absolute form above is equivalent.
+`RAILS_ENV=test bin/rails g factory_bakery:install` writes this line when it detects factory_bot: the generator writes a relative path such as `["spec/bakery"]` or `["test/bakery"]`, only into a new initializer (an existing file is kept); the absolute form above is equivalent.
 
 ## 3. `:all` mode set globally
 
