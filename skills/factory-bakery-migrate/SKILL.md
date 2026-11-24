@@ -85,6 +85,18 @@ For each factory, write the translation in the **new** directory, following [`tr
 - `association :x, name: 'a'` becomes `association :x, with: { name: 'a' }`. `strategy: :create` becomes `persist: true`.
 - Nested/inherited factories become traits or a second definition.
 - A construct in the "not supported" class: do not guess. Leave a note in the blocker list.
+- **Keep the declaration layer static** ([ADR-0008](../../docs/adr/0008-definitions-declare-statically.md)). The `define` block and each `trait` block must declare the same attributes every time. Only the `{ ... }` value blocks may depend on runtime state.
+
+  Anti-patterns to avoid when translating (a conditional in a factory body becomes a value block or a trait):
+
+  | Anti-pattern | Why it is wrong | Write instead |
+  | --- | --- | --- |
+  | `admin { true } if ENV['X']` | The attribute exists only on some runs | `admin { ENV['X'] ? true : false }` |
+  | `skip :avatar unless Rails.env.test?` | The skip set depends on the environment | `skip :avatar` always, or a value block |
+  | `Model.column_names.each { \|c\| add_attribute(c) { ... } }` | The list comes from runtime state | List the names literally |
+  | `association :x if rand < 0.5` | A plugin declaration that varies | A trait: `trait(:with_x) { association :x }` |
+
+  Random or changing *values* are fine: `count { rand(1..10) }` declares `count` on every bake, so it is static. A loop over a fixed literal list (`%i[a b].each { \|n\| add_attribute(n) { 1 } }`) is static and fine.
 
 Run the suite after the batch. Commit.
 
