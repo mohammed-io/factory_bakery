@@ -112,7 +112,7 @@ association(:comments) { |post| Array.new(2) { |i| FactoryBakery.bake(Comment, p
 | `transient` passed at the call site | Not supported. Blocker |
 | `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Report definition callbacks. Keep existing call-site blocks on `bake` or `bake!` |
 | `initialize_with { new(a: 1) }` | `initialize_with(a: 1)` |
-| `initialize_with { new(a: name) }` | Blocker (a block, and it reads a sibling) |
+| `initialize_with { new(a: name) }` | Blocker. `initialize_with` takes a Hash before the record is instantiated. Sibling reads are supported in attribute value blocks. |
 
 ## Call sites (renames only)
 

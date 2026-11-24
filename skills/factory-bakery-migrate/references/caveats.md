@@ -126,7 +126,7 @@ Check constraints, composite unique indexes and triggers are invisible. A block 
 | --- | --- |
 | **Static declarations raise** | Rewrite `name 'Ada'` to `name { 'Ada' }` |
 | **Sibling reads** | Keep `label { "#{name}-x" }`. Overrides and traits change the value it sees. Reads honor `fill_optional` and `skip` |
-| **Declarations may run twice** | The verified fallback can rebuild. Blocks with non-database side effects can repeat |
+| **Value blocks may run twice** | The verified fallback reuses cached definition and trait declarations. It evaluates winning attribute value blocks again, so their non-database side effects can repeat |
 | **A typo in an attribute name is silent** | Values go through setters. A missing setter is skipped |
 | **Definitions are global** | No per-example factory change. Use call-site overrides |
 | **Class-keyed definitions go stale on reload** | Tests do not reload. Symbol factories re-resolve |

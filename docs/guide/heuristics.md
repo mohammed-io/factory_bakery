@@ -2,7 +2,7 @@
 
 For every attribute that no override, trait or declaration decided, FactoryBakery picks a value generator. ActiveRecord models contribute column types and validators. Any ActiveModel-compatible object contributes validators. The generator reads the validator options and produces a value that passes them.
 
-Design rule ([ADR-0002](../adr/0002-heuristic-first-verified-generation.md), [ADR-0004](../adr/0004-extend-generation-within-discoverable-constraints.md)): generation uses only *discoverable constraints*. App-specific rules belong in a [definition](definitions.md).
+Generation uses only *discoverable constraints*. App-specific rules belong in a [definition](definitions.md). See [ADR-0002](../adr/0002-heuristic-first-verified-generation.md).
 
 ## What gets filled
 
@@ -79,7 +79,7 @@ Name-, title-, slug-, key- and label-like strings end in a six-digit suffix (`"V
 - Length validators and the column limit steer the length.
 - Every value is checked against every `with:` and `without:` regex, the length rules and uniqueness.
 - It is bounded. Unbounded quantifiers repeat at most 8 times past their minimum unless a length hint asks for more. Values are capped at 256 characters or the requested minimum.
-- `srand` makes values repeatable.
+- Use the [FactoryBakery seed](#reproducible-values) to repeat generated regex values.
 - A regex that no string matches, or one that `regexp_parser` cannot parse, produces no candidate. If nothing works the bake raises (see [format exhaustion](../../skills/factory-bakery-diagnostics/references/diagnostics.md#format-exhaustion)). Supply the value yourself.
 
 ### Uniqueness
@@ -113,7 +113,7 @@ FactoryBakery.bake(User, fill_optional: false)                     # opt out of 
 FactoryBakery.bake(User, fill_optional: [:bio, :website])          # just these names
 ```
 
-- The setting is validated. `fill_optional: 'true'` raises `ArgumentError: fill_optional must be true, false, or an array of attribute names, got "true"`.
+- On a bake call, `true`, `false`, and arrays of attribute names set the fill mode. An omitted or `nil` keyword uses the current mode. Other values become plain attribute overrides, so `FactoryBakery.bake(User, fill_optional: 'true')` attempts to assign `'true'` to the model's `fill_optional` attribute. The global `FactoryBakery.fill_optional =` writer raises `ArgumentError` for invalid values and treats `nil` as `false`.
 - It applies to nested bakes made from declaration blocks too.
 - Declarations, traits and overrides still win in every mode.
 - A column filled only because you opted in is verified. If a custom validator or `validate` block rejects that value, the fill is put back to the column default (or `nil`) when that makes the record valid. A required column keeps its value.
@@ -134,7 +134,7 @@ What the fallback adds to errors:
 
 Consequences you should plan for:
 
-- **Declaration blocks can run twice** when the fallback fires. A block with a side effect outside the database (an HTTP call, a counter, a global setting) can repeat. Database writes of the first attempt are rolled back only with `savepoints = true`; other side effects are not.
+- **Attribute value blocks can run twice** when the fallback fires. FactoryBakery reuses cached definition and trait declarations on the rebuild. A block with a side effect outside the database (an HTTP call, a counter, a global setting) can repeat. Database writes of the first attempt are rolled back only with `savepoints = true`; other side effects are not.
 - A fallback that cannot fix the record returns the record as it is. `bake` does not raise.
 - With `fill_optional: true` globally there is no fallback and no savepoint.
 - All of the fallback's checks are part of the `validate` setting: with `FactoryBakery.validate = false` (or one call's `validate: false`) there is no probe, no rebuild, no optional-fill verification and no savepoint — one lean build is returned as it is, like `FactoryBot.build`. The build-time uniqueness checks are switched off with it; values are still generated the same way, and `bake!` still validates on save.
@@ -145,7 +145,7 @@ Complementary guards (`presence` with `if: :remote?`, `absence` with `unless: :r
 
 ## What inference cannot know
 
-Write a definition for these ([ADR-0004](../adr/0004-extend-generation-within-discoverable-constraints.md)):
+Write a definition for rules outside the constraints covered by [ADR-0002](../adr/0002-heuristic-first-verified-generation.md).
 
 - Values from an app registry (report sources, providers, emoji, site settings).
 - Cross-record rules (a follow must exist, an account must differ from another).
@@ -156,4 +156,4 @@ Write a definition for these ([ADR-0004](../adr/0004-extend-generation-within-di
 
 ## Reproducible values
 
-Strings, numbers and regex values use Ruby's global RNG. Call `srand(1234)` to repeat a run.
+To repeat generated values, set `FACTORY_BAKERY_SEED=1234` in the environment or assign `FactoryBakery.seed = 1234`. The environment variable takes precedence. With neither setting, load `require 'factory_bakery/rspec'` or `require 'factory_bakery/minitest'` to use the test runner's seed. See [Configuration](configuration.md#randomness).

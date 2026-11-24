@@ -220,13 +220,14 @@ end
 
 Test files may change only by renaming the factory call. Use these rewrites.
 
-| Before | After |
+| factory_bot | FactoryBakery |
 | --- | --- |
 | `create(:post)` | `FactoryBakery.bake!(Post)` |
 | `create(:post, title: 'x')` | `FactoryBakery.bake!(Post, title: 'x')` |
 | `create(:post, :published)` | `FactoryBakery.bake!(Post, :published)` |
 | `create(:user, :admin, name: 'x')` | `FactoryBakery.bake!(User, :admin, name: 'x')` |
 | `build(:post)` | `FactoryBakery.bake(Post)` |
+| `create(:user) { \|user\| user.reload }` | `FactoryBakery.bake!(User) { \|user\| user.reload }` |
 | `create(:admin)` where `factory :admin, class: 'User'` | `FactoryBakery.bake!(:admin)` (needs `define(:admin, klass: User)`) |
 | `create_list(:post, 3)` | `Array.new(3) { FactoryBakery.bake!(Post) }` |
 | `build_list(:post, 3)` | `Array.new(3) { FactoryBakery.bake(Post) }` |
@@ -238,7 +239,7 @@ For new code, `FactoryBakery.recipe(User, :admin).bake!(name: 'x')` is an option
 
 Do it in small batches, one commit each. Run the suite after each batch.
 
-**Do not use a rename to hide a change.** If a call site passes a block, relies on `build_stubbed`, or needs behavior the definition cannot give, stop and report it. See [what cannot be migrated](#what-cannot-be-migrated-mechanically).
+Keep an existing block on a single-record `bake` or `bake!` call. Both yield the record, including when called on a recipe. If a call site relies on `build_stubbed` or needs behavior the definition cannot give, stop and report it. See [what cannot be migrated](#what-cannot-be-migrated-mechanically).
 
 ### Checking that only calls changed
 

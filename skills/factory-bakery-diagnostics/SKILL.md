@@ -98,7 +98,7 @@ domain { 'example.com' }
 skip :moved_to_account
 ```
 
-Never use `name 'x'` (no block) in a definition: it assigns nothing and suppresses inference. Use `name { 'x' }`.
+`name 'x'` raises `FactoryBakery::Error` in a definition. Use `name { 'x' }`.
 
 ### 5. Or report a gem bug
 

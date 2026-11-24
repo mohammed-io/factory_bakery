@@ -10,11 +10,11 @@ A default bake fills only what a valid record needs. Use `fill_optional: true` o
 **Why does `bake` return an invalid record?**
 `bake` does not validate overrides, and it probes validity only when it has a reason. Call `valid?`. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
 
-**Why did `name 'Ada'` leave `name` nil?**
-There is no static shorthand. A declaration without a block carries no value and also suppresses inference. Write `name { 'Ada' }`. See [Definitions](definitions.md#attribute-blocks).
+**Why does `name 'Ada'` raise?**
+The DSL raises `FactoryBakery::Error` for static attribute arguments, an attribute declaration without a value block, or `skip` with a block or no names. Write `name { 'Ada' }`. If the model has no setter for a declared attribute, assignment skips it without error. See [Definitions](definitions.md#attribute-blocks).
 
-**Why does `label { "#{name}-x" }` produce a strange string?**
-Blocks have no access to sibling attributes. `name` inside the block is read as a new empty declaration. Use a local variable in the `define` block, or an override. See [Definitions](definitions.md#what-a-block-can-see).
+**Can an attribute block read another attribute?**
+Yes. In `label { "#{name}-x" }`, `name` reads the sibling value, including a call-site override or a declaration that appears later. See [Definitions](definitions.md#what-a-block-can-see).
 
 **Is there `sequence`, `transient`, `after(:create)`, `build_stubbed`?**
 No. Sequences: a counter local at the top of the file, or `SecureRandom`. Transients: locals inside the attribute block that uses them (a local in the `define` body is computed once). Callbacks: do the work in a block, or after the `bake!` call. `build_stubbed`: no equivalent. See [Migrating from factory_bot](migrating-from-factory-bot.md).
@@ -49,7 +49,7 @@ Inference cannot see it. Declare a value from the registry. See [Heuristics](heu
 A text column cast to JSON by an index gets a JSON string. Other structured payloads need a block that returns the right shape. See [diagnostics](../../skills/factory-bakery-diagnostics/references/diagnostics.md#structured-text-columns).
 
 **Can I make values repeatable?**
-`srand(seed)`.
+Set `FACTORY_BAKERY_SEED=1234` in the environment or `FactoryBakery.seed = 1234` in Ruby. To use the test runner's seed, load `require 'factory_bakery/rspec'` or `require 'factory_bakery/minitest'`. See [Heuristics](heuristics.md#reproducible-values).
 
 ## Associations
 
@@ -95,7 +95,7 @@ With `FactoryBakery.savepoints = true`, yes: the whole graph, even inside an out
 Construction retries with `unscoped` and then without callbacks. See [Definitions](definitions.md#models-whose-new-raises).
 
 **A side effect runs twice.**
-The verified fallback may rebuild a record, so declaration blocks can run twice. Keep blocks free of non-database side effects, or guard them. See [Heuristics](heuristics.md#the-verified-fallback).
+FactoryBakery records and reuses cacheable definition and trait declarations. Attribute value blocks can run again if the verified fallback rebuilds the record. Keep blocks free of non-database side effects, or guard them. See [Heuristics](heuristics.md#the-verified-fallback).
 
 ## Rails
 
@@ -114,7 +114,7 @@ Per-bake state is fiber-local. Plugin and mapper registrations and `Associations
 Ruby >= 3.2. Rails 7.1, 7.2, 8.0. Tested on SQLite, PostgreSQL and MySQL.
 
 **Where is the glossary?**
-[`GLOSSARY.md`](../../GLOSSARY.md).
+The repo adds `GLOSSARY.md` at the root when domain terms need definitions. See [Domain docs](../agents/domain.md).
 
 **Where do I report a bug?**
 `https://github.com/mohammed-io/factory_bakery/issues`. Include the exact message and the model. If a model's own rules are the cause, a definition line is the fix, not a bug.

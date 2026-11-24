@@ -52,7 +52,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | --- | --- | --- |
 | A test asserts on an exact value | `attr { 'value' }` | Inference is random |
 | Specific state (`:published`, `:admin`) | `trait` | A state is a test decision |
-| Registry, provider list, site setting, emoji list | A block returning a registry value | Not a discoverable constraint ([ADR-0004](../../../docs/adr/0004-extend-generation-within-discoverable-constraints.md)) |
+| Registry, provider list, site setting, emoji list | A block returning a registry value | See [What inference cannot know](../../../docs/guide/heuristics.md#what-inference-cannot-know) |
 | Custom validator that needs particular values | One block per needed attribute | Unreadable logic |
 | Time-relative custom validation | A block computing from "now" | Custom code |
 | Structured JSON/YAML in a **text** column (not index-cast) | A block returning the shape | No schema to read |
@@ -72,7 +72,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | Factory inheritance (`parent:`, nested `factory`) | A trait, or a second definition | No inheritance |
 | `aliases:` | A second `define(:alias, klass: X, &same_block)` | One key per `define` |
 | `sequence` | A counter local at the top of the file | There is no `sequence` DSL |
-| `transient` used only inside the factory | A local inside the attribute block that uses it | A local declared in the `define` body, outside a value block, is computed once, not per bake ([ADR-0008](../../../docs/adr/0008-definitions-declare-statically.md)); a constant there is fine, a computed or random value belongs inside the block |
+| `transient` used only inside the factory | A local inside the attribute block that uses it | Cacheable definition and trait blocks run once. Put per-record computations inside the value block, which can run again on a verified-fallback rebuild. See [ADR-0008](../../../docs/adr/0008-definitions-declare-statically.md) |
 | `association :x, strategy: :create` | `association :x, persist: true` | Same intent |
 | `initialize_with { ... }` that builds from a simple hash | `initialize_with(a: 1)` | A Hash only |
 | DB-only constraint (check constraint, composite unique index, trigger) | A block giving an accepted value | Not visible to the mapper |

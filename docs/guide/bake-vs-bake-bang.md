@@ -63,7 +63,7 @@ FactoryBakery.savepoints = true # or config.factory_bakery.savepoints = true in 
 | Verified fallback rebuild | The lean attempt's rows stay behind, so a declaration-block parent can exist twice | The lean attempt's rows are rolled back, so one copy remains |
 | Optional edges (`:all`) and polymorphic candidates that fail | Rolled back with the attempt, always | Same |
 
-The fallback trade-off with the default: its rebuild re-runs declaration blocks, so a block that saves a parent with a unique value (for example `account { FactoryBakery.bake!(account, name: 'acme') }` with a unique `name`) fails the rebuild with "has already been taken" against the row the lean attempt left behind. `FactoryBakery.savepoints = true` fixes it by rolling the lean attempt's rows back. A savepoint is lazy — it sends SQL only when a query runs inside it — so it costs almost nothing.
+The fallback rebuild reuses cached declarations and evaluates attribute value blocks again. With savepoints off, `author { FactoryBakery.bake!(User, name: 'Ada') }` can fail on the rebuild if names must be unique and the lean attempt already saved Ada. `FactoryBakery.savepoints = true` rolls back the lean attempt's rows. A savepoint is lazy — it sends SQL only when a query runs inside it — so it costs almost nothing.
 
 The associations plugin's best-effort edges keep their savepoints either way: they rescue a failed child and carry on, and on PostgreSQL a failed statement outside a savepoint would abort the whole transaction. And one more case to know with savepoints off: `save!` joins a caller's own transaction, so after a database error rescued inside that transaction PostgreSQL aborts it. Transactional tests are unaffected.
 

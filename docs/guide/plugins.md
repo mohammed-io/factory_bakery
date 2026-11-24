@@ -55,7 +55,7 @@ Requiring the associations plugin and your own plugin in different orders can th
 
 ## Reserved name
 
-`association` is reserved. Using it without a plugin that provides it raises `` `association` requires the associations plugin: require 'factory_bakery/associations' ``. Any **other** unknown name in a definition is read as an attribute declaration with no block. It is silently ignored, so a plugin DSL method used after the plugin is unregistered does nothing and does not raise.
+`association` is reserved. Using it without a plugin that provides it raises `` `association` requires the associations plugin: require 'factory_bakery/associations' ``. Any other unknown name is handled as an attribute declaration. A call with static arguments or without a value block raises `FactoryBakery::Error`. A well-formed attribute declaration skips assignment when the model has no setter.
 
 ## Worked example
 
