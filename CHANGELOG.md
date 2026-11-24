@@ -4,6 +4,7 @@
 
 - Sorbet signatures (`rbi/factory_bakery.rbi`): `FactoryBakery.bake(User)` and `bake!` are typed as `User`, and the block receives a `User`. A symbol target returns `T.untyped`. See the Types guide.
 - `FactoryBakery.recipe(...).bake` and `.bake!` build or save a record from a reusable recipe with a target, traits and optional overrides.
+- Opt-in Sorbet/Tapioca plugin (`require 'factory_bakery/sorbet'`, then `bin/tapioca dsl`): for each ActiveRecord model with a definition it generates a recipe class with one method per declared trait and type-checked `bake`/`bake!` keywords for its columns and associations. The static `recipe` signatures moved to `rbi/factory_bakery_recipe.rbi`, which Tapioca users omit. New `FactoryBakery.trait_names(target)` returns the traits a definition declares. See the Types guide.
 
 ### Changed
 
