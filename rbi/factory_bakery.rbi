@@ -45,4 +45,30 @@ module FactoryBakery
       .returns(T.untyped)
   end
   def self.bake!(target, *args, &blk); end
+
+  # `recipe(User, :admin)` is a bake waiting for the rest: `.bake(...)` finishes
+  # it unsaved, `.bake!(...)` saved, like the module methods. The recipe is
+  # generic in the model, so both return it.
+  sig do
+    type_parameters(:Model)
+      .params(target: T::Class[T.type_parameter(:Model)], args: T.untyped)
+      .returns(FactoryBakery::Recipe[T.type_parameter(:Model)])
+  end
+  sig { params(target: Symbol, args: T.untyped).returns(FactoryBakery::Recipe[T.untyped]) }
+  def self.recipe(target, *args); end
+
+  class Recipe
+    extend T::Generic
+
+    Model = type_member
+
+    sig { params(more: T.untyped, blk: T.nilable(T.proc.params(record: Model).void)).returns(Model) }
+    def bake(**more, &blk); end
+
+    sig { params(more: T.untyped, blk: T.nilable(T.proc.params(record: Model).void)).returns(Model) }
+    def bake!(**more, &blk); end
+
+    sig { params(names: Symbol).returns(FactoryBakery::Recipe[Model]) }
+    def trait(*names); end
+  end
 end

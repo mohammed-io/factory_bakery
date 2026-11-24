@@ -22,6 +22,7 @@ require_relative 'factory_bakery/required_attribute'
 require_relative 'factory_bakery/fallback_builder'
 require_relative 'factory_bakery/mapper_registry'
 require_relative 'factory_bakery/declaration_values'
+require_relative 'factory_bakery/recipe'
 require_relative 'factory_bakery/declaration_set'
 require_relative 'factory_bakery/declaration_cache'
 require_relative 'factory_bakery/builder_names'
@@ -91,6 +92,7 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
     end
   end
 
+  extend Recipe::Entry
   extend SeedApi
   extend SavepointSetting
   extend ValidationSetting

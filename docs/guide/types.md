@@ -22,3 +22,18 @@ Install: copy the file into `sorbet/rbi/shims/` in your project.
 | `fill_optional:`, `validate:`, attribute overrides | no |
 
 Traits and keyword arguments travel in one untyped splat because an RBI overload cannot declare keyword arguments, and one generic signature cannot return the class's type for a class and `T.untyped` for a symbol. A typo in an override name is therefore still silent (see [Definitions](definitions.md#declaring-an-attribute-the-model-does-not-have)).
+
+## `recipe`: the same bake, written as a chain
+
+```ruby
+admin = FactoryBakery.recipe(User, :admin)   # a bake waiting for the rest
+admin.bake(name: 'Ada')                      # == FactoryBakery.bake(User, :admin, name: 'Ada')
+admin.bake!(name: 'Grace')                   # == FactoryBakery.bake!(User, :admin, name: 'Grace')
+FactoryBakery.recipe(User).admin.verified.bake!   # traits can be chained too
+```
+
+A recipe is frozen, so one can be kept and reused. `recipe(...).bake` and `recipe(...).bake!` call the module's `bake` and `bake!` with the same traits and overrides, so both spellings produce the same record. Overrides given to the recipe and to `bake` are merged, the later ones winning.
+
+A chained trait name that is not declared raises the usual `Trait :name is not declared` error when the recipe is finished. A trait named `bake`, `bake!` or `trait` is added with `recipe(User).trait(:bake)`.
+
+With the shipped signatures, `FactoryBakery.recipe(User).bake` is typed as `User`, like `bake(User)`; traits and overrides are not checked.
