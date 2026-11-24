@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../fiber_local'
+
 module FactoryBakery
   # Opt-in association building. Configuration lives with the plugin so core
   # stays ignorant of it.
@@ -82,10 +84,10 @@ module FactoryBakery
       def with(**overrides)
         previous = scope
         validate_scope!(overrides)
-        Fiber[SCOPE_KEY] = previous.merge(overrides).freeze
+        FactoryBakery::FiberLocal[SCOPE_KEY] = previous.merge(overrides).freeze
         yield
       ensure
-        Fiber[SCOPE_KEY] = previous
+        FactoryBakery::FiberLocal[SCOPE_KEY] = previous
       end
 
       # Test support: resets global config to its defaults and clears this
@@ -96,7 +98,7 @@ module FactoryBakery
         @global_max_depth = DEFAULT_MAX_DEPTH
         @global_default_count = DEFAULT_COUNT
         @global_eager_load = DEFAULT_EAGER_LOAD
-        Fiber[SCOPE_KEY] = EMPTY_SCOPE
+        FactoryBakery::FiberLocal[SCOPE_KEY] = EMPTY_SCOPE
       end
 
       # The build context counts nested public bakes: the root is depth 1, so
@@ -116,7 +118,7 @@ module FactoryBakery
       private
 
       def scope
-        Fiber[SCOPE_KEY] || EMPTY_SCOPE
+        FactoryBakery::FiberLocal[SCOPE_KEY] || EMPTY_SCOPE
       end
 
       def global_mode

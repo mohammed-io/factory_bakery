@@ -3,9 +3,9 @@
 | | `FactoryBakery.bake` | `FactoryBakery.bake!` |
 | --- | --- | --- |
 | Returns | The object, **unsaved** | The object, **saved**, after the whole graph is verified |
-| Writes to the database | Nothing of its own (exceptions below) | The whole graph, in one transaction |
+| Writes to the database | Nothing of its own (exceptions below) | The whole graph, wrapped in one transaction when `FactoryBakery.savepoints` is enabled |
 | Validates | Only when needed to verify a lean bake (see [Heuristics](heuristics.md#the-verified-fallback)) | Through `save!` |
-| On an invalid record | Returns it. You check `valid?` | Raises (`ActiveRecord::RecordInvalid`) and rolls back |
+| On an invalid record | Returns it. You check `valid?` | Raises (`ActiveRecord::RecordInvalid`) and, with `FactoryBakery.savepoints = true`, rolls back |
 | Target without `save!` (a PORO) | Returns the object | Returns the object, nothing saved |
 
 Both take the same arguments: a class or registered symbol, any number of traits, then override keywords.
@@ -13,6 +13,14 @@ Both take the same arguments: a class or registered symbol, any number of traits
 ```ruby
 FactoryBakery.bake(Post, :published, title: 'Hello')
 FactoryBakery.bake!(Post, :published, title: 'Hello')
+```
+
+You can also set the target and traits on a recipe and call `bake` or `bake!` when you need the record. The same persistence rules and block behavior apply.
+
+```ruby
+published_post = FactoryBakery.recipe(Post, :published)
+published_post.bake(title: 'Hello')
+published_post.bake!(title: 'Hello')
 ```
 
 ## `bake`: build only
@@ -37,13 +45,33 @@ These are documented exceptions. Everything else in a `bake` is database-free.
 | `association :x, persist: true` | The target and its graph are saved with a nested `bake!`. |
 | A declaration block that calls `bake!` or `create!` | Whatever the block saves. |
 | `strategy: :reuse_non_unique` | No write, but it **reads** the database and takes an existing row. |
-| Required-only fallback | A savepoint is opened so the lean attempt can be rolled back. Nothing remains. |
+| Required-only fallback | With `savepoints = true` the lean attempt's rows are rolled back, so one copy remains; with the default they stay behind. See [Savepoints](#savepoints) |
 
 If your tests run inside a transaction, rows from these cases roll back with it.
 
+## Savepoints
+
+`FactoryBakery.savepoints` (default `false`) decides whether the gem wraps its persistence in a nested transaction, which is a savepoint when your code already has a transaction: the `bake!` envelope, and the verified fallback's attempts. The default matches factory_bot: the gem opens none, so the cost is gone, and a failure leaves whatever `save!` already wrote. Turn it on for atomic `bake!`:
+
+```ruby
+FactoryBakery.savepoints = true # or config.factory_bakery.savepoints = true in Rails
+```
+
+| | `savepoints = false` (default) | `savepoints = true` |
+| --- | --- | --- |
+| `bake!` fails (invalid root, `IncompletePersistenceError`, `ReadOnlyTargetError`) | `save!` rolls back its own rows. Parents a declaration block or an FK-presence edge saved earlier stay | Every row the bake wrote is rolled back |
+| Verified fallback rebuild | The lean attempt's rows stay behind, so a declaration-block parent can exist twice | The lean attempt's rows are rolled back, so one copy remains |
+| Optional edges (`:all`) and polymorphic candidates that fail | Rolled back with the attempt, always | Same |
+
+The fallback rebuild reuses cached declarations and evaluates attribute value blocks again. With savepoints off, `author { FactoryBakery.bake!(User, name: 'Ada') }` can fail on the rebuild if names must be unique and the lean attempt already saved Ada. `FactoryBakery.savepoints = true` rolls back the lean attempt's rows. A savepoint is lazy — it sends SQL only when a query runs inside it — so it costs almost nothing.
+
+The associations plugin's best-effort edges keep their savepoints either way: they rescue a failed child and carry on, and on PostgreSQL a failed statement outside a savepoint would abort the whole transaction. And one more case to know with savepoints off: `save!` joins a caller's own transaction, so after a database error rescued inside that transaction PostgreSQL aborts it. Transactional tests are unaffected.
+
+Inside a transactional test none of this is visible: the test's own rollback removes every row.
+
 ## `bake!`: build, save, verify
 
-`bake!` runs these steps inside one transaction opened with `requires_new`. Inside your own transaction that is a savepoint.
+`bake!` runs these steps inside one transaction opened with `requires_new` when [savepoints](#savepoints) are on. Inside your own transaction that is a savepoint.
 
 1. Build the graph (nested `bake!` calls from declaration blocks included).
 2. Check that no record in the graph is read-only. A read-only record raises `FactoryBakery::ReadOnlyTargetError`. See [read-only targets](associations.md#read-only-targets).
@@ -51,7 +79,7 @@ If your tests run inside a transaction, rows from these cases roll back with it.
 4. Run work that waits for the owner to be saved (for example optional `has_one` children under `:all`).
 5. Verify that every record the bake generated reached the database.
 
-If any step raises, every row the bake wrote is rolled back, even when you rescue the error inside an outer transaction.
+If any step raises and savepoints are on, every row the bake wrote is rolled back, even when you rescue the error inside an outer transaction. With them off, only `save!`'s own transaction rolls back.
 
 ```ruby
 ActiveRecord::Base.transaction do
@@ -71,7 +99,7 @@ A record can stay unsaved even though the root saved. This happens with `autosav
 bake! did not persist all generated records: Member (assigned to members). Persist the record explicitly via a declaration or override, or change the association's autosave/validate options.
 ```
 
-The error class is `FactoryBakery::IncompletePersistenceError`. The whole bake is rolled back first. See [diagnostics](../../skills/factory-bakery-diagnostics/references/diagnostics.md#incomplete-persistence).
+The error class is `FactoryBakery::IncompletePersistenceError`. With `FactoryBakery.savepoints = true`, the whole bake is rolled back first; with the default off, only `save!`'s own transaction rolls back. See [diagnostics](../../skills/factory-bakery-diagnostics/references/diagnostics.md#incomplete-persistence).
 
 A nested `bake!` (from `persist: true` or a declaration block) verifies only the records of its own build. An unsaved sibling of the same class, auto-built by the outer bake, is not its concern. See the [sibling case](../../skills/factory-bakery-diagnostics/references/diagnostics.md#nested-bake-sibling-of-same-class).
 
@@ -89,11 +117,11 @@ If no mapper claims the class, `bake!` is `bake` plus `save!` when the object re
 
 ## Things that surprise people
 
-- A block passed to `bake!` runs once, after the record is saved and verified, and receives the record: `FactoryBakery.bake!(User) { |u| u.admin! }`. A block passed to `bake` receives the unsaved record.
+- A block passed to `bake!` runs once, after the record is saved and verified, and receives the record: `FactoryBakery.bake!(User) { |u| u.admin! }`. A block passed to `bake` receives the unsaved record. The same holds for a recipe's `.bake` and `.bake!`.
 - `bake!` returns the object with in-memory state. Call `reload` if a test needs database state.
 - Depth is capped. Nested bakes deeper than `FactoryBakery.max_bake_depth` (default 10) raise `FactoryBakery::NestingTooDeepError`:
   ```
   bake nesting exceeded max_bake_depth (2): User -> User -> User
   ```
-- Declaration blocks can run twice when the verified fallback fires. See [Heuristics](heuristics.md#the-verified-fallback).
+- Attribute value blocks can run twice when the verified fallback rebuilds a record. See [Heuristics](heuristics.md#the-verified-fallback).
 - Each bake keeps its own state per fiber, so threads do not share a graph.

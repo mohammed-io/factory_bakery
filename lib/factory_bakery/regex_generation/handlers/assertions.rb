@@ -15,30 +15,30 @@ module FactoryBakery
         # pattern yields a candidate starting `http:` or `HTTPS:`. Text that
         # is still pending at the end is appended: `foo(?=bar)` gives
         # `foobar`.
-        def render_lookahead(node, _window)
+        def render_lookahead(node, _low, _high)
           @prefix = generate_aside(node)
         end
 
         # A positive lookbehind at the very start has nothing before it, so
         # its text is emitted there; elsewhere the preceding output must
         # already satisfy it (checked by the final verification).
-        def render_lookbehind(node, _window)
+        def render_lookbehind(node, _low, _high)
           text = generate_aside(node)
           emit_free(text) if @out.empty?
         end
 
         # Something that does not contain the body: short printable text,
         # kept only when the compiled `\A(?~body)\z` accepts it.
-        def render_absence(node, window)
-          filler = absence_filler(@plan.matcher(node), absence_length(window))
+        def render_absence(node, low, high)
+          filler = absence_filler(@plan.matcher(node), absence_length(low, high))
           abort! if filler.nil?
 
           emit_free(filler)
         end
 
-        def absence_length(window)
-          shortest = [window.lo, Limits::MAX_ABSENCE_LENGTH].min
-          longest = [[window.hi, Limits::MAX_ABSENCE_LENGTH].min, shortest].max
+        def absence_length(low, high)
+          shortest = [low, Limits::MAX_ABSENCE_LENGTH].min
+          longest = [[high, Limits::MAX_ABSENCE_LENGTH].min, shortest].max
           shortest + @random.rand(longest - shortest + 1)
         end
 
@@ -55,7 +55,7 @@ module FactoryBakery
           outer = @out
           @out = String.new(encoding: @encoding)
           @prefix = ''
-          render_sequence(node, Window::ANY)
+          render_sequence(node, 0, Float::INFINITY)
           @out.tap { @out = outer }
         end
       end

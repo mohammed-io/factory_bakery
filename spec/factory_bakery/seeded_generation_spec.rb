@@ -63,6 +63,29 @@ RSpec.describe 'seeded generation' do
     expect(widget_values).not_to eq(later)
   end
 
+  it 'does not build a random generator when the definition supplies every value' do
+    FactoryBakery.seed = 7
+    FactoryBakery.define(widget) do
+      name { 'fixed' }
+      count { 3 }
+    end
+
+    expect(Random).not_to receive(:new)
+
+    expect(FactoryBakery.bake(widget).attributes.values_at('name', 'count')).to eq(['fixed', 3])
+  end
+
+  it 'builds one random generator shared by generated values and FFaker' do
+    FactoryBakery.seed = 7
+    FactoryBakery.define(widget) do
+      name { FFaker::Name.name }
+    end
+
+    expect(Random).to receive(:new).once.and_call_original
+
+    expect(FactoryBakery.bake(widget).count).to be_a(Integer)
+  end
+
   describe 'FFaker' do
     let!(:named) do
       define_model('SeedNamed', full_name: :string) do
@@ -89,13 +112,107 @@ RSpec.describe 'seeded generation' do
       expect(full_name_for(7)).not_to eq(full_name_for(8))
     end
 
-    it 'restores FFaker\'s own seed once the bake returns' do
+    it 'leaves FFaker\'s own seed alone once the bake returns' do
       FactoryBakery.seed = 7
       previous = FFaker::Random.seed
 
       FactoryBakery.bake(named)
 
       expect(FFaker::Random.seed).to eq(previous)
+    end
+
+    it 'leaves FFaker\'s own value stream where it was, as if the bake never drew from it' do
+      FFaker::Random.seed = 1234
+      expected = Array.new(3) { FFaker::Name.name }
+
+      FFaker::Random.seed = 1234
+      FactoryBakery.seed = 7
+      FactoryBakery.bake(named)
+
+      expect(Array.new(3) { FFaker::Name.name }).to eq(expected)
+    end
+
+    it 'leaves FFaker\'s own seed alone even when the bake raises' do
+      FFaker::Random.seed = 99
+      before_seed = FFaker::Random.seed
+      FactoryBakery.define(named) { full_name { raise 'boom' } }
+
+      expect { FactoryBakery.bake(named) }.to raise_error(/boom/)
+      expect(FFaker::Random.seed).to eq(before_seed)
+    end
+
+    it 'draws from its own generator outside a bake' do
+      FFaker::Random.seed = 5
+      first = FFaker::Name.name
+
+      FFaker::Random.seed = 5
+
+      expect(FFaker::Name.name).to eq(first)
+    end
+  end
+
+  describe 'overlapping bakes' do
+    let!(:alpha) do
+      define_model('SeedParallelAlpha', full_name: :string) { validates :full_name, presence: true }
+    end
+
+    let!(:beta) do
+      define_model('SeedParallelBeta', full_name: :string) { validates :full_name, presence: true }
+    end
+
+    def faker_bake(klass, suspend: false)
+      FactoryBakery::Randomness.top_level_bake(klass) do
+        Fiber.yield if suspend
+        FFaker::Name.name
+      end
+    end
+
+    # Each solo bake starts from a fresh seed, so its bake count for the model
+    # is zero and the generator derives from (seed, model, 0) exactly as an
+    # overlapping bake of the same class does.
+    def solo_values
+      [alpha, beta].map do |klass|
+        FactoryBakery.seed = 11
+        faker_bake(klass)
+      end
+    end
+
+    it 'gives two overlapping fibers the values their bakes get when run alone' do
+      solo = solo_values
+
+      FactoryBakery.seed = 11
+      fibers = [alpha, beta].map { |klass| Fiber.new { faker_bake(klass, suspend: true) } }
+      fibers.each(&:resume)
+      values = fibers.map(&:resume)
+
+      expect(values).to eq(solo)
+    end
+
+    it 'stops a fiber created inside a finished bake from drawing with that bake\'s generator' do
+      inside = nil
+      fiber = nil
+      FactoryBakery.seed = 11
+      FactoryBakery::Randomness.top_level_bake(alpha) do
+        inside = FFaker::Random.rng
+        fiber = Fiber.new do
+          Fiber.yield
+          FFaker::Random.rng
+        end
+        fiber.resume
+      end
+
+      after = fiber.resume
+
+      expect(after).not_to equal(inside)
+    end
+
+    it 'gives two threads baking different classes the values their bakes get when run alone' do
+      solo = solo_values
+
+      FactoryBakery.seed = 11
+      values = [alpha, beta].map { |klass| Thread.new { faker_bake(klass) } }.map(&:value)
+
+      expect(values).to eq(solo)
     end
   end
 end

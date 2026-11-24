@@ -77,6 +77,7 @@ Classify each finding with the [capability matrix](references/capability-matrix.
    bundle exec ruby -e 'require "factory_bakery"; puts FactoryBakery::VERSION'   # must be >= 0.0.2.0
    RAILS_ENV=test bin/rails -T factory_bakery                                    # must list factory_bakery:doctor
    ```
+   For a Sorbet project, optionally copy the gem's `rbi/factory_bakery.rbi` and `rbi/factory_bakery_recipe.rbi` into `sorbet/rbi/shims/`. Class targets give typed returns and block arguments, while bakes with symbol targets return `T.untyped`. Sorbet does not check trait names or attribute overrides without the opt-in Tapioca plugin. See [Types (Sorbet)](../../docs/guide/types.md).
 2. Give FactoryBakery its **own** definitions directory, `spec/bakery` or `test/bakery`, and state it. Do not rely on factory_bot detection. When the old tool owns a conventional definitions path (factory_bot's `spec/factories`, Fabrication's `spec/fabricators`, Machinist's `spec/blueprints`), state `definition_paths` **before the first `bin/rails` command** — write the guarded initializer by hand first if needed: Rails boot loads the definitions directory once (`after_initialize` → `find_definitions`), and without explicit `definition_paths` the default is the first existing conventional directory or `spec/factories` (`lib/factory_bakery/active_record_mapper/definition_paths.rb:41`), so boot would evaluate the old tool's files. `RAILS_ENV=test bin/rails g factory_bakery:install` creates the directory and an initializer (with `definition_paths` active when it detects factory_bot). The gem is only in the test groups, so keep production booting:
    - Wrap the whole generated `config/initializers/factory_bakery.rb` in `if defined?(FactoryBakery::Railtie) ... end`. Its template has no guard, and its `require` and `config.factory_bakery` lines fail where the gem is not loaded.
    - Put config in `config/environments/test.rb`, or guard it with `if config.respond_to?(:factory_bakery)`. In `config/application.rb` it raises `NoMethodError` at production boot.
@@ -110,6 +111,20 @@ For each factory, write the translation in the **new** directory, following [`tr
 | `skip_create`, `to_create` | **Blocker.** `bake!` always calls `save!` |
 | a construct in the "not supported" class | Do not guess. Note it in the blocker list |
 
+**Keep the declaration layer static** ([ADR-0009](../../docs/adr/0009-definitions-declare-statically.md)). The `define` block and each `trait` block must declare the same attributes every time. Only the `{ ... }` value blocks may depend on runtime state.
+
+Anti-patterns to avoid when translating (a conditional in a factory body becomes a value block or a trait):
+
+| Anti-pattern | Why it is wrong | Write instead |
+| --- | --- | --- |
+| `admin { true } if ENV['X']` | The attribute exists only on some runs | `admin { ENV['X'] ? true : false }` |
+| `skip :avatar unless Rails.env.test?` | The skip set depends on the environment | `skip :avatar` always, or a value block |
+| `Model.column_names.each { \|c\| add_attribute(c) { ... } }` | The list comes from runtime state | List the names literally |
+| `association :x if rand < 0.5` | A plugin declaration that varies | A trait: `trait(:with_x) { association :x }` |
+| `token = SecureRandom.hex` then `secret { token }` | The block runs once, so the value is frozen | `secret { SecureRandom.hex }` |
+
+Random or changing *values* are fine: `count { rand(1..10) }` declares `count` on every bake, so it is static. A loop over a fixed literal list (`%i[a b].each { \|n\| add_attribute(n) { 1 } }`) is static and fine.
+
 Run the suite after the batch. Commit.
 
 ### Phase 4. Doctor on the 1:1 translation (two-way)
@@ -137,6 +152,8 @@ Small batches, one commit per batch, using [`translation-rules.md`](references/t
 - `create_list(:post, n, ...)` to `Array.new(n) { FactoryBakery.bake!(Post, ...) }`
 - `attributes_for(:post)` to `bakery_attributes_for(Post)` through a thin helper in a new `spec/support` file. If it cannot match factory_bot's output exactly (symbol keys, explicit `nil`), it is a **blocker**
 - `build_stubbed` and call-site transients are **blockers**. A `create(:x) { |x| ... }` block stays on `bake!`, and a `build(:x) { |x| ... }` block stays on `bake`.
+
+`create(:user, :admin, name: 'x')` becomes `FactoryBakery.bake!(User, :admin, name: 'x')`. `FactoryBakery.recipe(User, :admin).bake!(name: 'x')` and `FactoryBakery.recipe(Post).bake` are optional equivalents for new code. During migration, keep the plain renames as the default to satisfy rule 3.
 
 While rewriting: edit **only** the factory call, and let arguments after the name carry over unchanged. Do not touch an assertion, a `let`, a `before`, a description or a literal. If a thin helper keeps the call a rename, add it. Otherwise report the blocker.
 

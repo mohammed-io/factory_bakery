@@ -16,6 +16,13 @@ The same order, in one line:
 
 > call-site overrides > traits > declarations (and `skip`) > plugin auto-build > heuristics
 
+Keywords passed to a recipe and to its `bake` or `bake!` call merge into one set of call-site overrides. If both calls give the same key, the value from `bake` or `bake!` wins.
+
+```ruby
+user = FactoryBakery.recipe(User, name: 'Ada').bake(name: 'Grace')
+user.name # => "Grace"
+```
+
 ## Rules that follow from this
 
 - **Only the winning declaration runs.** A block that loses is never evaluated. A block with a side effect (a `bake!` inside it) does nothing when an override replaces it.
@@ -67,7 +74,7 @@ Heuristics never fill foreign keys, polymorphic type columns, the STI discrimina
 
 ## Overrides and fill_optional
 
-`fill_optional:` is a bake option, not an attribute. It is consumed by `bake` and cannot be used as an attribute name in overrides. A column literally named `fill_optional` cannot be overridden this way.
+`bake` and `bake!` treat `true`, `false`, an array, or `nil` for `fill_optional:` as a bake option. Any other value passes through as an attribute override for a model with an attribute named `fill_optional`.
 
 ```ruby
 FactoryBakery.bake(User, fill_optional: true)

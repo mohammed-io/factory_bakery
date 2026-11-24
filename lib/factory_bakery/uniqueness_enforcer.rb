@@ -11,19 +11,16 @@ module FactoryBakery
   # different edges are invisible to the database until the root save, and
   # without that check the second INSERT fails.
   #
-  # A fresh filler regenerates the value on collision; when the value space is
-  # exhausted (for example a single inclusion-forced value already present in
-  # the database), a FactoryBakery::Error is raised instead of returning a
-  # doomed record.
+  # A fresh filler regenerates the value on collision; an exhausted value
+  # space raises a FactoryBakery::Error instead of returning a doomed record.
   class UniquenessEnforcer
     MAX_ATTEMPTS = 10
 
     # Regenerating normally produces a fresh value. When a filler keeps
     # repeating itself -- a short bare word is all a uniqueness-validated string
-    # column gets -- regeneration alone cannot make progress and the attempt
-    # budget runs out, so from this collision on the candidate is given an
-    # entropy suffix. The first two collisions stay plain to keep the ordinary
-    # regenerate-on-collision values.
+    # column gets -- regeneration alone cannot make progress, so from this
+    # collision on the candidate is given an entropy suffix. The first two
+    # collisions stay plain to keep the ordinary regenerate-on-collision values.
     ENTROPY_AFTER_ATTEMPTS = 3
 
     # Four random bytes as hex: eight characters behind a dash, drawn from the seeded generator.
@@ -35,18 +32,41 @@ module FactoryBakery
     end
 
     def call
-      @heuristic_attribute_names.each { |attribute| enforce(attribute) }
+      return unless FactoryBakery.validate?
+
+      answered = batch_answers
+      @heuristic_attribute_names.each { |attribute| enforce(attribute, answered[attribute.to_s]) }
     end
 
     private
 
-    def enforce(attribute)
+    # One statement for the unique columns whose value this bake's graph does
+    # not already hold; the rest are asked one by one by `enforce`.
+    def batch_answers
+      pending = @heuristic_attribute_names.filter_map do |attribute|
+        next unless FactoryBakery::MapperRegistry.uniqueness_validated?(@record.class, attribute)
+
+        value = read_value(attribute)
+        next if taken_in_graph?(attribute, value)
+
+        [attribute.to_s, value]
+      end.to_h
+      return {} if pending.empty?
+
+      # Each answer becomes a `[queried_value, taken]` pair, so `collision?`
+      # can tell whether the answer still describes the value now on the
+      # record (a sibling's setter side effect may have changed it).
+      answers = FactoryBakery::MapperRegistry.uniqueness_taken_many(@record, pending)
+      answers.filter_map { |attribute, taken| [attribute, [pending.fetch(attribute), taken]] }.to_h
+    end
+
+    def enforce(attribute, known = nil)
       return unless FactoryBakery::MapperRegistry.uniqueness_validated?(@record.class, attribute)
 
       attempts = 0
       loop do
         value = read_value(attribute)
-        return accept(attribute, value) unless collision?(attribute, value)
+        return accept(attribute, value) unless collision?(attribute, value, known, attempts.positive?)
 
         attempts += 1
         raise exhaustion_error(attribute, value) if attempts >= MAX_ATTEMPTS
@@ -55,9 +75,17 @@ module FactoryBakery
       end
     end
 
-    # Taken in this bake's graph, or taken in the database.
-    def collision?(attribute, value)
-      taken_in_graph?(attribute, value) || taken_in_database?(attribute, value)
+    # Taken in this bake's graph, or taken in the database. The first pass of
+    # a batched attribute reuses the answer the batched check already fetched
+    # -- but only while the attribute still carries the value the batch asked
+    # about: regenerating one attribute can change another through a setter
+    # side effect, which makes that attribute's batch answer stale. After a
+    # regeneration, or on any mismatch, the database is asked again.
+    def collision?(attribute, value, known, regenerated)
+      return true if taken_in_graph?(attribute, value)
+      return taken_in_database?(attribute, value) if regenerated || known.nil? || known.first != value
+
+      known.last
     end
 
     def taken_in_graph?(attribute, value)
@@ -79,19 +107,15 @@ module FactoryBakery
     # and normalized value: two unsaved records collide exactly when the
     # database would see one value in one column.
     def registry_key(attribute, value)
-      [table_identity, attribute.to_s, normalize(attribute, value)]
-    end
-
-    def table_identity
       klass = @record.class
-      klass.respond_to?(:table_name) ? klass.table_name : klass
+      [klass.respond_to?(:table_name) ? klass.table_name : klass, attribute.to_s, normalize(attribute, value)]
     end
 
     # A `case_sensitive: false` uniqueness validator folds case, so the
     # registry must too: "Token" and "token" collide for it.
     def normalize(attribute, value)
-      return value unless value.is_a?(String)
-      return value unless FactoryBakery::MapperRegistry.uniqueness_case_insensitive?(@record.class, attribute)
+      return value unless value.is_a?(String) &&
+                          FactoryBakery::MapperRegistry.uniqueness_case_insensitive?(@record.class, attribute)
 
       value.downcase
     end
@@ -107,14 +131,10 @@ module FactoryBakery
       value = regenerate(attribute)
       return value if attempts < ENTROPY_AFTER_ATTEMPTS
 
-      suffix = entropy_suffix
+      suffix = "-#{FactoryBakery::Randomness.hex(ENTROPY_HEX_BYTES)}"
       return value unless suffix_allowed?(attribute, value, suffix)
 
       value + suffix
-    end
-
-    def entropy_suffix
-      "-#{FactoryBakery::Randomness.hex(ENTROPY_HEX_BYTES)}"
     end
 
     # The suffix is only safe for a free-form string: a declared shape would
@@ -146,8 +166,7 @@ module FactoryBakery
     end
 
     def assign(attribute, value)
-      setter = "#{attribute}="
-      @record.public_send(setter, value) if @record.respond_to?(setter)
+      @record.public_send("#{attribute}=", value) if @record.respond_to?("#{attribute}=")
     end
 
     def exhaustion_error(attribute, value)

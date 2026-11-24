@@ -39,3 +39,14 @@ gem 'simplecov', '~> 1.3', require: false
 # Parses the regex generator's source in its isolation guard spec (stdlib on
 # Ruby >= 3.3; the gem covers Ruby 3.2).
 gem 'prism'
+
+# Development-only performance tooling for benchmark/perf/ (never in the
+# gemspec): factory_bot is the comparison baseline, the rest measure and
+# profile. Not required by the spec run.
+group :benchmark do
+  gem 'benchmark-ips', require: false
+  gem 'factory_bot', require: false
+  gem 'memory_profiler', require: false
+  gem 'stackprof', require: false, platforms: [:ruby]
+  gem 'vernier', require: false, platforms: [:ruby]
+end

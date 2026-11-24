@@ -70,6 +70,10 @@ end
 
 Without the include, call `FactoryBakery.bake(...)` and `FactoryBakery.bake!(...)`. A project that is migrating from factory_bot uses this form so call sites stay explicit.
 
+## Sorbet
+
+If the project has a `sorbet/` directory or `sorbet` in `Gemfile.lock`, you can copy `rbi/factory_bakery.rbi` from the installed gem into `sorbet/rbi/shims/`. Find the gem directory with `bundle show factory_bakery`. The RBI gives class-target bakes and recipe bakes typed returns and block arguments. Symbol-target bakes return `T.untyped`. Sorbet does not check trait names or attribute overrides. See [Types (Sorbet)](../../../docs/guide/types.md).
+
 ## Transactions and cleanup
 
 - Transactional tests (the Rails default) roll back every `bake!` row. `bake` rows from raw-FK presence edges and `persist: true` roll back too, because they are written inside the test transaction.

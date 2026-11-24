@@ -77,7 +77,7 @@ RSpec.describe 'smoke regressions' do
       expect(record).to be_valid
     end
 
-    it 'does not reuse a parent left behind by a discarded savepoint attempt' do
+    it 'does not reuse a parent left behind by a discarded savepoint attempt', :savepoints do
       parent = define_model('RebuildDiscardParent', name: :string)
       child = define_model('RebuildDiscardChild', name: :string, token: :string, secret: :string) do
         attr_accessor :parent

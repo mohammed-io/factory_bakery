@@ -11,16 +11,22 @@ A default bake fills only what a valid record needs. Use `fill_optional: true` o
 `bake` does not validate overrides, and it probes validity only when it has a reason. Call `valid?`. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
 
 **Why does `name 'Ada'` raise?**
-There is no static shorthand: a declaration without a block would assign nothing and suppress inference, so the gem raises and names the fix. Write `name { 'Ada' }`, or `skip :name` to omit it. See [Definitions](definitions.md#attribute-blocks).
+There is no static shorthand: a declaration without a block would assign nothing and suppress inference, so the gem raises `FactoryBakery::Error` and names the fix. The DSL raises for static attribute arguments, an attribute declaration without a value block, or `skip` with a block or no names. Write `name { 'Ada' }`, or `skip :name` to omit it. If the model has no setter for a declared attribute, assignment skips it without error. See [Definitions](definitions.md#attribute-blocks).
 
 **Can a block read another attribute?**
 Yes. `label { "#{name}-x" }` reads `name` (declared in the definition, passed as an override, or generated), including one declared later. A cycle raises `Cyclic attribute dependency: a -> b -> a`. See [Definitions](definitions.md#what-a-block-can-see).
 
 **Is there `sequence`, `transient`, `after(:create)`, `build_stubbed`?**
-No. Sequences: a counter local at the top of the file, or `SecureRandom`. Transients: locals inside `define`. Callbacks: do the work in a block, or after the `bake!` call. `build_stubbed`: no equivalent. See [Migrating from factory_bot](migrating-from-factory-bot.md).
+No. Sequences: a counter local at the top of the file, or `SecureRandom`. Transients: locals inside the attribute block that uses them (a local in the `define` body is computed once). Callbacks: do the work in a block, or after the `bake!` call. `build_stubbed`: no equivalent. See [Migrating from factory_bot](migrating-from-factory-bot.md).
 
 **Can I pass a block to `bake` or `bake!`?**
-Yes. The block receives the record once (`bake!` yields it after it is saved and verified) and the call still returns the record. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
+Yes. The block receives the record once (`bake!` yields it after it is saved and verified, `bake` yields the unsaved record) and the call still returns the record. The same holds for a recipe's `.bake` and `.bake!`. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
+
+**Can I reuse a bake with the same traits?**
+Keep a recipe such as `FactoryBakery.recipe(User, :admin)`. Each `.bake` or `.bake!` call builds a fresh record. See [Traits](traits.md).
+
+**Does Sorbet know what `bake` returns?**
+With the shipped RBI, a class target gives the model type for the return value and block argument, including recipe bakes. A symbol factory gives `T.untyped`. See [Types (Sorbet)](types.md).
 
 **Where are definitions loaded from?**
 `config.factory_bakery.definition_paths` when set. Otherwise `spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`. See [Rails](rails.md#configuration).
@@ -83,7 +89,7 @@ Discovered from an `inclusion` validator on the type column or `as:` inverses. O
 Not on its own, except for [raw-FK presence parents](associations.md#raw-fk-presence-parents), `persist: true`, and your own `bake!` calls in blocks.
 
 **Does `bake!` roll back on failure?**
-Yes, the whole graph, even inside an outer transaction. See [`bake` vs `bake!`](bake-vs-bake-bang.md).
+With `FactoryBakery.savepoints = true`, yes: the whole graph, even inside an outer transaction. By default (`false`, like factory_bot) only `save!`'s own transaction rolls back, and rows saved earlier by a declaration block stay. See [`bake` vs `bake!`](bake-vs-bake-bang.md#savepoints).
 
 **A view (read-only model).**
 `bake` works. `bake!` raises `ReadOnlyTargetError`. See [Associations](associations.md#read-only-targets).
@@ -92,7 +98,7 @@ Yes, the whole graph, even inside an outer transaction. See [`bake` vs `bake!`](
 Construction retries with `unscoped` and then without callbacks. See [Definitions](definitions.md#models-whose-new-raises).
 
 **A side effect runs twice.**
-The verified fallback may rebuild a record, so declaration blocks can run twice. Keep blocks free of non-database side effects, or guard them. See [Heuristics](heuristics.md#the-verified-fallback).
+FactoryBakery records and reuses cacheable definition and trait declarations. Attribute value blocks can run again if the verified fallback rebuilds the record. Keep blocks free of non-database side effects, or guard them. See [Heuristics](heuristics.md#the-verified-fallback).
 
 ## Rails
 
@@ -111,7 +117,7 @@ Per-bake state is fiber-local. Plugin and mapper registrations and `Associations
 Ruby >= 3.2. Rails 7.1, 7.2, 8.0. Tested on SQLite, PostgreSQL and MySQL.
 
 **Where is the glossary?**
-[`GLOSSARY.md`](../../GLOSSARY.md).
+The repo adds `GLOSSARY.md` at the root when domain terms need definitions. See [Domain docs](../agents/domain.md).
 
 **Where do I report a bug?**
 `https://github.com/mohammed-io/factory_bakery/issues`. Include the exact message and the model. If a model's own rules are the cause, a definition line is the fix, not a bug.

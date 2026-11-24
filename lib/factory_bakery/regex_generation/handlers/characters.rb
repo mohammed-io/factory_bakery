@@ -12,37 +12,37 @@ module FactoryBakery
 
         private
 
-        def render_skip(_node, _window); end
+        def render_skip(_node, _low, _high); end
 
-        def render_literal(node, _window)
+        def render_literal(node, _low, _high)
           case_insensitive = node.case_insensitive?
           node.text.each_char { |char| emit_literal(char, case_insensitive) }
         end
 
-        def render_escape(node, _window)
+        def render_escape(node, _low, _high)
           Codepoints.of(node).each { |codepoint| emit_literal(codepoint.chr(@encoding), false) }
         end
 
-        def render_pool(node, _window)
+        def render_pool(node, _low, _high)
           emit(pick_char(@plan.pool(node)))
         end
 
-        def render_linebreak(_node, _window)
+        def render_linebreak(_node, _low, _high)
           emit_free(sample(LINEBREAKS))
         end
 
         # One grapheme: a single alphanumeric is always a whole cluster.
-        def render_grapheme(_node, _window)
+        def render_grapheme(_node, _low, _high)
           emit_free(sample(Universe::ALNUM))
         end
 
         # `\b` needs the next character to be a word character exactly when
         # the previous one was not, `\B` the opposite.
-        def render_word_boundary(_node, _window)
+        def render_word_boundary(_node, _low, _high)
           @word_next = !word_before?
         end
 
-        def render_nonword_boundary(_node, _window)
+        def render_nonword_boundary(_node, _low, _high)
           @word_next = word_before?
         end
 

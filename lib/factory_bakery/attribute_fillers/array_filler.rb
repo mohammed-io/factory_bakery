@@ -104,8 +104,9 @@ module FactoryBakery
       def exclusion_exhaustion_error
         FactoryBakery::Error.new(
           "could not generate a value for #{@model_class}##{@attr_name} that satisfies " \
-          "exclusion after #{MAX_ATTEMPTS} attempts: #{@constraints.forbidden_values.inspect}. " \
-          'Pass an explicit value with an override or relax the constraint.'
+          "exclusion after #{MAX_ATTEMPTS} attempts: #{@constraints.forbidden_values.inspect}.\n" \
+          "#{OverrideHint.call(@model_class, @attr_name, 'a value outside the excluded values',
+                               see: 'exclusion-exhaustion')}"
         )
       end
     end

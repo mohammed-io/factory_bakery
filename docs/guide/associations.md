@@ -258,7 +258,7 @@ When the edge is required (presence validator on the association), the parent is
 
 | Call | Behavior |
 | --- | --- |
-| `bake!` | Creates the parent inside the root savepoint and sets the FK. It rolls back with the graph |
+| `bake!` | Creates the parent inside the root savepoint and sets the FK. It rolls back with the graph when `FactoryBakery.savepoints = true`; with the default off the row stays |
 | `bake` (`:fresh`) | Creates the parent and **inserts a row**. This is the documented exception to "`bake` writes nothing". The root stays unsaved |
 | `bake`, `:reuse_non_unique` | An existing row is reused without a write when the edge cannot be unique. On a miss, or a unique edge, the parent is inserted as with `:fresh` |
 | `bake!`, `:reuse_non_unique` | Existing row if possible, else a fresh parent inside the savepoint |

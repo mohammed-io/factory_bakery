@@ -40,6 +40,16 @@ module FactoryBakery
       @builder_proc = builder_proc
       @fill_optional = fill_optional
 
+      # One registry snapshot per build, captured at builder creation: the
+      # DSL scope the declarations record under, the plugin entries that are
+      # replayed and the plugin hooks that run afterwards all come from it,
+      # so a registration or reset that happens later cannot make one build
+      # straddle two registries. A builder of a class made by
+      # `for_current_plugins` keeps that class's snapshot; the registry may
+      # have changed since.
+      @plugin_snapshot = self.class.instance_variable_get(:@factory_bakery_plugin_snapshot) ||
+                         PluginRegistry.snapshot
+
       @methods_to_be_called_on_object = []
       @traits = {}
       @heuristic_attribute_names = []
@@ -54,11 +64,43 @@ module FactoryBakery
     class << self
       attr_reader :definitions
 
+      # The builder class for the plugins registered right now: this class with
+      # the plugins' DSL module included. Extending every new builder with the
+      # module created a singleton class per bake; the class is built once per
+      # module instead, and is kept on the module so it goes away with it when
+      # the registry rebuilds (a plugin registered or removed). The class
+      # remembers the registry snapshot it was built from, so a builder made
+      # from it later answers every registry question from that one
+      # generation, even if the registry changed in between.
+      def for_current_plugins
+        snapshot = PluginRegistry.snapshot
+        scope = snapshot.dsl_scope_module
+        return self unless scope
+
+        scope.instance_variable_get(:@factory_bakery_builder_class) ||
+          scope.instance_variable_set(:@factory_bakery_builder_class, Class.new(self) do
+            include scope
+            @factory_bakery_plugin_snapshot = snapshot
+          end)
+      end
+
       # Registers a definition under a class or a symbol name. Class and symbol
       # keys are independent, and re-registering a key overwrites it so
       # definition files can be reloaded safely.
       def register(target, klass: nil, &blk)
         definitions[target] = Definition.new(blk, klass)
+      end
+
+      def declared_trait_names(target)
+        definition = definition_for(target)
+        return [] unless definition&.builder_proc
+
+        model = target.is_a?(Class) ? target : definition.klass
+        builder_proc = definition.builder_proc
+        declarations = for_current_plugins.new(model, builder_proc).instance_exec do
+          record_layer(with_traits: true) { instance_eval(&builder_proc) }
+        end
+        declarations.trait_procs.keys.select { |name| name.is_a?(Symbol) }
       end
 
       # Normalizes a bake target into the class to instantiate and the
@@ -87,6 +129,12 @@ module FactoryBakery
       # instantiates the subclass; only the declarations are inherited.
       # Object and BasicObject are never inherited from: every class descends
       # from them, so a definition there would apply to everything.
+      # The definition a bake of `target` would apply: the nearest ancestor's
+      # for a class, the registered one for a symbol.
+      def definition_for(target)
+        target.is_a?(Class) ? nearest_definition(target) : definitions[target]
+      end
+
       def nearest_definition(klass)
         definitions[klass] ||
           klass.ancestors.grep(Class).take_while { |ancestor| ancestor != Object }
@@ -108,6 +156,8 @@ module FactoryBakery
     end
 
     def initialize_with(attributes)
+      # Its values are read as given, so a layer that sets them is not recorded.
+      @layer_uncacheable = true
       @initialize_with_attributes = attributes
     end
 
@@ -148,12 +198,21 @@ module FactoryBakery
 
       evaluate_declarations(traits)
 
+      # One name-list snapshot for this build: every layer below reads from it
+      # instead of re-deriving the same lists from the same inputs.
+      @names = Names.new(
+        declared: @declaration_set.names,
+        plugin_declarations: @plugin_declarations,
+        overrides: overrides,
+        initialize_with: @initialize_with_attributes
+      )
+
       object = instantiate
       BuildContext.building(object) do
-        apply_values(object, resolved_values(overrides, object), explicit_names(overrides))
+        apply_values(object, resolved_values(overrides, object), explicit_names)
         run_after_instantiate(object)
       end
-      announce_left_blank_writers(object, overrides)
+      announce_left_blank_writers(object)
       object
     ensure
       @build_is_in_progress = false
@@ -185,33 +244,103 @@ module FactoryBakery
     # build. The registry knows which plugin's DSL method is executing, so the
     # entry lands in that plugin's own bucket and is handed back to its
     # after_instantiate hook.
-    def record_plugin_declaration(entry)
+    #
+    # `reusable: true` promises the entry is frozen and holds nothing that
+    # must be computed anew each bake, so the layer that declared it can be
+    # recorded once and its entries replayed to later builds. Without the
+    # promise, the layer is evaluated on every bake (ADR-0009).
+    def record_plugin_declaration(entry, reusable: false)
       plugin = PluginRegistry.current
       raise FactoryBakery::Error, 'No plugin DSL call is in progress' unless plugin
 
-      plugin_declarations(plugin) << entry
+      @layer_uncacheable = true unless reusable
+      if @layer_plugin_entries
+        @layer_plugin_entries << [plugin, entry]
+      else
+        plugin_declarations(plugin) << entry
+      end
       entry
     end
 
     private
 
+    # Leaves `@declaration_set` (the declarations of the base block followed by
+    # the requested traits, in that order, so later assignments win for
+    # duplicate attributes) and `@methods_to_be_called_on_object` for the rest
+    # of the build. The definition's cache supplies each layer it already has;
+    # the rest are recorded by running their block once (ADR-0009).
     def evaluate_declarations(traits)
       @plugin_declarations = Hash.new { |hash, plugin| hash[plugin] = [] }
-      scope = PluginRegistry.dsl_scope_module
-      extend(scope) if scope
+      # The one snapshot captured at builder creation decides the DSL scope
+      # this build records under (and therefore the cache key), so a reset
+      # between builder creation and now cannot record under one scope while
+      # the builder still dispatches to another's DSL.
+      scope = @plugin_snapshot.dsl_scope_module
+      extend(scope) if scope && !is_a?(scope)
 
-      @methods_to_be_called_on_object = []
-      instance_eval(&@builder_proc) if @builder_proc
+      cache = DeclarationCache.for(@builder_proc)&.for_plugins(scope)
+      @declaration_set = cache&.composed(traits) || collect_declarations(traits, cache)
+      @methods_to_be_called_on_object = @declaration_set.pairs
+      replay_plugin_entries(@declaration_set)
+    end
 
-      # Traits are appended after the base declarations and applied in the
-      # order requested, so later assignments win for duplicate attributes.
-      traits.each do |name|
-        unless @traits.key?(name)
-          raise FactoryBakery::Error, "Trait #{name.inspect} is not declared for #{@model_klass}"
-        end
+    # Hands each plugin the entries its declarations made, in order, as if the
+    # blocks had just run.
+    def replay_plugin_entries(set)
+      set.plugin_entries.each { |plugin, entry| plugin_declarations(plugin) << entry }
+    end
 
-        instance_eval(&@traits[name])
+    def collect_declarations(traits, cache)
+      @all_layers_cacheable = true
+      base = base_layer(cache)
+      return base if traits.empty?
+
+      @traits = base.trait_procs.dup
+      layers = traits.map { |name| trait_layer(name, cache) }
+      DeclarationSet.compose(base, layers).tap do |set|
+        cache.store_composed(traits, set) if cache && @all_layers_cacheable
       end
+    end
+
+    def base_layer(cache)
+      return DeclarationSet::EMPTY unless @builder_proc
+
+      cached = cache&.base
+      return cached if cached
+
+      @traits = {}
+      remember(record_layer(with_traits: true) { instance_eval(&@builder_proc) }, cache, &:store_base)
+    end
+
+    def trait_layer(name, cache)
+      raise FactoryBakery::Error, "Trait #{name.inspect} is not declared for #{@model_klass}" unless @traits.key?(name)
+
+      cached = cache&.trait(name)
+      return cached if cached
+
+      layer = record_layer { instance_eval(&@traits[name]) }
+      remember(layer, cache) { |store, set| store.store_trait(name, set) }
+    end
+
+    # Runs one layer's block and returns what it declared as a DeclarationSet:
+    # its attribute pairs, its plugin entries (collected here, and handed to
+    # the build when the set is adopted) and, for a base layer, its traits.
+    # The DSL calls that make a layer unsafe to reuse flag it while it runs.
+    def record_layer(with_traits: false)
+      @layer_uncacheable = false
+      @methods_to_be_called_on_object = []
+      @layer_plugin_entries = []
+      yield
+      DeclarationSet.new(@methods_to_be_called_on_object, trait_procs: with_traits ? @traits.dup : {},
+                                                          plugin_entries: @layer_plugin_entries)
+    ensure
+      @layer_plugin_entries = nil
+    end
+
+    def remember(set, cache)
+      @all_layers_cacheable &&= !@layer_uncacheable
+      yield cache, set if cache && !@layer_uncacheable
+      set
     end
 
     # Construction goes through the mapper so a framework whose models raise in
@@ -253,7 +382,7 @@ module FactoryBakery
     # argument-less constructor, or a record a construction fallback had to
     # build without running the constructor at all.
     def apply_initialize_with(object)
-      normalize_keys(@initialize_with_attributes).each do |name, value|
+      @names.initialize_with.each do |name, value|
         setter = "#{name}="
         object.public_send(setter, value) if object.respond_to?(setter)
       end
@@ -273,8 +402,8 @@ module FactoryBakery
       BuildContext.with_record(object) { compute_resolved_values(overrides, object) }
     end
 
-    def compute_resolved_values(overrides, object)
-      overrides = normalize_keys(overrides)
+    def compute_resolved_values(_overrides, object)
+      overrides = @names.overrides
       groups = alias_groups
       layer = nil
       heuristics = -> { layer ||= prepare_heuristics(overrides, groups, object) }
@@ -284,7 +413,7 @@ module FactoryBakery
 
     def resolve_declarations(overrides, groups, object, heuristics)
       blocks = winning_blocks(overrides, groups)
-      declarations = DeclarationValues.new(self, object, blocks, sibling_names(overrides)) do |name, resolved|
+      declarations = DeclarationValues.new(self, object, blocks, sibling_names) do |name, resolved|
         next overrides[name] if overrides.key?(name)
 
         resolver, supplemental, skip = heuristics.call
@@ -297,8 +426,8 @@ module FactoryBakery
       declarations.resolve_all
     end
 
-    def sibling_names(overrides)
-      candidate_attribute_names + raw_taken_names(overrides)
+    def sibling_names
+      candidate_attribute_names + @names.raw_taken
     end
 
     def finish_values(object, declarations, overrides, layer)
@@ -312,25 +441,26 @@ module FactoryBakery
     end
 
     def prepare_heuristics(overrides, groups, object)
-      supplemental, skip = heuristic_inputs(overrides, groups)
+      supplemental, skip = heuristic_inputs(groups)
       # Constructor values are already assigned, and may have been transformed.
-      bound_values = normalize_keys(@initialize_with_attributes).merge(supplemental).merge(overrides)
+      bound_values = @names.initialize_with.merge(supplemental).merge(overrides)
       resolver = AttributeFillers::BakeTimeValues.new(@model_klass, bound_values, skip, object)
       [resolver, supplemental, skip]
     end
 
-    def heuristic_inputs(overrides, groups)
-      taken = publish_taken_names(overrides, groups)
+    def heuristic_inputs(groups)
+      taken = publish_taken_names(groups)
       plugin_values = plugin_heuristic_values(taken, groups)
       plugin_skip = plugin_values.keys.flat_map { |name| groups.fetch(name, [name]) }
-      skip = (suppressed_names(overrides, groups) + plugin_skip).uniq
-      [counter_cache_values.merge(plugin_values), skip.compact]
+      skip = (suppressed_names(groups) + plugin_skip).uniq
+      counters = counter_cache_values
+      [counters.empty? ? plugin_values : counters.merge(plugin_values), skip.compact]
     end
 
-    def publish_taken_names(overrides, groups)
-      taken = taken_names(overrides, groups)
+    def publish_taken_names(groups)
+      taken = taken_names(groups)
       context = BuildContext.current
-      context.explicit_names = raw_taken_names(overrides)
+      context.explicit_names = @names.raw_taken
       context.taken_names = taken
       taken
     end
@@ -376,19 +506,12 @@ module FactoryBakery
     # just one spelling of an association. Plugin DSL declarations (for example
     # `association :account`) are declarations too, so they suppress heuristic
     # values such as :required_only auto-building just like plain attributes.
-    def raw_taken_names(overrides)
-      declared_names + plugin_declared_names + overrides.keys +
-        normalize_keys(@initialize_with_attributes).keys
+    def raw_taken_names
+      @names.raw_taken
     end
 
-    def taken_names(overrides, groups)
-      raw_taken_names(overrides).flat_map { |name| groups.fetch(name.to_s, [name.to_s]) }.uniq
-    end
-
-    def plugin_declared_names
-      (@plugin_declarations || {}).values.flatten.map do |entry|
-        entry.respond_to?(:name) ? entry.name.to_s : entry.to_s
-      end
+    def taken_names(groups)
+      raw_taken_names.flat_map { |name| groups.fetch(name.to_s, [name.to_s]) }.uniq
     end
 
     # Plugin values live in the heuristic layer. Plugins are consulted in
@@ -397,7 +520,7 @@ module FactoryBakery
     # hash insertion order.
     def plugin_heuristic_values(taken, groups)
       context = BuildContext.current
-      supplied = PluginRegistry.plugins.each_with_object({}) do |plugin, all|
+      supplied = @plugin_snapshot.plugins.each_with_object({}) do |plugin, all|
         next unless plugin.respond_to?(:heuristic_values)
 
         values = plugin.heuristic_values(@model_klass, context, taken)
@@ -435,15 +558,15 @@ module FactoryBakery
 
     def run_after_instantiate(object)
       context = BuildContext.current
-      PluginRegistry.plugins.each do |plugin|
+      @plugin_snapshot.plugins.each do |plugin|
         next unless plugin.respond_to?(:after_instantiate)
 
         plugin.after_instantiate(object, plugin_declarations(plugin), context)
       end
     end
 
-    def explicit_names(overrides)
-      declared_names + normalize_keys(overrides).keys
+    def explicit_names
+      @names.explicit
     end
 
     # Lazily derived alias groups. Each member maps to the full set; attributes
@@ -458,8 +581,8 @@ module FactoryBakery
     # Guard columns (foreign keys, polymorphic types, the STI discriminator,
     # the primary key and framework-maintained counters) are never filled
     # heuristically either.
-    def suppressed_names(overrides, groups)
-      names = declared_names + overrides.keys + normalize_keys(@initialize_with_attributes).keys
+    def suppressed_names(groups)
+      names = @names.suppression_seeds
       (names.flat_map { |name| groups.fetch(name, [name]) } + guard_columns.names).uniq
     end
 
@@ -526,9 +649,11 @@ module FactoryBakery
     # NULL counter without a default becomes 0. This sits in the heuristic
     # layer, so declarations and overrides still win.
     def counter_cache_values
-      explicitly_set = declared_names + normalize_keys(@initialize_with_attributes).keys
+      counters = counter_cache_column_names
+      return Names::EMPTY_HASH if counters.empty?
 
-      counter_cache_column_names.each_with_object({}) do |name, values|
+      explicitly_set = @names.declared + @names.init_with_keys
+      counters.each_with_object({}) do |name, values|
         next if explicitly_set.include?(name)
 
         constraints = FactoryBakery::MapperRegistry.constraints_for(@model_klass, name)
@@ -548,8 +673,8 @@ module FactoryBakery
     # Declaration order is base, then traits in application order, so the last
     # declaration in a group wins. A call-site override of any group member
     # suppresses every declaration in that group.
-    def winning_blocks(overrides, groups)
-      overridden_groups = overrides.keys.map { |name| groups.fetch(name, [name]) }.uniq
+    def winning_blocks(_overrides, groups)
+      overridden_groups = @names.override_keys.map { |name| groups.fetch(name, [name]) }.uniq
 
       declaration_winners(overridden_groups, groups).each_with_object({}) do |(_group, (name, block)), values|
         next if block.equal?(OMITTED)
@@ -570,7 +695,7 @@ module FactoryBakery
     end
 
     def declared_names
-      @methods_to_be_called_on_object.map { |name, _| name.to_s }
+      @names.declared
     end
 
     def apply_values(object, values, reserved)
@@ -605,8 +730,8 @@ module FactoryBakery
 
     # A remote-URL writer that is still blank after the bake, and that nothing
     # declared or passed (skip counts as declared), was left blank on purpose.
-    def announce_left_blank_writers(object, overrides)
-      supplied = raw_taken_names(overrides).map(&:to_s)
+    def announce_left_blank_writers(object)
+      supplied = raw_taken_names.map(&:to_s)
 
       candidate_attribute_names
         .reject { |name| supplied.include?(name) }
@@ -619,7 +744,9 @@ module FactoryBakery
     end
 
     def normalize_keys(hash)
-      (hash || {}).transform_keys(&:to_s)
+      return Names::EMPTY_HASH if hash.nil? || hash.empty?
+
+      hash.transform_keys(&:to_s)
     end
   end
 end

@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative '../fiber_local'
+
 module FactoryBakery
   module Associations
     # Supplies auto-built belongs_to targets to core's heuristic_values hook.
@@ -320,12 +322,12 @@ module FactoryBakery
 
           ensure_acyclic!(previous_path, edge)
 
-          Fiber[REFLECTION_PATH_KEY] = previous_path + [edge]
+          FactoryBakery::FiberLocal[REFLECTION_PATH_KEY] = previous_path + [edge]
           with_suppressed(BackEdgeDetector.edges(target_class, klass, entry)) do
             bake_fresh(target_class, entry, reuse)
           end
         ensure
-          Fiber[REFLECTION_PATH_KEY] = previous_path
+          FactoryBakery::FiberLocal[REFLECTION_PATH_KEY] = previous_path
         end
 
         # Only a required edge may close a cycle. An optional edge that would
@@ -391,18 +393,18 @@ module FactoryBakery
         # edge.
         def with_suppressed(edges)
           previous = suppressed_edges
-          Fiber[SUPPRESSED_EDGES_KEY] = (previous + edges).uniq.freeze
+          FactoryBakery::FiberLocal[SUPPRESSED_EDGES_KEY] = (previous + edges).uniq.freeze
           yield
         ensure
-          Fiber[SUPPRESSED_EDGES_KEY] = previous
+          FactoryBakery::FiberLocal[SUPPRESSED_EDGES_KEY] = previous
         end
 
         def suppressed_edges
-          Fiber[SUPPRESSED_EDGES_KEY] ||= [].freeze
+          FactoryBakery::FiberLocal[SUPPRESSED_EDGES_KEY] ||= [].freeze
         end
 
         def reflection_path
-          Fiber[REFLECTION_PATH_KEY] ||= [].freeze
+          FactoryBakery::FiberLocal[REFLECTION_PATH_KEY] ||= [].freeze
         end
       end
     end

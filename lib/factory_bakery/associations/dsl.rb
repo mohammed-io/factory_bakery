@@ -31,21 +31,62 @@ module FactoryBakery
         validate_persist!(persist, block)
         validate_block!(block, count, traits, factory, with)
 
+        # Frozen, and read-only for the plugin. The entry is replayed to
+        # every later bake only when its `with:` values are safe to share
+        # (see reusable_overrides?); otherwise the layer that declared it is
+        # evaluated on every bake, so each bake gets its own values.
         record_plugin_declaration(
           Declaration.new(
             name: name.to_sym,
-            traits: traits,
+            traits: traits.freeze,
             factory: factory,
             child_count: count,
-            overrides: with,
+            overrides: with.dup.freeze,
             block: block,
             strategy: strategy,
             persist: persist
-          )
+          ).freeze,
+          reusable: reusable_overrides?(with)
         )
       end
 
       private
+
+      # An entry is replayed to every later bake, so its `with:` values are
+      # shared between them. Only values that cannot change under sharing may
+      # promise reusability: nil, true, false, Integer, Float, Symbol, a
+      # frozen String, a Class or Module, a Range of those, or a frozen
+      # Array/Hash whose members qualify in turn. A mutable value (an
+      # unfrozen String, a record a caller supplied) belongs to the bake that
+      # created it -- a later setter could mutate it in place for every
+      # replayed entry -- so such a `with:` makes the entry non-reusable and
+      # the layer that declared it is evaluated on every bake (ADR-0009).
+      def reusable_overrides?(with)
+        with.each_value { |value| return false unless reusable_value?(value) }
+        true
+      end
+
+      # The classification walks a value's structure, so it branches by kind;
+      # each branch is one line and the recursion is bounded by the value's
+      # nesting.
+      # rubocop:disable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
+      def reusable_value?(value)
+        case value
+        when nil, true, false, Integer, Float, Symbol, Class, Module
+          true
+        when String
+          value.frozen?
+        when Range
+          reusable_value?(value.begin) && reusable_value?(value.end)
+        when Array
+          value.frozen? && value.all? { |member| reusable_value?(member) }
+        when Hash
+          value.frozen? && value.all? { |key, member| reusable_value?(key) && reusable_value?(member) }
+        else
+          false
+        end
+      end
+      # rubocop:enable Metrics/CyclomaticComplexity, Metrics/PerceivedComplexity
 
       # Overrides passed beside the options (the FactoryBot spelling) are
       # refused with the spelling that works.

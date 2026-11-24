@@ -82,7 +82,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | Factory inheritance across unrelated classes | A second definition, lines repeated | Only ancestor classes are searched, never modules or `Object` |
 | `aliases:` | A second `define(:alias, klass: X, &same_block)` | One key per `define` |
 | `sequence` | A counter local at the top of the file | There is no `sequence` DSL |
-| `transient` used only inside the factory | A local inside `define`, or a sibling read | Locals inside `define` are fresh per bake. A read of a declared attribute also follows overrides |
+| `transient` used only inside the factory | A local inside the attribute block that uses it, or a sibling read | Cacheable definition and trait blocks run once. Put per-record computations inside the value block, which can run again on a verified-fallback rebuild. A read of a declared attribute also follows overrides. See [ADR-0009](../../../docs/adr/0009-definitions-declare-statically.md) |
 | `association :x, strategy: :create` | `association :x, persist: true` | Same intent |
 | `initialize_with { ... }` that builds from a simple hash | `initialize_with(a: 1)` | A Hash only |
 | DB-only constraint (check constraint, composite unique index, trigger) | A block giving an accepted value | Not visible to the mapper |

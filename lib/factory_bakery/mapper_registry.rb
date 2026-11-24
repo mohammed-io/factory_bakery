@@ -40,6 +40,10 @@ module FactoryBakery
   #       check?
   #   uniqueness_check(record, attr_name, value) => bool
   #       Is the value taken? (Only called when uniqueness_validated?.)
+  #   uniqueness_taken_many(record, { 'attr' => value }) => { 'attr' => bool }
+  #       Optional: answers the attributes it can for a Hash of values with
+  #       one statement; the rest are checked one by one. Mappers without it
+  #       answer {}.
   #   uniqueness_case_insensitive?(klass, attr_name) => bool
   #       Does the attribute's uniqueness check fold case? Mappers without the
   #       notion may omit it (the registry answers false).
@@ -218,17 +222,20 @@ module FactoryBakery
       end
 
       # A bake asks for the same class's mapper dozens of times. The answer is
-      # memoized on the class, tagged with the registry generation so a later
-      # `register` invalidates it. Frozen classes are resolved every time.
+      # memoized on the class as a `[generation, mapper]` pair, the generation
+      # being the registry's `mappers` object id, so a later `register`
+      # invalidates it. Frozen classes are resolved every time.
       def mapper_for(klass)
         subject = klass.is_a?(Class) ? klass : klass.class
-        return find_mapper(subject) if subject.frozen?
-
-        generation, mapper = subject.instance_variable_get(:@factory_bakery_mapper)
-        return mapper if generation == mappers.object_id
+        # The hot path is one instance-variable read and no allocation: a
+        # fresh pair is only built when the remembered generation is stale
+        # (a new `mappers` array per `register`), and this runs dozens of
+        # times per bake.
+        entry = subject.instance_variable_get(ClassCache::MAPPER)
+        return entry[1] if entry && entry[0] == mappers.object_id
 
         mapper = find_mapper(subject)
-        subject.instance_variable_set(:@factory_bakery_mapper, [mappers.object_id, mapper])
+        ClassCache.store(subject, ClassCache::MAPPER, [mappers.object_id, mapper])
         mapper
       end
 
@@ -322,6 +329,15 @@ module FactoryBakery
 
       def uniqueness_check(record, attr_name, value)
         mapper_for(record)&.uniqueness_check(record, attr_name, value) || false
+      end
+
+      # Batched answers for a Hash of values: the mapper answers what it can
+      # with one statement; the rest are checked one by one.
+      def uniqueness_taken_many(record, values)
+        mapper = mapper_for(record)
+        return {} unless mapper.respond_to?(:uniqueness_taken_many)
+
+        mapper.uniqueness_taken_many(record, values)
       end
 
       def validator_descriptions(klass, attr_name)

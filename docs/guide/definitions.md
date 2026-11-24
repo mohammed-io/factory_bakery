@@ -200,6 +200,47 @@ FactoryBakery.find_definitions
 
 The loader does not care. Convention: one file per model, named after it (`spec/bakery/post.rb`). That is also where `bin/rails g factory_bakery:definition Post` writes it: the first `definition_paths` entry, or the default directory (see [Rails](rails.md#configuration)). A namespaced model goes in a matching subdirectory (`Admin::Post` is `admin/post.rb`).
 
+## Declare statically; make only values dynamic
+
+A `define` block (and each `trait` block) lists *which* attributes exist. The `{ ... }` blocks inside it say *what value* each one gets. The gem runs a `define` block (and each trait block) **once** and reuses what it declared on every later bake, so the list must be the same every time: decided by your code, not by the environment, the clock, the database or a counter. Put anything dynamic inside a value block, including locals your values use. That includes `association` declarations and their `with:` values, which are read once. A block that calls `initialize_with`, or declares through a plugin that does not mark its entries reusable, is not reused and runs on every bake. Defining the target again replaces what was recorded. See [ADR-0009](../adr/0009-definitions-declare-statically.md).
+
+```ruby
+FactoryBakery.define(User) do
+  name  { 'Ada' }
+  role  { ENV['ROLE'] || 'member' }          # dynamic value: fine
+  count { rand(1..10) }                      # random value: fine, `count` is always declared
+  email { "user#{SecureRandom.hex(4)}@example.com" }
+end
+```
+
+Anti-patterns (the attribute list changes between bakes):
+
+```ruby
+FactoryBakery.define(User) do
+  name { 'Ada' }
+  admin { true } if ENV['ADMIN']             # BAD: declared only sometimes
+  skip :avatar unless Rails.env.test?        # BAD: skip set depends on the environment
+  Setting.keys.each { |k| add_attribute(k) { 1 } }   # BAD: list comes from the database
+  association :account if rand < 0.5         # BAD: plugin declaration is random
+  token = SecureRandom.hex                   # BAD: runs once, not per bake
+  secret { token }                           #      (move it inside: secret { SecureRandom.hex })
+end
+```
+
+Write it instead as a value, or as a trait chosen at the call site:
+
+```ruby
+FactoryBakery.define(User) do
+  name  { 'Ada' }
+  admin { ENV['ADMIN'] ? true : false }      # value decides
+  trait(:with_account) { association :account }
+end
+
+FactoryBakery.bake(User, :with_account)
+```
+
+A loop or condition over a fixed literal is static and fine: `%i[a b].each { |n| add_attribute(n) { 1 } }`.
+
 ## When to write a definition
 
 | Situation | Write |

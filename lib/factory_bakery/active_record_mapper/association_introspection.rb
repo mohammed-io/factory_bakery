@@ -26,10 +26,7 @@ module FactoryBakery
       def for(klass)
         return nil unless klass.respond_to?(:reflect_on_all_associations)
 
-        return build(klass) if klass.frozen?
-
-        klass.instance_variable_get(:@factory_bakery_associations) ||
-          klass.instance_variable_set(:@factory_bakery_associations, build(klass))
+        ClassCache.fetch(klass, ClassCache::ASSOCIATIONS) { build(klass) }
       end
 
       def build(klass)

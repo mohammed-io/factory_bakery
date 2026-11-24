@@ -55,7 +55,7 @@ Requiring the associations plugin and your own plugin in different orders can th
 
 ## Reserved name
 
-`association` is reserved. Using it without a plugin that provides it raises `` `association` requires the associations plugin: require 'factory_bakery/associations' ``. Any **other** unknown name in a definition is read as an attribute declaration with no block. It is silently ignored, so a plugin DSL method used after the plugin is unregistered does nothing and does not raise.
+`association` is reserved. Using it without a plugin that provides it raises `` `association` requires the associations plugin: require 'factory_bakery/associations' ``. Any other unknown name is handled as an attribute declaration. A call with static arguments or without a value block raises `FactoryBakery::Error`. A well-formed attribute declaration skips assignment when the model has no setter.
 
 ## Worked example
 
@@ -125,6 +125,6 @@ Notes from the example:
 ## Writing a good plugin
 
 - Keep framework reads out of it. Ask the mapper through `FactoryBakery::MapperRegistry` (`association_introspection`, `constraints_for`, `persistence_adapter`).
-- Do not write to the database from `heuristic_values`. It can run in a fallback attempt that is rolled back.
+- Do not write to the database from `heuristic_values`. It can run in a fallback attempt whose rows are only rolled back with `FactoryBakery.savepoints = true`.
 - Do not rely on a hook running once: the [verified fallback](heuristics.md#the-verified-fallback) can build a record twice.
 - Treat `BuildContext` as internal. Use `context.path` and `context.depth` if you must.

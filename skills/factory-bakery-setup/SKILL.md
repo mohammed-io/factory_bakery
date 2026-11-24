@@ -28,6 +28,7 @@ Reference guides: [`getting-started.md`](../../docs/guide/getting-started.md), [
 | Rails 7.1, 7.2 or 8.0 (for ActiveRecord)? | `Gemfile.lock` |
 | ORM | ActiveRecord, Sequel, plain ActiveModel |
 | Test framework | RSpec (`spec/`), Minitest (`test/`) |
+| Sorbet | `sorbet/` directory or `sorbet` in `Gemfile.lock` |
 | Existing factory library | `factory_bot`, `fabrication`, `machinist`, fixtures |
 | File attachments | Active Storage, Paperclip / kt-paperclip |
 | Existing definition directories | `spec/factories`, `test/factories`, `factories` |
@@ -149,6 +150,8 @@ end
 The install generator already wrote the framework `require` into the initializer (RSpec when `spec/` exists, else Minitest when `test/` exists), so add only the `include`. Add `require 'factory_bakery/rspec'` (or `'/minitest'`) to the helper only when no initializer has one, for example outside Rails. Keep one framework require.
 
 Seed resolution order: `FACTORY_BAKERY_SEED`, then `FactoryBakery.seed =` (Integer or callable), then the framework seed from the require above, then a random seed per process. The gem logs which one it used (INFO for the framework, WARN for the others). See [Randomness](../../docs/guide/configuration.md#randomness).
+
+If step 1 found Sorbet, optionally copy the gem's `rbi/factory_bakery.rbi` and `rbi/factory_bakery_recipe.rbi` into the project's `sorbet/rbi/shims/` (Tapioca users with the opt-in plugin copy only `factory_bakery.rbi`). See the Sorbet instructions in [`references/test-wiring.md`](references/test-wiring.md#sorbet).
 
 ### 8. Verify
 

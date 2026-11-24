@@ -17,15 +17,33 @@ module FactoryBakery
   # setting changes. Each decision is announced through the logger once: INFO
   # when the test framework supplied the seed, WARN otherwise, naming the
   # source and how to reproduce the run.
+  #
+  # Resolution runs outside any lock (a callable and the logger are user code),
+  # so two threads may resolve at once. The result is published by generation:
+  # a resolution is stored only if no other one was published first and no
+  # setting changed while it ran, and a racing resolver adopts the published
+  # value. Each bake records the resolution it drew under, so its provenance
+  # names the seed its values came from.
+  #
+  # Workers. A worker id is part of the derivation. The first of
+  # FACTORY_BAKERY_WORKER, TEST_ENV_NUMBER (parallel_tests) or
+  # PARALLEL_WORKER_NUMBER (set by the parallel test helper) that is set is read once per
+  # resolution and hashed with the seed, so forked or parallel workers that
+  # share a seed and a database generate different unique values. Without one
+  # the values are unchanged. A failure seen in parallel worker N reproduces
+  # with the worker id: the reproduce hint names FACTORY_BAKERY_WORKER=N.
   module Seed # rubocop:disable Metrics/ModuleLength
     ENV_KEY = 'FACTORY_BAKERY_SEED'
+    WORKER_ENV_KEY = 'FACTORY_BAKERY_WORKER'
+    WORKER_ENV_KEYS = [WORKER_ENV_KEY, 'TEST_ENV_NUMBER', 'PARALLEL_WORKER_NUMBER'].freeze
     RANDOM_LIMIT = 2**31
     LOG_FORMAT = ->(severity, _time, _program, message) { "[FactoryBakery] #{severity}: #{message}\n" }
 
     # origin is :env, :explicit (an Integer setting), :callable (a callable
     # setting), :framework or :random. framework is the registered integration,
-    # and only set when origin is :framework.
-    Resolution = Data.define(:value, :origin, :framework) do
+    # and only set when origin is :framework. worker is the worker id in force,
+    # or nil.
+    Resolution = Data.define(:value, :origin, :framework, :worker) do
       def description
         case origin
         when :env then ENV_KEY
@@ -37,7 +55,8 @@ module FactoryBakery
       end
 
       def reproduce_hint
-        framework ? format(framework.reproduce, value) : "#{ENV_KEY}=#{value}"
+        command = framework ? format(framework.reproduce, value) : "#{ENV_KEY}=#{value}"
+        worker.nil? ? command : "#{WORKER_ENV_KEY}=#{worker} #{command}"
       end
     end
 
@@ -46,7 +65,15 @@ module FactoryBakery
     # framework is not running.
     FrameworkSeed = Data.define(:label, :reproduce, :source)
 
-    class << self
+    # A published resolution and the generation (a count of seed changes) it
+    # belongs to. Immutable, so one assignment publishes it whole.
+    Snapshot = Data.define(:generation, :resolution)
+
+    PUBLISH = Mutex.new
+    @generation = 0
+    @snapshot = nil
+
+    class << self # rubocop:disable Metrics/ClassLength
       attr_reader :setting, :framework
       attr_writer :logger
 
@@ -58,60 +85,106 @@ module FactoryBakery
                 "got #{value.inspect}"
         end
 
-        @setting = value
-        reset!
+        change { @setting = value }
       end
 
       def register_framework(label:, reproduce:, &source)
-        @framework = FrameworkSeed.new(label:, reproduce:, source:)
-        reset!
+        change { @framework = FrameworkSeed.new(label:, reproduce:, source:) }
       end
 
       def logger
         defined?(@logger) ? @logger : (@logger = default_logger)
       end
 
-      # The resolved seed. Resolution happens on the first call after a reset.
+      # The resolved seed. Resolution happens on the first call after a change.
       def current
-        @current ||= resolve.tap { |resolution| announce(resolution) }
+        (@snapshot || publish_resolution).resolution
       end
 
       def reset!
-        @current = nil
-        Randomness.reset!
+        change { nil }
       end
 
       private
+
+      # Every seed setting change starts a new generation and drops the published
+      # resolution. The Randomness state derived from the old seed is dropped in
+      # the same critical section, so nothing derived from the old seed survives it.
+      def change
+        PUBLISH.synchronize do
+          yield
+          @generation += 1
+          @snapshot = nil
+          Randomness.reset!
+        end
+      end
 
       def valid_setting?(value)
         value.nil? || value.is_a?(Integer) || value.respond_to?(:call)
       end
 
+      # Resolves outside any lock, then publishes. A resolution that a setting
+      # change overtook is discarded and resolved again under the new setting.
+      # Only the resolver whose resolution was published announces it.
+      def publish_resolution
+        loop do
+          generation = @generation
+          resolution = resolve
+          snapshot = publish(generation, resolution)
+          next if snapshot.nil?
+
+          announce(resolution) if snapshot.resolution.equal?(resolution)
+          return snapshot
+        end
+      end
+
+      # Publishes the resolution if none is published and the generation still
+      # matches. Returns the published snapshot (ours or one already there), or
+      # nil when a change overtook the resolution.
+      def publish(generation, resolution)
+        PUBLISH.synchronize do
+          if @snapshot
+            @snapshot
+          elsif generation == @generation
+            @snapshot = Snapshot.new(generation:, resolution:)
+          end
+        end
+      end
+
       # The first source that answers wins; the random fallback always answers.
+      # The worker id is read here, once per resolution.
       def resolve
-        env_resolution || setting_resolution || framework_resolution || random_resolution
+        found = env_resolution || setting_resolution || framework_resolution || random_resolution
+        found.with(worker: worker_id)
       end
 
       def env_resolution
         value = env_seed
-        Resolution.new(value:, origin: :env, framework: nil) unless value.nil?
+        Resolution.new(value:, origin: :env, framework: nil, worker: nil) unless value.nil?
       end
 
       def setting_resolution
         case setting
         when nil then nil
-        when Integer then Resolution.new(value: setting, origin: :explicit, framework: nil)
-        else Resolution.new(value: called_setting, origin: :callable, framework: nil)
+        when Integer then Resolution.new(value: setting, origin: :explicit, framework: nil, worker: nil)
+        else Resolution.new(value: called_setting, origin: :callable, framework: nil, worker: nil)
         end
       end
 
       def framework_resolution
         value = framework_seed
-        Resolution.new(value:, origin: :framework, framework:) unless value.nil?
+        Resolution.new(value:, origin: :framework, framework:, worker: nil) unless value.nil?
       end
 
       def random_resolution
-        Resolution.new(value: Random.new_seed % RANDOM_LIMIT, origin: :random, framework: nil)
+        Resolution.new(value: Random.new_seed % RANDOM_LIMIT, origin: :random, framework: nil, worker: nil)
+      end
+
+      # The first worker variable that is set, empty included: parallel_tests
+      # exports an empty TEST_ENV_NUMBER for its first worker, which is a worker
+      # id of its own.
+      def worker_id
+        WORKER_ENV_KEYS.find { |key| ENV.key?(key) }&.then { |key| ENV.fetch(key) }
       end
 
       def env_seed

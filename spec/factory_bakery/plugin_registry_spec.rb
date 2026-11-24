@@ -274,6 +274,27 @@ RSpec.describe 'FactoryBakery plugin registry' do
       expect(FactoryBakery.bake(model).nickname).not_to eq('from-plugin')
     end
 
+    it 'stops offering a plugin DSL method once the plugin is unregistered, after bakes already used it' do
+      model = define_model('DslLifecycleUser', name: :string, nickname: :string)
+      plugin = plugin_with(dsl: recording_dsl(:nickname_tag), after: uppercasing_after)
+      FactoryBakery.register_plugin(plugin)
+      FactoryBakery.define(model) { nickname_tag 'nickname' }
+      expect { FactoryBakery.bake(model, nickname: 'ada') }.not_to raise_error
+
+      FactoryBakery.unregister_plugin(plugin)
+
+      expect { FactoryBakery.bake(model) }.to raise_error(FactoryBakery::Error, /Use nickname_tag|Static attributes/)
+    end
+
+    it 'offers a DSL method of a plugin registered after earlier bakes' do
+      model = define_model('DslLateUser', name: :string, nickname: :string)
+      FactoryBakery.bake(model)
+      FactoryBakery.register_plugin(plugin_with(dsl: recording_dsl(:nickname_tag), after: uppercasing_after))
+      FactoryBakery.define(model) { nickname_tag 'nickname' }
+
+      expect(FactoryBakery.bake(model, nickname: 'ada').nickname).to eq('ADA')
+    end
+
     it 'leaves the no-plugin path unchanged' do
       model = define_model('NoPluginUser', name: :string, city: :string)
       FactoryBakery.define(model) do
@@ -285,7 +306,72 @@ RSpec.describe 'FactoryBakery plugin registry' do
 
       record = FactoryBakery.bake(model, :cairo, name: 'from-call-site')
 
-      expect([record.name, record.city]).to eq(['from-call-site', 'from-trait'])
+      expect([record.name, record.city]).to eq(%w[from-call-site from-trait])
+    end
+
+    it 'counts a declaration recorded inside an attribute block as taken for this build' do
+      model = define_model('LateDeclarationUser', other: :string, late: :string)
+      seen = []
+      plugin = plugin_with(
+        dsl: recording_dsl(:late_tag),
+        heuristics: lambda do |_klass, _context, taken|
+          seen << taken
+          {}
+        end
+      )
+      FactoryBakery.register_plugin(plugin)
+      FactoryBakery.define(model) { other { late_tag :late } }
+
+      FactoryBakery.bake(model)
+
+      expect(seen).not_to be_empty
+      expect(seen.first).to include('late')
+    end
+  end
+
+  describe 'the current-plugin key' do
+    # The key marks which plugin's DSL method is executing. It belongs to the
+    # executing fiber alone: a fiber created inside a DSL call and resumed
+    # after the call has ended must not report that plugin.
+    it 'does not report the plugin inside a fiber the DSL call created' do
+      seen = nil
+      inside = nil
+      FactoryBakery::PluginRegistry.with_current(:example) do
+        seen = Fiber.new { FactoryBakery::PluginRegistry.current }.resume
+        inside = FactoryBakery::PluginRegistry.current
+      end
+
+      expect(seen).to be_nil
+      expect(inside).to eq(:example)
+      expect(FactoryBakery::PluginRegistry.current).to be_nil
+    end
+
+    it 'restores the previous plugin when with_current returns' do
+      FactoryBakery::PluginRegistry.with_current(:outer) do
+        FactoryBakery::PluginRegistry.with_current(:inner) do
+          expect(FactoryBakery::PluginRegistry.current).to eq(:inner)
+        end
+
+        expect(FactoryBakery::PluginRegistry.current).to eq(:outer)
+      end
+
+      expect(FactoryBakery::PluginRegistry.current).to be_nil
+    end
+
+    it 'refuses a recording made from a fiber the DSL call spawned' do
+      plugin = plugin_with(
+        dsl: Module.new do
+          define_method(:spawned) do
+            Fiber.new { record_plugin_declaration(:late_entry) }.resume
+          end
+        end
+      )
+      FactoryBakery.register_plugin(plugin)
+      model = define_model('SpawnedFiberUser', name: :string)
+      FactoryBakery.define(model) { spawned }
+
+      expect { FactoryBakery.bake(model) }
+        .to raise_error(FactoryBakery::Error, 'No plugin DSL call is in progress')
     end
   end
 end

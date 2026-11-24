@@ -52,16 +52,14 @@ module FactoryBakery
       # names walks validators, reflections and guard columns, which every
       # bake would otherwise repeat.
       def attribute_universe(klass)
-        class_memo(klass, :@factory_bakery_universe) { compute_attribute_universe(klass).freeze }
+        class_memo(klass, ClassCache::UNIVERSE) { compute_attribute_universe(klass).freeze }
       end
 
       # Class-level introspection facts are stable for a loaded class, so they
       # are computed once and kept on the class (a reload drops them with it).
       # Frozen classes are recomputed every time.
-      def class_memo(klass, ivar)
-        return yield if klass.frozen?
-
-        klass.instance_variable_get(ivar) || klass.instance_variable_set(ivar, yield)
+      def class_memo(klass, key, &block)
+        ClassCache.fetch(klass, key, &block)
       end
       private :class_memo
 
@@ -90,8 +88,6 @@ module FactoryBakery
         end
 
         cache = cache_for(klass)
-        return ConstraintReader.call(klass, attr_name.to_s) unless cache
-
         cache[attr_name.to_s] ||= ConstraintReader.call(klass, attr_name.to_s)
       end
 
@@ -102,9 +98,7 @@ module FactoryBakery
         return false unless klass.respond_to?(:validators_on)
 
         name = attr_name.to_s
-        memo = cache_for(klass) && (klass.instance_variable_get(:@factory_bakery_record_dependent) ||
-                                    klass.instance_variable_set(:@factory_bakery_record_dependent, {}))
-        return conditional_validators?(klass, name) unless memo
+        memo = ClassCache.table(klass, ClassCache::RECORD_DEPENDENT)
         return memo[name] if memo.key?(name)
 
         memo[name] = conditional_validators?(klass, name)
@@ -132,10 +126,15 @@ module FactoryBakery
       # framework-maintained counters. Counter names are reported separately
       # because the value side fills a NOT NULL counter without a default
       # with 0 instead of leaving it untouched.
+      # Framework-managed timestamps stay guarded only while they are truly
+      # framework-owned, so the cache key reads the live setting: flipping
+      # `record_timestamps` after a first bake must not serve the stale guard.
       def guard_columns(klass)
-        class_memo(klass, :@factory_bakery_guard_columns) do
+        timestamps = klass.respond_to?(:record_timestamps) && klass.record_timestamps
+        key = timestamps ? ClassCache::GUARD_COLUMNS : ClassCache::GUARD_COLUMNS_UNTIMED
+        class_memo(klass, key) do
           FactoryBakery::MapperRegistry::GuardColumns.new(
-            names: guard_names(klass).freeze, counter_names: counter_names(klass).freeze
+            names: guard_names(klass, timestamps).freeze, counter_names: counter_names(klass).freeze
           )
         end
       end
@@ -146,7 +145,7 @@ module FactoryBakery
       # `alias_attribute` names group with their column the same way, so the
       # alias and its column are decided once (issue #61).
       def alias_groups(klass)
-        class_memo(klass, :@factory_bakery_alias_groups) do
+        class_memo(klass, ClassCache::ALIAS_GROUPS) do
           groups = association_alias_groups(klass)
           attribute_alias_groups(klass).each do |members|
             next if members.any? { |member| groups.key?(member) }
@@ -219,7 +218,7 @@ module FactoryBakery
       # expression index (`lower(name)`) reports its columns as one SQL string,
       # not a column list, so it names no foreign key and is left out.
       def unique_index_groups(klass)
-        class_memo(klass, :@factory_bakery_unique_index_groups) do
+        class_memo(klass, ClassCache::UNIQUE_INDEX_GROUPS) do
           all_unique_indexes(klass)
             .select { |index| index.columns.is_a?(Array) }
             .map { |index| index.columns.map(&:to_s).freeze }.freeze
@@ -246,34 +245,20 @@ module FactoryBakery
       def uniqueness_check(record, attr_name, value)
         return false unless uniqueness_validated?(record.class, attr_name)
 
-        validators = uniqueness_validators_for(record.class, attr_name)
-        return unique_index_taken?(record, attr_name, value) if validators.empty?
-
-        validators.any? do |validator|
-          probe = build_probe(record, attr_name, value)
-          validator.validate_each(probe, attr_name, value)
-          taken_error?(probe.errors, attr_name)
-        end
+        UniquenessProbe.taken?(record, attr_name, value, uniqueness_validators_for(record.class, attr_name))
       end
 
-      # Does the database already hold `value` in a unique-indexed column? The
-      # record's own class scopes the query like the index's table (default
-      # scope and STI included); a persisted record never collides with itself.
-      def unique_index_taken?(record, attr_name, value)
-        klass = record.class
-        return false if value.nil?
-        return false unless klass.respond_to?(:where)
+      # Batched counterpart of `uniqueness_check`: one statement answers every
+      # attribute of the Hash the batch can settle exactly ({ 'attr' => bool });
+      # the attributes it cannot are absent, and the caller asks
+      # `uniqueness_check` for each of them as before.
+      def uniqueness_taken_many(record, values)
+        return {} unless active_record_class?(record.class)
 
-        # `unscoped` matches the database index (and Rails' own uniqueness
-        # validator) instead of a default scope that could hide a row.
-        scope = klass.respond_to?(:unscoped) ? klass.unscoped : klass
-        scope = scope.where(attr_name => value)
-        if record.respond_to?(:persisted?) && record.persisted? && klass.primary_key
-          scope = scope.where.not(klass.primary_key => record.public_send(klass.primary_key))
+        validators_by_attribute = values.keys.to_h do |name|
+          [name, uniqueness_validators_for(record.class, name)]
         end
-        scope.exists?
-      rescue StandardError
-        false
+        UniquenessBatch.taken(record, values, validators_by_attribute)
       end
 
       # Human-readable validator descriptions for exhaustion errors.
@@ -332,9 +317,10 @@ module FactoryBakery
         end
       end
 
-      def guard_names(klass)
+      def guard_names(klass, timestamps)
         names = belongs_to_guard_names(klass)
         names.concat(counter_names(klass))
+        names.concat(framework_timestamp_names(klass, timestamps))
         names << sti_discriminator_name(klass)
         names << primary_key_name(klass)
         names.compact.uniq
@@ -342,6 +328,41 @@ module FactoryBakery
 
       def counter_names(klass)
         CounterCacheDetector.new(klass).column_names
+      end
+
+      # `created_at` / `updated_at` (and the `_on` spellings) that ActiveRecord
+      # stamps itself on save. A NOT NULL column without a default would count
+      # as required and get a random past time, which is wasted work: the
+      # framework writes "now" on `bake!`, and an unsaved `bake` leaves them
+      # nil, as `FactoryBot.build` does. A column the app validates (for
+      # example `validates :created_at, presence: true`) keeps being filled,
+      # and so does every column of a model that turned timestamps off. Rails
+      # stamps the timestamps AFTER validation, so a model with app
+      # before/after-validation callbacks (a `before_validation` may read
+      # `created_at`) or with validation the gem cannot read keeps them too: a
+      # `validate` method demanding `created_at` would fail the save if the
+      # column were left nil.
+      def framework_timestamp_names(klass, timestamps)
+        return [] unless klass.respond_to?(:all_timestamp_attributes_in_model)
+        return [] unless timestamps
+        return [] if custom_validation?(klass)
+        return [] if app_validation_callbacks?(klass)
+
+        klass.all_timestamp_attributes_in_model.reject { |name| klass.validators_on(name).any? }
+      end
+
+      # True when the model runs its own before/after-validation callbacks.
+      # Rails adds only one before-validation callback of its own,
+      # `:normalize_changed_in_place_attributes` (ActiveModel's attribute
+      # normalization, included in every ActiveRecord model), so any other
+      # entry is app logic that may read a timestamp before Rails stamps it.
+      FRAMEWORK_VALIDATION_CALLBACKS = %i[normalize_changed_in_place_attributes].freeze
+
+      def app_validation_callbacks?(klass)
+        klass.respond_to?(:_validation_callbacks) &&
+          klass._validation_callbacks.any? do |callback|
+            %i[before after].include?(callback.kind) && !FRAMEWORK_VALIDATION_CALLBACKS.include?(callback.filter)
+          end
       end
 
       # Columns behind a belongs_to cannot be guessed: a random FK dangles
@@ -453,16 +474,19 @@ module FactoryBakery
         defined?(::ActiveRecord::Base) && klass < ::ActiveRecord::Base
       end
 
+      # The uniqueness validators of one attribute, memoized on the class like
+      # the other class-level facts: the enforcer asks several times per
+      # attribute per bake (is it validated, does it fold case, which
+      # validators run), and each ask walked and filtered `validators_on`.
       def uniqueness_validators_for(klass, attr_name)
-        klass.validators_on(attr_name).select do |validator|
+        memo = ClassCache.table(klass, ClassCache::UNIQUENESS_VALIDATORS)
+        memo[attr_name.to_s] ||= klass.validators_on(attr_name).select do |validator|
           validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
-        end
+        end.freeze
       end
 
       def uniqueness_validator?(klass, attr_name)
-        klass.validators_on(attr_name).any? do |validator|
-          validator.is_a?(::ActiveRecord::Validations::UniquenessValidator)
-        end
+        !uniqueness_validators_for(klass, attr_name).empty?
       end
 
       # Columns a single-column UNIQUE index protects, memoized beside the
@@ -470,7 +494,7 @@ module FactoryBakery
       # record. A composite index constrains a combination, never one column,
       # so its members are not flagged (the rule the Sequel mapper applies).
       def unique_index_columns(klass)
-        class_memo(klass, :@factory_bakery_unique_index_columns) do
+        class_memo(klass, ClassCache::UNIQUE_INDEX_COLUMNS) do
           compute_unique_index_columns(klass).freeze
         end
       end
@@ -493,7 +517,7 @@ module FactoryBakery
       # `notifications.data`). The SQL shapes are matched by the pure JsonCast
       # helper; the reads (index lists, column names) stay in the mapper.
       def json_text_columns(klass)
-        class_memo(klass, :@factory_bakery_json_text_columns) do
+        class_memo(klass, ClassCache::JSON_TEXT_COLUMNS) do
           compute_json_text_columns(klass).freeze
         end
       end
@@ -528,32 +552,6 @@ module FactoryBakery
         all_indexes(klass).select(&:unique)
       end
 
-      def build_probe(record, attr_name, value)
-        probe = duplicate(record)
-        probe.public_send("#{attr_name}=", value) if probe.respond_to?("#{attr_name}=")
-        probe.errors.clear if probe.respond_to?(:errors)
-        probe
-      end
-
-      # `dup` runs the initialize callbacks, which raise on the models the
-      # construction fallback exists for (issue #56). The validator only reads
-      # attributes, so such a record is probed through a callback-free copy.
-      def duplicate(record)
-        record.dup
-      rescue StandardError => e
-        raise e unless Construction.callback_free_capable?(record.class)
-
-        Construction.copy(record)
-      end
-
-      # `Errors#added?` does a strict options match, but the uniqueness
-      # validator attaches the candidate as `value:`. `details` keeps just
-      # the error kind.
-      def taken_error?(errors, attr_name)
-        details = errors.details[attr_name.to_sym] || errors.details[attr_name.to_s]
-        Array(details).any? { |detail| detail[:error] == :taken }
-      end
-
       def describe_validator(validator)
         name = validator.class.name.to_s.split('::').last.to_s.sub(/Validator\z/, '')
         ignored = %i[if unless on class allow_nil allow_blank message]
@@ -573,10 +571,7 @@ module FactoryBakery
       end
 
       def cache_for(klass)
-        return nil if klass.frozen?
-
-        klass.instance_variable_get(:@factory_bakery_constraints) ||
-          klass.instance_variable_set(:@factory_bakery_constraints, {})
+        ClassCache.table(klass, ClassCache::CONSTRAINTS)
       end
     end
   end

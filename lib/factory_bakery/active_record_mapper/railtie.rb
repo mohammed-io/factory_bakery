@@ -9,12 +9,24 @@ module FactoryBakery
 
     # A reload replaces model classes, so cached polymorphic candidates would
     # point at stale constants; to_prepare runs on boot and on every reload.
-    config.to_prepare { FactoryBakery::ActiveRecordMapper::PolymorphicTargetDiscovery.reset! }
+    # The declaration generation is bumped with the class facts: a recorded
+    # declaration layer can name a class it evaluated (`association :x,
+    # factory: SomeClass`), and a replayed entry must not carry an unloaded
+    # class into the next bake.
+    config.to_prepare do
+      FactoryBakery::ClassCache.clear_all
+      FactoryBakery::DeclarationCache.bump_generation
+      FactoryBakery::ActiveRecordMapper::PolymorphicTargetDiscovery.reset!
+    end
 
     config.after_initialize do |app|
       FactoryBakery::Railtie.install_associations
       fill_optional = app.config.factory_bakery.fill_optional
       FactoryBakery.fill_optional = fill_optional unless fill_optional.nil?
+      savepoints = app.config.factory_bakery.savepoints
+      FactoryBakery.savepoints = savepoints unless savepoints.nil?
+      validate = app.config.factory_bakery.validate
+      FactoryBakery.validate = validate unless validate.nil?
       FactoryBakery::Railtie.install_definitions(app)
     end
 

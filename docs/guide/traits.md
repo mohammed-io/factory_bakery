@@ -24,6 +24,15 @@ FactoryBakery.bake(User, :admin, :vip)            # role is 'vip': later traits 
 FactoryBakery.bake(User, :admin, name: 'Grace')   # overrides beat every trait
 ```
 
+On a recipe, you can pass traits as arguments or chain them in the order you want to apply them.
+
+```ruby
+FactoryBakery.recipe(User, :admin).vip.bake
+FactoryBakery.recipe(User).trait(:admin, :vip).bake!
+```
+
+Use `.trait(:name)` for a name that collides with a recipe method, such as `:bake`, `:bake!` or `:trait`. An undeclared chained trait raises the same error as a trait passed to `bake` when you finish the recipe.
+
 ## Rules
 
 - Traits are applied **after** the base declarations, in the order you list them. For the same attribute, the last one wins.
@@ -31,7 +40,7 @@ FactoryBakery.bake(User, :admin, name: 'Grace')   # overrides beat every trait
 - A later trait that redeclares an association replaces the earlier declaration. The same holds for `skip`: a later trait value replaces an earlier omission, and a later `skip` replaces an earlier value.
 - A call-site override suppresses every declaration in its [alias group](overrides-and-precedence.md#alias-groups) before any block runs.
 - Traits are local to one definition. There are no global traits.
-- A trait cannot call another trait. Naming one inside a trait body is read as an attribute declaration with no block, which is ignored without error. Repeat the declarations, or pass both traits at the call site.
+- A trait cannot call another trait. A bare trait name in a trait body is an attribute declaration without a value block and raises `FactoryBakery::Error`. Static attribute arguments and `skip` with a block or no names also raise `FactoryBakery::Error`. Assignment skips a declared attribute without a setter. Repeat the declarations, or pass both traits at the call site.
 - Only the traits of the **bake target's own definition** are known. A trait name that definition lacks raises:
 
 ```

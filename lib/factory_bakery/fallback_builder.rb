@@ -3,9 +3,11 @@
 module FactoryBakery
   # ADR-0002 verification for required-only bakes: try the lean record first,
   # then rebuild once with optional columns filled if it is invalid. Each
-  # attempt runs in its own savepoint through the mapper's persistence adapter,
-  # so a declaration block (or a FK-presence parent) that writes during a lean
-  # attempt is rolled back before the rebuild. The rebuild runs with the opt-in
+  # attempt runs in its own savepoint through the mapper's persistence adapter
+  # when `FactoryBakery.savepoints` is on, so a declaration block (or a
+  # FK-presence parent) that writes during a lean attempt is rolled back
+  # before the rebuild; with the setting off the discard is in-memory only.
+  # The rebuild runs with the opt-in
   # scoped on, so nested parents built by declarations use the same rule and
   # never run a second fallback. Declaration blocks may therefore run twice
   # when the fallback triggers.
@@ -28,6 +30,8 @@ module FactoryBakery
     end
 
     def build(model_klass, definition, overrides, traits)
+      return build_object(model_klass, definition, overrides, traits, @mode).first unless FactoryBakery.validate?
+
       adapter = MapperRegistry.persistence_adapter(model_klass)
       unless savepoint_available?(adapter, model_klass)
         return build_without_savepoint(model_klass, definition, overrides, traits)
@@ -40,7 +44,7 @@ module FactoryBakery
     end
 
     def build_object(model_klass, definition, overrides, traits, mode)
-      builder = BakeryBuilder.new(model_klass, definition, fill_optional: mode)
+      builder = BakeryBuilder.for_current_plugins.new(model_klass, definition, fill_optional: mode)
       object = builder.build(overrides: overrides, traits: traits)
       BuildContext.with_record(object) do
         UniquenessEnforcer.new(object, builder.unchecked_heuristic_names).call
@@ -53,8 +57,8 @@ module FactoryBakery
     private
 
     # The lean attempt in its own savepoint, with the probe that decides
-    # whether it is kept. A :invalid probe means the attempt was discarded and
-    # its writes rolled back; the attempt is still returned because its builder
+    # whether it is kept. A :invalid probe means the attempt was discarded;
+    # the attempt is still returned because its builder
     # is the one that knows which fills were optional. The error names the
     # probe saw are returned with it, read while the lean record still carried
     # them.
@@ -65,7 +69,7 @@ module FactoryBakery
       probe = nil
       errors = []
       begin
-        adapter.transaction(model_klass) do
+        transaction(adapter, model_klass) do
           attempt = build_object(model_klass, definition, overrides, traits, @mode)
           probe = fallback_probe(*attempt)
           errors = missing_attributes(attempt.first) if probe == :invalid
@@ -80,7 +84,9 @@ module FactoryBakery
           end
         end
       rescue DiscardAttempt
-        # The savepoint already rolled the lean attempt's writes back.
+        # The savepoint already rolled the lean attempt's writes back; with
+        # `FactoryBakery.savepoints` off only the in-memory bookkeeping is
+        # discarded and rows the attempt wrote stay.
       end
       [attempt, probe, errors]
     end
@@ -111,10 +117,15 @@ module FactoryBakery
       FillOptional.with_rebuild(BuildContext.current.depth, error_attributes: names, &block)
     end
 
-    # A mapper whose targets open no transactions has no savepoint to rebuild
-    # in; the plain build is the same thing without one.
+    # With `FactoryBakery.savepoints` off the attempts are not wrapped: the
+    # discard stays in-memory (the exception, the generated-record and
+    # unique-value bookkeeping) and rows a lean attempt wrote stay behind. With
+    # it on, the lean attempt's rows are rolled back, so the rebuild leaves one
+    # copy of each. A savepoint is lazy, so it costs nothing until a query runs
+    # inside it. A mapper whose targets open no transactions has no savepoint
+    # to rebuild in either way; the plain build is the same thing without one.
     def transaction(adapter, model_klass, &block)
-      return block.call unless adapter.transactional?
+      return block.call unless adapter.transactional? && FactoryBakery.savepoints?
 
       adapter.transaction(model_klass, &block)
     end

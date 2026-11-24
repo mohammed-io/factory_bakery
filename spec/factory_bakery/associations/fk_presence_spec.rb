@@ -139,7 +139,7 @@ RSpec.describe 'raw-FK presence edges' do
       expect(record.profile.bio).to eq('generated')
     end
 
-    it 'rolls the owner and its callback-created parent back when saving the root fails' do
+    it 'rolls the owner and its callback-created parent back when saving the root fails', :savepoints do
       account, profile, view = models
       add_profile_callback(account)
       view.validate { errors.add(:base, 'cannot save view') }
@@ -163,7 +163,7 @@ RSpec.describe 'raw-FK presence edges' do
       expect([owner_model.count, child_model.count]).to eq([1, 1])
     end
 
-    it 'rolls the parent back atomically when the root save fails' do
+    it 'rolls the parent back atomically when the root save fails', :savepoints do
       owner_model, child_model = define_fk_edge('FkBangRollback')
       child_model.validates :name, absence: true
 
@@ -281,7 +281,7 @@ RSpec.describe 'raw-FK presence edges' do
         expect(record.profile).to equal(record.owner.generated_stat.profile)
       end
 
-      it "still verifies #{descendant} after bake! discards an automatic child" do
+      it "still verifies #{descendant} after bake! discards an automatic child", :savepoints do
         owner, child, _profile = define_discarded_stat_graph(explicit: explicit, required: true)
 
         expect do

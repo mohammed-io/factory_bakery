@@ -37,9 +37,25 @@ Then run:
 bundle install
 ```
 
+## Agent skills
+
+The gem ships three skills for coding agents (Claude Code and other agents that read `SKILL.md` folders): `factory-bakery-setup`, `factory-bakery-migrate` and `factory-bakery-diagnostics`. They are folders under [`skills/`](skills/) and are included in the installed gem. Copy them to where your agent looks for skills:
+
+```sh
+# for one project (Claude Code: .claude/skills/)
+mkdir -p .claude/skills
+cp -R "$(bundle show factory_bakery)/skills/"* .claude/skills/
+
+# for every project of your user (Claude Code: ~/.claude/skills/)
+mkdir -p ~/.claude/skills
+cp -R "$(bundle show factory_bakery)/skills/"* ~/.claude/skills/
+```
+
+Use a symlink instead of `cp -R` to follow the gem when you update it. Other agents read a different folder (for example `.agents/skills/`); copy there instead. Then ask the agent in plain words ("set up FactoryBakery", "migrate our factory_bot factories to FactoryBakery", "why won't this model bake?"). Details: [Agent skills](docs/guide/skills.md).
+
 ## Quick start
 
-`require 'factory_bakery'` is all the setup there is. `bake` returns an unsaved object; `bake!` calls `save!` when the object supports it.
+`require 'factory_bakery'` is all the setup there is. `bake` returns an unsaved object. `bake!` calls `save!` when the object supports it. `recipe` lets you set up a bake to finish later.
 
 ```ruby
 require 'factory_bakery'
@@ -50,12 +66,18 @@ user.new_record? # => true
 user = FactoryBakery.bake!(User)
 user.persisted? # => true
 
+user_recipe = FactoryBakery.recipe(User)
+user_recipe.bake  # unsaved User
+user_recipe.bake! # saved User
+
 # Override just the value under test; everything else is still filled.
 user = FactoryBakery.bake(User, email: 'john@example.com')
 user.email # => "john@example.com"
 ```
 
 Overrides are keyword arguments. Several can be passed at once, and attributes you do not pass keep their heuristic values. Baking a class requires no factory definition and no configuration.
+
+With the Sorbet signatures installed, both forms are typed to return a `User` when given the `User` class. The block argument is also typed as `User`. See [Types (Sorbet)](docs/guide/types.md).
 
 ## Factory definitions
 
@@ -241,7 +263,7 @@ instance.valid?      # => true; required attributes are filled, optional ones ke
 Instance is read-only (readonly? is true, e.g. a database view); use FactoryBakery.bake to get a populated record, or create the underlying rows yourself. A persist_with hook is not supported yet.
 ```
 
-The check reads the **instance**, so a single record marked read-only after loading is caught as well as a model whose every instance is read-only. It runs after the graph is built but before the root save, inside `bake!`'s savepoint: any parent row the graph inserted earlier is rolled back and the database is unchanged. When a read-only record is a required parent, the error names the chain, for example `InstanceModerationNote#instance -> Instance is read-only (...)`.
+The check reads the **instance**, so a single record marked read-only after loading is caught as well as a model whose every instance is read-only. It runs after the graph is built but before the root save, inside `bake!`'s savepoint (that is, with `FactoryBakery.savepoints = true`): any parent row the graph inserted earlier is rolled back and the database is unchanged; with the default off, those rows stay. When a read-only record is a required parent, the error names the chain, for example `InstanceModerationNote#instance -> Instance is read-only (...)`.
 
 A read-only parent on a [raw-FK presence edge](#raw-fk-presence-edges) is never written. The plugin looks for an existing row of that class and adopts it, so `bake` and `bake!` point the FK at a real row and insert nothing into the read-only table. When the table is empty, `bake` returns the child with the unsaved parent (no exception, no INSERT) and `bake!` raises `ReadOnlyTargetError` as above; an already-persisted read-only record in the graph is left alone because `bake!` never writes it.
 
@@ -352,7 +374,7 @@ By default a bake fills only the attributes a valid record **needs**:
 
 Everything else keeps its database default or stays `nil`, and the setter of an optional column is never called. This avoids side-effecting setters and validators on optional fields (for example a remote URL setter that performs a network fetch). `if:` / `unless:` conditions are evaluated against the record being baked, so "applicable" means the condition holds for that record.
 
-Custom `EachValidator`s never force a fill on their own. If app-specific validation does need an optional column, the bake is verified and rebuilt once with optional columns filled when that is what makes it valid (the required-only result is preferred). A bake calls `valid?` **only** when a defaulted, validated column was left unset or the model has validation logic heuristics cannot read (a custom validator, `validates_with`, or a `validate` override). Framework-owned autosave callbacks (`validate_associated_records_for_*`, installed for every `has_many` / `has_one`) do not count, so a plain model gains no validation pass. Each attempt runs in its own savepoint: writes made by declaration blocks during a discarded lean attempt roll back before the rebuild, and those blocks may therefore run twice. See [ADR-0006](docs/adr/0006-required-only-baking-and-verified-fallback.md).
+Custom `EachValidator`s never force a fill on their own. If app-specific validation does need an optional column, the bake is verified and rebuilt once with optional columns filled when that is what makes it valid (the required-only result is preferred). A bake calls `valid?` **only** when a defaulted, validated column was left unset or the model has validation logic heuristics cannot read (a custom validator, `validates_with`, or a `validate` override). Framework-owned autosave callbacks (`validate_associated_records_for_*`, installed for every `has_many` / `has_one`) do not count, so a plain model gains no validation pass. Each attempt runs in its own savepoint when `FactoryBakery.savepoints = true`: writes made by attribute value blocks during a discarded lean attempt roll back before the rebuild. With savepoints off, the lean attempt's rows stay behind. The rebuild reuses cached definition and trait declarations and evaluates the winning attribute value blocks again. See [ADR-0006](docs/adr/0006-required-only-baking-and-verified-fallback.md).
 
 #### Opting in to filling everything
 
@@ -370,6 +392,27 @@ FactoryBakery.bake(User, fill_optional: [:bio, :website])        # opt in just t
 The per-call setting applies to nested bakes made from declaration blocks too. Declarations, traits and call-site overrides still take precedence over heuristics in every mode.
 
 A column filled only because you opted in is verified as well: when a custom validator or a `validate` block rejects the generated value, that fill is put back to the column's default (or `nil`) if that is what makes the record valid. A required column keeps its value, and a fill that neither the generated value nor the default can fix is left as generated.
+
+#### Turning the gem's own checks off
+
+`FactoryBakery.validate` (default `true`) decides whether the gem checks its own work: the verified fallback's `valid?` probe and rebuild, the verification of optional fills, and the build-time uniqueness checks (database queries and the in-bake registry). Set it globally or per call:
+
+```ruby
+FactoryBakery.validate = false                 # or config.factory_bakery.validate = false in Rails
+FactoryBakery.bake(User, validate: false)      # opt out for one call
+```
+
+Values are still generated from the validators and column types exactly as before, so the typical record is the same. But nothing is checked, so a record may come back invalid — this is the `FactoryBot.build` experience. `bake!` still saves through the framework's normal validation, so an invalid record still raises there. A nested bake made by a definition block inherits the caller's choice. The associations plugin's best-effort validity checks of optional children are not part of this option.
+
+#### Reserved keyword arguments
+
+`validate:` and `fill_optional:` are per-call keywords of `bake` / `bake!`, so an attribute with one of those names cannot be set as a bare keyword. In a definition block, declare the value with `add_attribute(:validate) { ... }`; at the call site, a value the keyword cannot act on is applied as a plain attribute override instead of raising — `true` / `false` (and, for `fill_optional:`, a name array) keep their per-call meaning, anything else sets the attribute:
+
+```ruby
+FactoryBakery.bake(Policy, validate: 'strict')  # sets the `validate` attribute, does not touch the gem's checks
+```
+
+A typo such as `validate: 'ture'` on a model without that attribute is therefore silently ignored, not an error.
 
 | Metadata | Example | Result |
 | --- | --- | --- |
@@ -390,6 +433,7 @@ A column filled only because you opted in is verified as well: when a custom val
 | `belongs_to` foreign keys and polymorphic pairs | `account_id`, `commentable_type` / `commentable_id` | Left `nil`; a made-up row or class name would dangle |
 | STI inheritance column | `type` | Left to Rails (the subclass's name, or `nil` on the base) |
 | Counter cache | `comments_count` | Left to Rails: the DB default is kept, else `0` if NOT NULL with no default, else `nil` |
+| Framework timestamps | `created_at`, `updated_at` | Left to ActiveRecord: `nil` on an unsaved `bake`, the current time after `bake!`. A validated timestamp or `record_timestamps = false` is still filled |
 | No information | A nullable column or PORO attribute with no validator | Left `nil` |
 
 Name-, title-, slug-, key- and label-like string attributes get a six-digit random suffix (`"Voluptas 482193"`, `"voluptas-482193"`) so values your app derives from them — a `slug` computed from `name`, a normalized key — stay distinct across bakes even though that derivation is invisible to validators. Emails, identifier-like names (`username`, `login`, …), declared formats and explicit values are unaffected, and length limits truncate the base while keeping the suffix.
@@ -464,7 +508,7 @@ Only the winning declaration is evaluated. An association name, its FK columns a
 
 `account { nil }` (or `comments { [] }`) in a trait or at the call site opts an edge out without a separate DSL.
 
-**Persistence contract.** `bake!` wraps graph building, nested `bake!` calls and the root `save!` in one transaction opened with `requires_new`: a savepoint when your code already has a transaction. Any failure rolls back every row the bake wrote, even if you rescue the error in an outer transaction. After the root saves, every generated record is verified. A record that would silently stay unsaved — for example with `autosave: false` or `validate: false` on an invalid child — makes `bake!` raise `FactoryBakery::IncompletePersistenceError` and roll back. The error names the record and its association; persist that record explicitly in a declaration or override, or fix the association's autosave/validate options. Non-ActiveRecord targets skip persistence as before. `bake` writes nothing of its own — apart from [raw-FK presence edges](#raw-fk-presence-edges), the documented exception below — but a required-only bake opens a savepoint through the persistence adapter so the fallback can roll the lean attempt back. The savepoint is released unchanged when no fallback fires; when it does, declaration blocks may run twice.
+**Persistence contract.** With `FactoryBakery.savepoints = true` (default `false`, which is how factory_bot behaves; see [`bake` vs `bake!`](docs/guide/bake-vs-bake-bang.md#savepoints)), `bake!` wraps graph building, nested `bake!` calls and the root `save!` in one transaction opened with `requires_new`: a savepoint when your code already has a transaction. Any failure then rolls back every row the bake wrote, even if you rescue the error in an outer transaction. With the default, only `save!`'s own transaction rolls back, and parents a declaration block or FK-presence edge saved earlier stay (a transactional test removes them anyway). After the root saves, every generated record is verified. A record that would silently stay unsaved — for example with `autosave: false` or `validate: false` on an invalid child — makes `bake!` raise `FactoryBakery::IncompletePersistenceError` and roll back. The error names the record and its association; persist that record explicitly in a declaration or override, or fix the association's autosave/validate options. Non-ActiveRecord targets skip persistence as before. `bake` writes nothing of its own — apart from [raw-FK presence edges](#raw-fk-presence-edges), the documented exception below — but with savepoints on a required-only bake opens one through the persistence adapter so the fallback can roll the lean attempt back. It is released unchanged when no fallback fires; when the fallback fires, attribute value blocks may run twice.
 
 **Depth backstop.** Runaway nested bakes raise `FactoryBakery::NestingTooDeepError` with the class path instead of `SystemStackError`. `FactoryBakery.max_bake_depth` defaults to 10; raise it for legitimately deep graphs.
 
@@ -555,7 +599,7 @@ When such an edge **is** required (a presence validator on the association name,
 
 | Contract | Behavior |
 | --- | --- |
-| `bake!` | Creates the parent **inside the root savepoint** and sets the FK from its id. The insert rolls back atomically with the rest of the graph if anything fails. NOT NULL + real FK constraints are satisfiable end-to-end. |
+| `bake!` | Creates the parent **inside the root savepoint** (with `FactoryBakery.savepoints = true`; with the default off the row stays) and sets the FK from its id. The insert rolls back atomically with the rest of the graph if anything fails. NOT NULL + real FK constraints are satisfiable end-to-end. |
 | `bake` (`:fresh`, the default) | Creates the parent and **inserts a row outside the unsaved contract**. This is the documented exception to "`bake` never writes": the raw column cannot be satisfied any other way. The root record itself stays unsaved. |
 | `bake` with `:reuse_non_unique` | An existing database row is reused without writing when the edge cannot be unique. On a miss, or on a unique edge, the parent is built and inserted exactly as with `:fresh` — the documented exception to "`bake` never writes". |
 | `bake!` with `:reuse_non_unique` | An existing row is reused when the edge cannot be unique; on a miss, or on a unique edge, a fresh parent is created inside the savepoint. |
@@ -713,6 +757,62 @@ Out of scope, documented rather than faked:
 - **`plugin :validation_helpers` declarations are not introspectable.** They run imperatively inside `Model#validate` — code, not data — so heuristics fall back to schema facts and the verified fallback probes the model (a `validate` override is treated as unreadable validation, so a validator that needs a column is satisfied by the rebuild). Use `plugin :validation_class_methods` (Sequel's reflective declaration API) when you want validator-driven generation without that probe.
 - **Sequel associations are never auto-built.** `many_to_one` foreign keys stay `nil`; assign the associated object yourself in an attribute block. The opt-in associations plugin above works against the default mapper's models and answers its clear "not supported" error on Sequel classes.
 - Persisting JSON columns depends on Sequel's `serialization` plugin — a model-level concern outside the mapper.
+
+## Compared with factory_bot
+
+Same idea (a factory per model, traits, overrides at the call site), different default: factory_bot fills what you list, FactoryBakery fills what the model's validators and columns need and you list only what a test cares about.
+
+| | factory_bot | FactoryBakery |
+| --- | --- | --- |
+| Attributes | every one you want must be declared | inferred from validators and column types; declare only the values a test asserts on |
+| Build, saved | `create(:user, :admin, name: 'x')` | `FactoryBakery.bake!(User, :admin, name: 'x')` or `recipe(User, :admin).bake!(name: 'x')` |
+| Build, unsaved | `build(:user)` | `FactoryBakery.bake(User)` |
+| `build_stubbed` | yes | no |
+| Traits | `trait :admin do ... end` | `trait :admin do ... end` inside `FactoryBakery.define` |
+| Sequences | `sequence(:email)` | a counter local in the definition file, or inference (uniqueness is enforced across the bake) |
+| Transient attributes, callbacks | yes | no (locals in a block, or work after the call) |
+| Associations | `association :author`, declared | built by the opt-in plugin, in `:required_only` or `:all` mode, or declared with `association` |
+| Validation | `build` does not validate; `create` validates through `save!` | a bake is verified and retried by default; `validate: false` turns the gem's own checks off |
+| Transactions | no savepoints of its own | the same by default (`FactoryBakery.savepoints = false`) |
+| Reproducible data | `Faker` seeding by hand | one seed for a run (`FACTORY_BAKERY_SEED`, RSpec/Minitest seed), printed on failure |
+| Types | none shipped | Sorbet signatures, and an opt-in Tapioca plugin that types traits and overrides per model |
+
+Migration is a rename of the factory calls, nothing else: see [Migrating from factory_bot](docs/guide/migrating-from-factory-bot.md) (it also ships as an agent skill, see [Agent skills](#agent-skills)).
+
+## Benchmarks
+
+Measured against factory_bot on the same schema with equivalent factories, inside a rolled-back transaction per call, the way a transactional test suite runs. Time is microseconds per call (lower is better).
+
+SQLite in memory, Ruby 4.0.1:
+
+| scenario | FactoryBakery | factory_bot | slower by | allocations (FB / fb) |
+| --- | ---: | ---: | ---: | ---: |
+| flat model, `bake` / `build` | 118 | 41 | 2.9x | 225 / 149 |
+| flat model, `bake!` / `create` | 250 | 166 | 1.5x | 396 / 313 |
+| validators, `bake` / `build` | 220 | 47 | 4.7x | 387 / 173 |
+| validators, `bake!` / `create` | 503 | 322 | 1.6x | 753 / 536 |
+| with a definition, `bake` / `build` | 98 | 49 | 2.0x | 250 / 173 |
+| with a definition, `bake!` / `create` | 374 | 310 | 1.2x | 618 / 536 |
+| declared `belongs_to` chain x3, `bake!` / `create` | 605 | 505 | 1.2x | 1019 / 875 |
+| `has_many` x3, `bake!` / `create` | 1132 | 873 | 1.3x | 1896 / 1467 |
+
+PostgreSQL 18, the same harness: `bake!` is level with factory_bot where a database round trip dominates (declared associations 0.96x to 1.0x, `has_many` 1.0x), and an unsaved validated `bake` is 2.5x slower (500 vs 199 µs).
+
+How to read these:
+
+- The gap is largest for an unsaved `bake` of a model with validators, where the gem does work factory_bot skips: it reads the model's rules, generates values from them and checks uniqueness with one query. It narrows when the record is saved, and again with a definition.
+- Retained memory per call is about 2 bytes (no leak); allocations are the extra objects per call.
+- The numbers are from one Apple M2 Pro with other jobs running, so timing carries 5-20% noise; allocation and SQL counts are exact. They are a synthetic schema, not your app.
+
+Reproduce:
+
+```sh
+bundle exec ruby benchmark/perf/compare.rb                                  # SQLite
+DATABASE_URL=postgres://localhost/factory_bakery_perf bundle exec ruby benchmark/perf/compare.rb
+PERF_ONLY=flat_build,validated_build PERF_TIME=3 bundle exec ruby benchmark/perf/compare.rb
+```
+
+The scenario list, profiling scripts and the full reports (profiles, the changes that made it faster and the ones that were reverted) are in [`benchmark/perf/`](benchmark/perf/) and [`docs/reports/perf/`](docs/reports/perf/).
 
 ## Not supported yet
 

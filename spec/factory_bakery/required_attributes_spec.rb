@@ -176,8 +176,13 @@ RSpec.describe 'required-only baking (issue #51)' do
       expect(FactoryBakery.bake(model, fill_optional: false).optional).to be_nil
     end
 
-    it 'rejects an unsupported value' do
-      expect { FactoryBakery.bake(model, fill_optional: 'yes') }.to raise_error(ArgumentError, /fill_optional/)
+    it 'treats a value the keyword cannot act on as a plain attribute override' do
+      # The model has no `fill_optional` attribute, so the value is ignored;
+      # a target with such an attribute receives it (see the README's
+      # reserved-keywords note). The per-call keyword still accepts the values
+      # it acts on.
+      expect { FactoryBakery.bake(model, fill_optional: 'yes') }.not_to raise_error
+      expect { FactoryBakery.fill_optional = 'yes' }.to raise_error(ArgumentError, /fill_optional/)
     end
   end
 

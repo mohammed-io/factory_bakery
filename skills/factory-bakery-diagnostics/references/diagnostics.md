@@ -283,7 +283,7 @@ All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reu
 ### incomplete-persistence
 
 - **Message:** `bake! did not persist all generated records: Member (assigned to members). Persist the record explicitly via a declaration or override, or change the association's autosave/validate options.`
-- **Class:** `FactoryBakery::IncompletePersistenceError`. The bake is rolled back first.
+- **Class:** `FactoryBakery::IncompletePersistenceError`. The bake is rolled back first when `FactoryBakery.savepoints = true`; with the default off, only `save!`'s own transaction rolls back.
 - **Cause:** After the root `save!`, a generated record is still new. Usual reasons: `autosave: false` on the association, `validate: false` on an invalid child, or a parent Rails skipped because it was invalid.
 - **Where to look:** gem `PersistenceVerifier`. App: the association's `autosave` / `validate` options, and the named record's own validity.
 - **Fix:** Persist the record explicitly in a declaration or override, or fix the association options. Make the named record valid first: `FactoryBakery.bake(Member).valid?`.
@@ -369,7 +369,7 @@ If `IncompletePersistenceError` names the sibling, the fix is in the current sou
 
 ### format-exhaustion
 
-- **Message:** `could not generate a format-compliant value for User#code (with: /\A...\z/; length constraints: {...}): "x" failed after 10 attempts. Pass an explicit value with an override or relax the constraints.` For a text column cast to JSON the first words read `could not generate a JSON value for`.
+- **Message:** `could not generate a format-compliant value for User#code (with: /\A...\z/; length constraints: {...}): "x" failed after 10 attempts.` The message goes on with a line saying that the regex generator cannot solve the regex for this attribute (unsatisfiable, too large or too complex, or in conflict with another rule), then shows the fix as code: a `FactoryBakery.define(User) do code { '<a value matching /\A...\z/>' } end` block and the call-site `FactoryBakery.bake(User, code: '<a value matching /\A...\z/>')`. For a text column cast to JSON the first words read `could not generate a JSON value for`.
 - **Cause:** The regex cannot be satisfied (`/\Afoo(?=bar)\z/`), exceeds the generator's bounds (256 characters, depth), uses a construct `regexp_parser` cannot parse, or clashes with a `length` rule or a second regex.
 - **Where to look:** gem `AttributeFillers::StringFiller`, `RegexGeneration`. App: the `format:` options.
 - **Fix:** Give the value: a definition line or an override.
@@ -534,7 +534,7 @@ These produce a record that is not `valid?`, or a rule error from `bake!`. Fix w
 ### declaration-blocks-run-twice
 
 - **Symptom:** A counter, a log line, an HTTP stub or a setting changes twice per bake.
-- **Cause:** The verified fallback discarded the lean attempt and rebuilt. Database writes are rolled back, other side effects are not.
+- **Cause:** The verified fallback discarded the lean attempt and rebuilt. Database writes of the first attempt are rolled back only with `savepoints = true`; other side effects are not.
 - **Fix:** Make the block idempotent, or guard it. Give the model's custom validation what it needs in the definition so the lean attempt is valid.
 
 ### subclass-uses-parent-definition

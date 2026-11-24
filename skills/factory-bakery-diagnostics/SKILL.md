@@ -132,7 +132,7 @@ skip :moved_to_account
 
 A subclass needs no definition when its parent's inherited one bakes it. A subclass definition replaces the inherited one, so repeat the lines it needs.
 
-`name 'x'` (no block) raises `Static attributes are unsupported; use name { "x" }`. Write `name { 'x' }`.
+`name 'x'` (no block) raises `FactoryBakery::Error`, `Static attributes are unsupported; use name { "x" }`. Write `name { 'x' }`.
 
 ### 5. Or report a gem bug
 

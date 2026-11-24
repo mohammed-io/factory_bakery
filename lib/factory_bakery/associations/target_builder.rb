@@ -46,9 +46,15 @@ module FactoryBakery
           end
         end
 
-        def bake_child(object, declaration, entry, automatic: false)
+        # `shared_scope` lets a collection pass the owner's create scope once
+        # for all its children, but only when the child class has no default
+        # scopes: `scope_for_create` reads the target's default_scope too, and
+        # a scope whose value changes per evaluation (a counter, a clock) must
+        # not be frozen onto every child. When it is nil, each child asks for
+        # its own.
+        def bake_child(object, declaration, entry, automatic: false, shared_scope: nil)
           klass = target_klass(object, declaration, entry)
-          overrides = child_overrides(object, entry).merge(declaration.overrides)
+          overrides = child_overrides(object, entry, shared_scope).merge(declaration.overrides)
           return FactoryBakery.bake(klass, *declaration.traits, **overrides) unless automatic
 
           BuildContext.automatic_build { FactoryBakery.bake(klass, *declaration.traits, **overrides) }
@@ -61,7 +67,13 @@ module FactoryBakery
             return
           end
 
-          children = Array.new(count) { bake_child(object, declaration, entry, automatic: automatic) }
+          klass = target_klass(object, declaration, entry)
+          # A method-style `def self.default_scope` would be frozen into the
+          # shared scope like any per-evaluation scope, so it is not shared.
+          shared_scope = create_scope(object, entry) if collection_scope_shareable?(klass)
+          children = Array.new(count) do
+            bake_child(object, declaration, entry, automatic: automatic, shared_scope: shared_scope)
+          end
           # concat is the public collection writer. It fires before_add/after_add
           # callbacks and sets the verified inverse on each child.
           object.public_send(entry.name).concat(children)
@@ -69,10 +81,26 @@ module FactoryBakery
 
         private
 
-        def child_overrides(object, entry)
-          # Rails keeps build-time attributes on the association itself; they
-          # are exactly what `association.build` writes to a new record.
-          scope_attributes = object.association(entry.name.to_sym).send(:scope_for_create)
+        # Rails keeps build-time attributes on the association itself; they
+        # are exactly what `association.build` writes to a new record.
+        def create_scope(object, entry)
+          object.association(entry.name.to_sym).send(:scope_for_create)
+        end
+
+        # A per-evaluation default scope (a method-style `def self.default_scope`
+        # rather than the macro) leaves `default_scopes` empty but would be
+        # frozen into the shared scope attributes, so sharing only applies when
+        # the class has no default scopes and its `default_scope` method is
+        # Rails' own.
+        def collection_scope_shareable?(klass)
+          return false unless klass.respond_to?(:default_scopes) && klass.default_scopes.empty?
+          return false unless klass.respond_to?(:default_scope)
+
+          klass.method(:default_scope).owner == ::ActiveRecord::Scoping::Default::ClassMethods
+        end
+
+        def child_overrides(object, entry, shared_scope = nil)
+          scope_attributes = shared_scope || create_scope(object, entry)
           overrides = scope_attributes.transform_keys(&:to_sym)
 
           # Only a verified reverse reflection may bind the inverse object.

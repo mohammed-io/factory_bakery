@@ -6,7 +6,9 @@ Every setting, with its default and how to change it. FactoryBakery has no confi
 
 | Setting | Default | Set with | Notes |
 | --- | --- | --- | --- |
-| `fill_optional` | `false` | `FactoryBakery.fill_optional = true`, `FactoryBakery.configure { \|c\| c.fill_optional = ... }`, or `bake(X, fill_optional: ...)` | `true`, `false`, or an Array of names. `nil` is treated as `false`. Invalid values raise `ArgumentError`. See [Heuristics](heuristics.md#fill_optional) |
+| `fill_optional` | `false` | `FactoryBakery.fill_optional = true`, `FactoryBakery.configure { \|c\| c.fill_optional = ... }`, or `bake(X, fill_optional: ...)` | `true`, `false`, or an Array of names. The global writer treats `nil` as `false` and raises `ArgumentError` for invalid values. See [Heuristics](heuristics.md#fill_optional) |
+| `validate` | `true` | `FactoryBakery.validate = false`, `FactoryBakery.configure { \|c\| c.validate = false }`, or `bake(X, validate: false)` | `true` or `false`. The global writer treats `nil` as `true` and raises `ArgumentError` for other values. Off: the gem runs none of its own checks (the verified fallback's `valid?` probe and rebuild, the verification of optional fills, and the build-time uniqueness checks), so a record may come back invalid, like `FactoryBot.build`. `bake!` still validates on save. See [Heuristics](heuristics.md#the-verified-fallback) |
+| `savepoints` | `false` | `FactoryBakery.savepoints = true`, `FactoryBakery.configure { \|c\| c.savepoints = true }`, or `config.factory_bakery.savepoints = true` in Rails | Off: the gem opens no transaction of its own, like factory_bot, so a failed `bake!` leaves the rows `save!` already wrote and a discarded fallback attempt leaves the rows it wrote (a transactional test cleans them up). On: `bake!` runs in a savepoint and rolls back whole, and the fallback's lean attempt is rolled back so the rebuild leaves one copy. The associations plugin's best-effort edges keep their savepoints either way. See [`bake` vs `bake!`](bake-vs-bake-bang.md#savepoints) |
 | `max_bake_depth` | `10` | `FactoryBakery.max_bake_depth = n` | Nested bakes past this raise `NestingTooDeepError` |
 | `definition_paths` | `[]` | `FactoryBakery.definition_paths = [...]` | A String or an Array. Rails sets it for you. See [Definitions](definitions.md#loading-definition-files) |
 
@@ -21,6 +23,8 @@ end
 ```
 
 Per-call `fill_optional:` beats the global value. A nested bake inherits the caller's choice, except inside the verified fallback's rebuild (see [Heuristics](heuristics.md#the-verified-fallback)).
+
+The same per-call options work on recipes, as in `FactoryBakery.recipe(User, fill_optional: true).bake(validate: false)`. For either option, `nil` uses the current setting. Per-call values outside the listed types pass through as attribute overrides.
 
 ## Associations plugin
 
@@ -57,6 +61,8 @@ Restore defaults in tests: `FactoryBakery::Associations.reset_configuration!`. D
 | --- | --- | --- |
 | `config.factory_bakery.associations` | unset (core only) | `true`, a mode symbol, or a Hash of the plugin settings |
 | `config.factory_bakery.fill_optional` | unset (core default, `false`) | `true`, `false` or an Array of attribute names. Assigned to `FactoryBakery.fill_optional` at boot |
+| `config.factory_bakery.validate` | unset (core default, `true`) | `true` or `false`. Assigned to `FactoryBakery.validate` at boot |
+| `config.factory_bakery.savepoints` | unset (core default, `false`) | `true` or `false`. Assigned to `FactoryBakery.savepoints` at boot |
 | `config.factory_bakery.definition_paths` | unset (`spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`) | A String or an Array. Relative paths resolve against `Rails.root` |
 | `config.factory_bakery.generators` | unset (the model-generator hook is on unless another `fixture_replacement` is selected) | `true` always selects FactoryBakery. `false` turns the hook off. See [Rails](rails.md#model-generator-hook) |
 
@@ -67,6 +73,7 @@ Details and generators: [Rails](rails.md).
 | Call | Effect |
 | --- | --- |
 | `FactoryBakery.reset_plugins!` | Removes every plugin (associations and attachments included) |
+| `FactoryBakery.reset_cache!` | Drops every per-model-class fact the gem cached (columns, constraints, fillers, ...). Rails does this for you on code reload and on `reset_column_information`; call it yourself if you change a schema or a model's validations behind the gem's back |
 | `FactoryBakery::Associations.reset_configuration!` | Restores plugin defaults and clears this fiber's scope |
 | `FactoryBakery::FillOptional.reset!` | Restores `fill_optional` and clears the fiber scope. Internal, but handy in a spec of your own |
 

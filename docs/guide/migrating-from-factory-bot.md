@@ -42,7 +42,7 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | `trait :admin do ... end` | `trait :admin do ... end` (same, local to the definition) |
 | `traits_for_enum :status` | Delete (enum inference), or one trait per state a test needs |
 | `sequence(:email) { \|n\| ... }` | A counter local at the top of the file, or `SecureRandom`. Or delete if the column is unique-validated |
-| `transient do ... end` | A local variable inside `define`. See the limits below |
+| `transient do ... end` | A local variable: in the `define` body for a constant, inside the attribute block for a computed or random value (the `define` body runs once). See the limits below |
 | `email { "#{name}@x.com" }` | Same block. The resolved `name` includes call-site overrides and applied traits |
 | `association :author` | `association :author` (plugin loaded) |
 | `association :author, factory: :editor` | `association :author, factory: :editor` |
@@ -52,7 +52,7 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | `initialize_with { new(a: 1) }` | `initialize_with(a: 1)` (a Hash only. A block does not map) |
 | `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Not supported. See the limits below |
 | `to_create`, `skip_create` | Not needed. `bake` never saves |
-| `build(:post)` | `FactoryBakery.bake(Post)` |
+| `build(:post)` | `FactoryBakery.bake(Post)` — pass `validate: false` for the closest to `build`: no probe, no uniqueness check, the record may be invalid |
 | `create(:post)` | `FactoryBakery.bake!(Post)` |
 | `build(:post) { \|post\| ... }` / `create(:post) { \|post\| ... }` | Keep the block on `bake` / `bake!`. `bake!` yields after its transaction or savepoint finishes |
 | `build_stubbed(:post)` | No equivalent |
@@ -129,6 +129,8 @@ Use `test/bakery` for Minitest. Create the directory. Then wire the test helper:
 ```ruby
 RSpec.configure { |config| config.include FactoryBakery::Methods }  # optional
 ```
+
+If the project uses Sorbet, copy the gem's `rbi/factory_bakery.rbi` into `sorbet/rbi/shims/`. Class targets give typed returns and block arguments for both bake forms. Bakes with a symbol target return `T.untyped`. Sorbet does not check trait names or attribute overrides. See [Types (Sorbet)](types.md).
 
 Run the suite. It must still match the baseline. Nothing uses FactoryBakery yet.
 
@@ -218,12 +220,14 @@ end
 
 Test files may change only by renaming the factory call. Use these rewrites.
 
-| Before | After |
+| factory_bot | FactoryBakery |
 | --- | --- |
 | `create(:post)` | `FactoryBakery.bake!(Post)` |
 | `create(:post, title: 'x')` | `FactoryBakery.bake!(Post, title: 'x')` |
 | `create(:post, :published)` | `FactoryBakery.bake!(Post, :published)` |
+| `create(:user, :admin, name: 'x')` | `FactoryBakery.bake!(User, :admin, name: 'x')` |
 | `build(:post)` | `FactoryBakery.bake(Post)` |
+| `create(:user) { \|user\| user.reload }` | `FactoryBakery.bake!(User) { \|user\| user.reload }` |
 | `create(:admin)` where `factory :admin, class: 'User'` | `FactoryBakery.bake!(:admin)` (needs `define(:admin, klass: User)`) |
 | `create_list(:post, 3)` | `Array.new(3) { FactoryBakery.bake!(Post) }` |
 | `build_list(:post, 3)` | `Array.new(3) { FactoryBakery.bake(Post) }` |
@@ -231,9 +235,11 @@ Test files may change only by renaming the factory call. Use these rewrites.
 | `attributes_for(:post)` | `attributes_for(Post)` through a helper that keeps the call a rename |
 | `build_stubbed(:post)` | Blocker. Report it |
 
+For new code, `FactoryBakery.recipe(User, :admin).bake!(name: 'x')` is an optional spelling for the same `create` mapping. The `build` equivalent is `FactoryBakery.recipe(Post).bake`. Use the plain renames in the table by default during migration so test files change only by renaming factory calls.
+
 Do it in small batches, one commit each. Run the suite after each batch.
 
-**Do not use a rename to hide a change.** If a call site passes a block, relies on `build_stubbed`, or needs behavior the definition cannot give, stop and report it. See [what cannot be migrated](#what-cannot-be-migrated-mechanically).
+Keep an existing block on a single-record `bake` or `bake!` call. Both yield the record, including when called on a recipe. If a call site relies on `build_stubbed` or needs behavior the definition cannot give, stop and report it. See [what cannot be migrated](#what-cannot-be-migrated-mechanically).
 
 ### Checking that only calls changed
 
