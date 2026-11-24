@@ -1,5 +1,15 @@
 ## [Unreleased]
 
+### Fixes
+
+- The batched uniqueness statement is cached per adapter, table and column list, so a class baked under one database role (say SQLite in tests) and then another (PostgreSQL) no longer reuses the first adapter's placeholder style; each connection gets its own statement.
+- The batched uniqueness check now batches only Rails' own `UniquenessValidator` instances — a subclass that overrides `validate_each` (for example one that folds case) falls back to the per-column probe — and only a `case_sensitive` option that is omitted or `true`; an explicit `case_sensitive: nil` (Rails' case-insensitive comparison) falls back too, so a taken value is still caught.
+- The uniqueness enforcer no longer reuses a batched answer for an attribute whose value a sibling's regeneration changed through a setter side effect: the answer is reused only while the attribute still carries the value that was queried, otherwise the per-column probe asks again.
+- A nested bake that did not pass `validate:` no longer clears an enclosing bake's `validate:` override, and a child fiber created inside a `validate:` bake no longer keeps that override after the bake has returned.
+- `ClassCache` publishes a computed value under its invalidation mutex and re-checks the epoch there, so a value computed before a `clear` cannot be published after it, and a class frozen mid-computation no longer raises `FrozenError` at the cache write (the value is returned unpublished).
+- A plugin declaration recorded by a plugin DSL call inside an attribute block now counts as a taken name, so the plugin's own heuristic values (and other plugins') no longer overwrite the attribute it declares.
+- A non-boolean `validate:` (and a `fill_optional:` that is not `true`, `false` or a name array) is applied as a plain attribute override instead of raising `ArgumentError`, so a target with an attribute named `validate` or `fill_optional` can be baked. These are reserved keywords: in a definition block use `add_attribute(:validate) { ... }`; the global `FactoryBakery.validate =` still validates its value. See the README's reserved-keywords note.
+
 ### Factory DSL and bake blocks
 
 - Static attribute declarations raise with the replacement block syntax. Use `name { 'Ada' }` to assign a value or `skip :name` to omit it.

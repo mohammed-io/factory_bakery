@@ -113,4 +113,21 @@ RSpec.describe FactoryBakery::BakeryBuilder::Names do
       expect(names.raw_taken).to eq(%w[name age])
     end
   end
+
+  context 'with a live plugin-declaration bucket' do
+    let(:overrides) { nil }
+    let(:initialize_with) { nil }
+    let(:plugin_declarations) { Hash.new { |hash, plugin| hash[plugin] = [] } }
+
+    it 'reads plugin-declared names live, so a declaration recorded after the build started is seen' do
+      expect(names.plugin_declared).to eql([])
+
+      plugin_declarations[:plugin_object] << Struct.new(:name).new(:late)
+
+      expect(names.plugin_declared).to eq(%w[late])
+      expect(names.plugin_declared).to be_frozen
+      expect(names.raw_taken).to include('late')
+      expect(names.raw_taken).to be_frozen
+    end
+  end
 end

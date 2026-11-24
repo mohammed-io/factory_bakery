@@ -53,16 +53,20 @@ module FactoryBakery
       end.to_h
       return {} if pending.empty?
 
-      FactoryBakery::MapperRegistry.uniqueness_taken_many(@record, pending)
+      # Each answer becomes a `[queried_value, taken]` pair, so `collision?`
+      # can tell whether the answer still describes the value now on the
+      # record (a sibling's setter side effect may have changed it).
+      answers = FactoryBakery::MapperRegistry.uniqueness_taken_many(@record, pending)
+      answers.filter_map { |attribute, taken| [attribute, [pending.fetch(attribute), taken]] }.to_h
     end
 
-    def enforce(attribute, known_taken = nil)
+    def enforce(attribute, known = nil)
       return unless FactoryBakery::MapperRegistry.uniqueness_validated?(@record.class, attribute)
 
       attempts = 0
       loop do
         value = read_value(attribute)
-        return accept(attribute, value) unless collision?(attribute, value, known_taken, attempts.positive?)
+        return accept(attribute, value) unless collision?(attribute, value, known, attempts.positive?)
 
         attempts += 1
         raise exhaustion_error(attribute, value) if attempts >= MAX_ATTEMPTS
@@ -72,13 +76,16 @@ module FactoryBakery
     end
 
     # Taken in this bake's graph, or taken in the database. The first pass of
-    # a batched attribute reuses the answer the batched check already fetched;
-    # after a regeneration the database is asked again.
-    def collision?(attribute, value, known_taken, regenerated)
+    # a batched attribute reuses the answer the batched check already fetched
+    # -- but only while the attribute still carries the value the batch asked
+    # about: regenerating one attribute can change another through a setter
+    # side effect, which makes that attribute's batch answer stale. After a
+    # regeneration, or on any mismatch, the database is asked again.
+    def collision?(attribute, value, known, regenerated)
       return true if taken_in_graph?(attribute, value)
-      return taken_in_database?(attribute, value) if regenerated || known_taken.nil?
+      return taken_in_database?(attribute, value) if regenerated || known.nil? || known.first != value
 
-      known_taken
+      known.last
     end
 
     def taken_in_graph?(attribute, value)
@@ -107,8 +114,8 @@ module FactoryBakery
     # A `case_sensitive: false` uniqueness validator folds case, so the
     # registry must too: "Token" and "token" collide for it.
     def normalize(attribute, value)
-      return value unless value.is_a?(String)
-      return value unless FactoryBakery::MapperRegistry.uniqueness_case_insensitive?(@record.class, attribute)
+      return value unless value.is_a?(String) &&
+                          FactoryBakery::MapperRegistry.uniqueness_case_insensitive?(@record.class, attribute)
 
       value.downcase
     end
@@ -159,8 +166,7 @@ module FactoryBakery
     end
 
     def assign(attribute, value)
-      setter = "#{attribute}="
-      @record.public_send(setter, value) if @record.respond_to?(setter)
+      @record.public_send("#{attribute}=", value) if @record.respond_to?("#{attribute}=")
     end
 
     def exhaustion_error(attribute, value)

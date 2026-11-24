@@ -126,7 +126,35 @@ RSpec.describe FactoryBakery::ClassCache do
     described_class.clear(klass)
     fiber.resume
 
+    # The interrupted computation's value is neither published nor kept.
+    expect(klass.instance_variable_get(:@factory_bakery_spec_k)).to be_nil
     expect(described_class.fetch(klass, :@factory_bakery_spec_k) { :fresh }).to eq(:fresh)
+  end
+
+  it 'returns the computed value unpublished when the class was frozen while it computed' do
+    klass = Class.new
+    value = described_class.fetch(klass, :@factory_bakery_spec_frozen_mid) do
+      klass.freeze
+      :computed
+    end
+
+    expect(value).to eq(:computed)
+    expect(klass.instance_variable_get(:@factory_bakery_spec_frozen_mid)).to be_nil
+  end
+
+  it 'returns the value from store for a frozen class without raising and stores nothing' do
+    klass = Class.new.freeze
+    expect(described_class.store(klass, :@factory_bakery_spec_store, :v)).to eq(:v)
+    expect(klass.instance_variable_get(:@factory_bakery_spec_store)).to be_nil
+  end
+
+  it 'hands a frozen class a throwaway table whose writes do not stick' do
+    klass = Class.new.freeze
+    table = described_class.table(klass, :@factory_bakery_spec_table)
+    table[:key] = :value
+
+    expect(described_class.table(klass, :@factory_bakery_spec_table)).not_to equal(table)
+    expect(klass.instance_variable_get(:@factory_bakery_spec_table)).to be_nil
   end
 
   describe 'when a schema changes under a model' do

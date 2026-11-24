@@ -306,7 +306,26 @@ RSpec.describe 'FactoryBakery plugin registry' do
 
       record = FactoryBakery.bake(model, :cairo, name: 'from-call-site')
 
-      expect([record.name, record.city]).to eq(['from-call-site', 'from-trait'])
+      expect([record.name, record.city]).to eq(%w[from-call-site from-trait])
+    end
+
+    it 'counts a declaration recorded inside an attribute block as taken for this build' do
+      model = define_model('LateDeclarationUser', other: :string, late: :string)
+      seen = []
+      plugin = plugin_with(
+        dsl: recording_dsl(:late_tag),
+        heuristics: lambda do |_klass, _context, taken|
+          seen << taken
+          {}
+        end
+      )
+      FactoryBakery.register_plugin(plugin)
+      FactoryBakery.define(model) { other { late_tag :late } }
+
+      FactoryBakery.bake(model)
+
+      expect(seen).not_to be_empty
+      expect(seen.first).to include('late')
     end
   end
 end

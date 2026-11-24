@@ -14,6 +14,11 @@ module FactoryBakery
     # as SQL text: the cached statement holds identifiers and placeholders
     # only, and the values are bound on execution.
     #
+    # Validators carrying `if:` / `unless:` conditions are batched exactly as
+    # the per-column probe would answer them: both ask the column and neither
+    # evaluates the condition (the probe runs `validate_each` directly), so
+    # the batch's answer is the same fact the probe would return.
+    #
     # On MySQL/Trilogy a plain `=` can be case-insensitive under the default
     # collation, so the batch may report a value as taken that a case-sensitive
     # validator would accept; the only effect is an unnecessary regeneration,
@@ -68,12 +73,24 @@ module FactoryBakery
         def plain_validators?(validators)
           return false if validators.empty?
 
-          validators.all? { |validator| validator.options.all? { |key, value| plain_option?(key, value) } }
+          validators.all? do |validator|
+            # Only Rails' own UniquenessValidator is batched. A subclass may
+            # override `validate_each` (folding case, adding conditions), and
+            # the batch's plain `=` would answer a different question than its
+            # probe would.
+            return false unless validator.instance_of?(::ActiveRecord::Validations::UniquenessValidator)
+
+            validator.options.all? { |key, value| plain_option?(key, value) }
+          end
         end
 
         def plain_option?(key, value)
           return false unless PLAIN_VALIDATOR_OPTIONS.include?(key)
-          return false if key == :case_sensitive && !value.nil? && value != true
+          # Only an omitted `case_sensitive` or an explicit `true` means the
+          # adapter's plain `=` comparison. An explicit `nil` asks Rails for
+          # its case-insensitive comparison, and `false` folds case -- neither
+          # matches the batch's statement.
+          return false if key == :case_sensitive && value != true
 
           true
         end
@@ -135,12 +152,19 @@ module FactoryBakery
           end
         end
 
-        # The statement is a pure function of the class and the attribute
-        # order (identifiers and placeholders, never a value), so it is
-        # memoized on the class beside the other per-class facts.
+        # The statement is a pure function of the adapter's placeholder
+        # spelling, the table and the ordered attributes (identifiers and
+        # placeholders, never a value), so the cache is keyed on all three:
+        # one class baked under a SQLite role and then a Postgres role must
+        # not reuse the other adapter's placeholders.
         def cached_sql(klass, connection, attributes)
-          FactoryBakery::ClassCache.table(klass, FactoryBakery::ClassCache::UNIQUENESS_BATCH)[attributes.join(',')] ||=
+          FactoryBakery::ClassCache
+            .table(klass, FactoryBakery::ClassCache::UNIQUENESS_BATCH)[batch_key(klass, connection, attributes)] ||=
             build_sql(klass, connection, attributes)
+        end
+
+        def batch_key(klass, connection, attributes)
+          [connection.adapter_name, klass.table_name, attributes.join(',')].join("\0")
         end
 
         def build_sql(klass, connection, attributes)

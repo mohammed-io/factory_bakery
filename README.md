@@ -382,6 +382,16 @@ FactoryBakery.bake(User, validate: false)      # opt out for one call
 
 Values are still generated from the validators and column types exactly as before, so the typical record is the same. But nothing is checked, so a record may come back invalid — this is the `FactoryBot.build` experience. `bake!` still saves through the framework's normal validation, so an invalid record still raises there. A nested bake made by a definition block inherits the caller's choice. The associations plugin's best-effort validity checks of optional children are not part of this option.
 
+#### Reserved keyword arguments
+
+`validate:` and `fill_optional:` are per-call keywords of `bake` / `bake!`, so an attribute with one of those names cannot be set as a bare keyword. In a definition block, declare the value with `add_attribute(:validate) { ... }`; at the call site, a value the keyword cannot act on is applied as a plain attribute override instead of raising — `true` / `false` (and, for `fill_optional:`, a name array) keep their per-call meaning, anything else sets the attribute:
+
+```ruby
+FactoryBakery.bake(Policy, validate: 'strict')  # sets the `validate` attribute, does not touch the gem's checks
+```
+
+A typo such as `validate: 'ture'` on a model without that attribute is therefore silently ignored, not an error.
+
 | Metadata | Example | Result |
 | --- | --- | --- |
 | Column type | `title: :string`, `count: :integer`, `published_at: :datetime` | A type-appropriate fake value (strings come from [FFaker](https://github.com/ffaker/ffaker)) |

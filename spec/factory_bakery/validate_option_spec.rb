@@ -26,11 +26,13 @@ RSpec.describe 'the validate option' do
 
   # Prepends a counter on the model class, so `valid?` calls made by the gem
   # (the fallback probe and the optional-fill verification) are observable.
+  # The count travels in a Hash so the caller reads the live count, not a
+  # snapshot taken when the counter was installed.
   def valid_calls_in(model)
-    calls = 0
+    calls = Hash.new(0)
     counter = Module.new do
       define_method(:valid?) do |*args, &block|
-        calls += 1
+        calls[:count] += 1
         super(*args, &block)
       end
     end
@@ -66,7 +68,7 @@ RSpec.describe 'the validate option' do
 
       record = FactoryBakery.bake(model, validate: false)
 
-      expect(calls).to eq(0)
+      expect(calls[:count]).to eq(0)
       expect(record.nickname).to be_nil
       expect(record.valid?).to be(false)
     end
@@ -89,7 +91,7 @@ RSpec.describe 'the validate option' do
       FactoryBakery.validate = false
       record = FactoryBakery.bake(model)
 
-      expect(calls).to eq(0)
+      expect(calls[:count]).to eq(0)
       expect(record.nickname).to be_nil
     end
 
@@ -144,7 +146,7 @@ RSpec.describe 'the validate option' do
 
     record = FactoryBakery.bake(child, validate: false)
 
-    expect(calls).to eq(0)
+    expect(calls[:count]).to eq(0)
     expect(record.account.nickname).to be_nil
   end
 
@@ -157,12 +159,87 @@ RSpec.describe 'the validate option' do
     expect(FactoryBakery.bake!(plain, validate: false)).to be_persisted
   end
 
-  it 'raises ArgumentError for a non-boolean value' do
-    model = fallback_model('ValidateArgError')
+  describe 'the override scope' do
+    it 'restores the previous override after a nested scope that set none' do
+      seen = []
+      FactoryBakery::Verification.with(false) do
+        FactoryBakery::Verification.with(nil) { seen << FactoryBakery.validate? }
+        seen << FactoryBakery.validate?
+      end
 
-    expect { FactoryBakery.bake(model, validate: 'yes') }
-      .to raise_error(ArgumentError, 'validate must be true or false, got "yes"')
-    expect { FactoryBakery.validate = 'yes' }
-      .to raise_error(ArgumentError, 'validate must be true or false, got "yes"')
+      expect(seen).to eq([false, false])
+    end
+
+    it 'keeps the outer validate: false across two consecutive nested bakes' do
+      account = fallback_model('ValidateScopeAccount')
+      child = define_model('ValidateScopeChild', name: :string)
+      FactoryBakery.define(child) do
+        FactoryBakery.bake(account)
+        FactoryBakery.bake(account)
+        name { 'child' }
+      end
+      calls = valid_calls_in(account)
+
+      FactoryBakery.bake(child, validate: false)
+
+      expect(calls[:count]).to eq(0)
+    end
+
+    it 'expires for a fiber created inside the bake and resumed after it' do
+      model = fallback_model('ValidateFiberScope')
+      observed = nil
+      fiber = nil
+      FactoryBakery.define(model) do
+        fiber = Fiber.new { observed = FactoryBakery.validate? }
+        name { 'x' }
+      end
+
+      FactoryBakery.bake(model, validate: false)
+      fiber.resume
+
+      expect(observed).to be(true)
+      expect(FactoryBakery.validate?).to be(true)
+    end
+  end
+
+  describe 'a non-boolean validate: value' do
+    it 'travels as a plain attribute override for a target with a validate attribute' do
+      policy = define_class('ValidateKeywordPoro') do
+        attr_accessor :name, :validate
+      end
+
+      record = FactoryBakery.bake(policy, name: 'strict', validate: 'yes')
+
+      expect(record.validate).to eq('yes')
+      expect(record.name).to eq('strict')
+      expect(FactoryBakery.validate?).to be(true)
+    end
+
+    it 'bakes! the same way' do
+      policy = define_class('ValidateKeywordBangPoro') do
+        attr_accessor :validate
+
+        def save!
+          self
+        end
+      end
+
+      expect(FactoryBakery.bake!(policy, validate: 'pending').validate).to eq('pending')
+    end
+
+    it 'passes a fill_optional: value the keyword cannot act through as an override too' do
+      model = define_class('FillOptionalKeywordPoro') do
+        attr_accessor :name, :fill_optional
+      end
+
+      record = FactoryBakery.bake(model, name: 'full', fill_optional: 'everything')
+
+      expect(record.fill_optional).to eq('everything')
+    end
+
+    it 'still validates the global setting' do
+      expect { FactoryBakery.validate = 'yes' }
+        .to raise_error(ArgumentError, 'validate must be true or false, got "yes"')
+    end
   end
 end

@@ -66,6 +66,96 @@ RSpec.describe 'batched uniqueness check' do
     end
   end
 
+  describe 'the cached statement' do
+    let!(:model) do
+      define_model('BatchCachedStatementCode', code: :string) { validates :code, uniqueness: true }
+    end
+
+    it 'is keyed per adapter, so a Postgres role does not reuse the SQLite placeholders' do
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta', 'gamma')
+
+      expect(selects_in { FactoryBakery.bake(model, fill_optional: true) }.first).to include('= ?')
+
+      allow(model.connection).to receive(:adapter_name).and_return('PostgreSQL')
+      expect(selects_in { FactoryBakery.bake(model, fill_optional: true) }.first).to include('$1')
+
+      # Both entries stay cached: back on the real adapter, the statement is
+      # the SQLite one again.
+      RSpec::Mocks.with_temporary_scope do
+        allow(model.connection).to receive(:adapter_name).and_call_original
+        expect(selects_in { FactoryBakery.bake(model, fill_optional: true) }.first).to include('= ?')
+      end
+    end
+  end
+
+  describe 'a UniquenessValidator subclass that folds case' do
+    let!(:model) do
+      folding = Class.new(ActiveRecord::Validations::UniquenessValidator) do
+        private
+
+        def build_relation(klass, attribute, value)
+          klass.unscoped.where("LOWER(#{klass.quoted_table_name}.#{attribute}) = ?", value.to_s.downcase)
+        end
+      end
+      define_model('BatchFoldingSubclassCode', code: :string) do
+        validates_with folding, attributes: [:code]
+      end
+    end
+
+    it 'is not batched, so the per-column probe still catches a taken value' do
+      model.create!(code: 'ALPHA')
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.code).to eq('beta')
+      expect(model.count).to eq(2)
+    end
+  end
+
+  describe 'an explicit case_sensitive: nil' do
+    let!(:model) do
+      define_model('BatchCaseNilCode', code: :string) do
+        validates :code, uniqueness: { case_sensitive: nil }
+      end
+    end
+
+    it 'is not batched, so the per-column probe still catches a case-folded row' do
+      model.create!(code: 'ALPHA')
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta')
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.code).to eq('beta')
+      expect(model.count).to eq(2)
+    end
+  end
+
+  describe 'a setter side effect that rewrites a sibling' do
+    let!(:model) do
+      define_model('BatchSideEffectCode', code: :string, token: :string) do
+        validates :code, :token, uniqueness: true
+
+        def code=(value)
+          super
+          self.token = 'taken' if value == 'regen'
+        end
+      end
+    end
+
+    it 're-probes the rewritten sibling instead of reusing the stale batch answer' do
+      model.create!(code: 'alpha', token: 'taken')
+      allow(FFaker::Lorem).to receive(:word).and_return('alpha', 'beta', 'regen', 'delta')
+
+      record = FactoryBakery.bake!(model, fill_optional: true)
+
+      expect(record.code).to eq('regen')
+      expect(record.token).to eq('delta')
+      expect(model.where(token: 'taken').count).to eq(1)
+      expect(model.count).to eq(2)
+    end
+  end
+
   describe 'a collision on one of two batched columns' do
     let!(:model) do
       define_model('BatchCollisionCode', code: :string, token: :string) do

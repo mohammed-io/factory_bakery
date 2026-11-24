@@ -62,6 +62,33 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
   class IncompletePersistenceError < Error; end
   class ReadOnlyTargetError < Error; end
 
+  # The reserved per-call keywords of `bake` / `bake!`. A value the keyword
+  # cannot act on travels as a plain attribute override instead, so a target
+  # may still carry an attribute with that name (see the reserved keywords
+  # note in the README).
+  module BakeKeywords
+    class << self
+      # Returns [validate, fill_optional] with every value the keywords act
+      # on kept in place (true/false, a name array for fill_optional, and nil
+      # meaning the keyword was not given); anything else is moved into the
+      # overrides as a plain attribute value and the keyword is left unset.
+      def resolve!(overrides, validate, fill_optional)
+        [keep_or_override!(:validate, overrides, validate),
+         keep_or_override!(:fill_optional, overrides, fill_optional)]
+      end
+
+      private
+
+      def keep_or_override!(keyword, overrides, value)
+        return value if value.nil? || [true, false].include?(value) ||
+                        (keyword == :fill_optional && value.is_a?(Array))
+
+        overrides[keyword] = value
+        nil
+      end
+    end
+  end
+
   extend SeedApi
   extend SavepointSetting
   extend ValidationSetting
@@ -125,11 +152,12 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
       BakeryBuilder.register(target, klass: klass, &block)
     end
 
-    # `validate:` turns the gem's own checks off for one bake. A model cannot
-    # have an attribute named `validate` (the mapper forbids it), so the
-    # keyword cannot shadow an override.
+    # `validate:` turns the gem's own checks off for one bake. A value the
+    # keyword cannot act on (anything but true/false) travels as a plain
+    # attribute override instead, so a target carrying an attribute named
+    # `validate` still bakes; see the reserved keywords note in the README.
     def bake(target, *traits, fill_optional: nil, validate: nil, **overrides)
-      ValidationSetting.check(validate)
+      validate, fill_optional = BakeKeywords.resolve!(overrides, validate, fill_optional)
       mode = resolve_fill_optional(fill_optional)
       record = FillOptional.around_bake(BuildContext.current.depth, mode) do
         Verification.with(validate) do
@@ -142,7 +170,7 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
     end
 
     def bake!(target, *traits, fill_optional: nil, validate: nil, **overrides)
-      ValidationSetting.check(validate)
+      validate, fill_optional = BakeKeywords.resolve!(overrides, validate, fill_optional)
       record = build_and_persist(target, overrides, traits, resolve_fill_optional(fill_optional), validate)
       yield record if block_given?
       record
