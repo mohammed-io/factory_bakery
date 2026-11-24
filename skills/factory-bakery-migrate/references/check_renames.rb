@@ -3,8 +3,10 @@
 
 # Judges a test diff: every changed line must be a factory-call rename.
 #
-# Usage (from the migration worktree):
-#   git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test factories factories.rb | ruby check_renames.rb
+# Usage (from the migration worktree; feed every test directory Phase 1
+# recorded, not only spec and test):
+#   git diff -U0 --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ HEAD \
+#     -- spec test features engines/*/spec components/*/spec factories factories.rb | ruby check_renames.rb
 #
 # Read-only. It reads a unified diff from stdin and prints a report. Exit
 # status is 1 only when a FAIL appears.
@@ -14,23 +16,50 @@
 #                build_stubbed_pair call, paren-less or not (a documented
 #                blocker), a hunk whose removed and added line counts differ,
 #                an edited or moved tracked factory definition file
-#                (spec/factories.rb, test/factories.rb, factories.rb, or a
-#                file under spec/factories/, test/factories/ or factories/),
-#                or input the script cannot parse.
-# REVIEW (exit 0): everything else, and a human reads each one: every call
-#                split over lines (parentheses unbalanced on the changed
-#                line, a target on its own line, a lone `)` becoming a `}`),
-#                a paren-less call (`create :post`, `build :user, name: 'x'`,
-#                `create_list :post, 3`, `attributes_for :post`), a Machinist
-#                or Fabrication or hand-rolled form (`User.make`,
-#                `User.make!`, `User.plan`, `Post.create!(attrs)`,
-#                `Post.new(attrs)`, `Fabricate(...)`), a call that keeps a
-#                receiver, a changed target or namespace, a changed verb or
-#                count, a changed literal or argument, two calls on one
-#                line, a scalar call that becomes Array.new(n), a
-#                whitespace-only change, a binary file
+#                (factories.rb at any level, or a file under any factories/
+#                directory -- spec/factories/, test/factories/, factories/,
+#                spec/support/factories/, ...), or input the script cannot
+#                parse. A mode change does not suppress the factory-file
+#                FAIL: edit + chmod of a factory file still fails.
+# REVIEW (exit 0): everything else, and a human reads each one:
+#                - a call inside a string literal, a heredoc body or a
+#                  comment (`it "uses create(:post)"`, `eq("create(:post)")`,
+#                  `# create(:post)`, `assert_equal "create(:post)", x`) is
+#                  REVIEW, never silent. Parens are counted ignoring string
+#                  contents, so a ')' literal does not balance a multiline
+#                  call, and a commented-out `# create_list(...)` is not
+#                  LIST.
+#                - every call split over lines (parentheses unbalanced on
+#                  the changed line -- string contents excluded -- a target
+#                  on its own line, a lone `)` becoming a `}`), a split list
+#                  call (`create_list(:post, 3,`) included.
+#                - a paren-less call (`create :post`, `build :user, name:
+#                  'x'`, `create_list :post, 3`, `attributes_for :post`).
+#                  The valid paren-less renames (`create :post` ->
+#                  `bake! Post`, `FactoryBakery.bake! Post`,
+#                  `bakery_attributes_for Post`) are REVIEW, never FAIL;
+#                  only build_stubbed stays FAIL.
+#                - a Machinist or Fabrication or hand-rolled form
+#                  (`User.make`, `User.make!`, `User.plan`,
+#                  `Post.create!(attrs)`, `Post.new(attrs)`,
+#                  `Fabricate(...)`).
+#                - a call that keeps a receiver: `helper.bake!(User)`, a
+#                  dot with whitespace before the call (`Helper. create`),
+#                  or a namespaced receiver (`Helper::create(...)`,
+#                  `Helper::bake!(...)`). A top-level `::FactoryBot.create`
+#                  is not a receiver.
+#                - a changed target or namespace, a changed verb or count,
+#                  a changed literal or argument, two calls on one line, a
+#                  scalar call that becomes Array.new(n), a whitespace-only
+#                  change, a target that is not a complete literal
+#                  (`:post.to_s.to_sym`), a positional non-keyword argument
+#                  (`create(:post, attrs)`, a bare hash, a splat), or a
+#                  `fill_optional:` keyword among the overrides (Bakery
+#                  consumes it as an option).
+#                - a whitespace-only change, a binary file
 #                (`REVIEW <path>: binary file changed`), a file mode change
-#                (`REVIEW <path>: file mode changed`).
+#                (`REVIEW <path>: file mode changed`; on a factory file the
+#                protected FAIL still follows).
 #                Action: a changed verb or count is never fine -- restore the
 #                mapped verb (create -> bake!, build -> bake) and the count.
 #                A changed target is fine only when it is the class the old
@@ -41,17 +70,25 @@
 # LIST (exit 0): a create_list / build_list / create_pair / build_pair
 #                rename to Array.new(n) { ... } whose count, verb, target and
 #                arguments are unchanged (create_pair / build_pair mean 2).
-# SUPPORT FILE (exit 0): a change under spec|test/(bakery|support), or in
-#                spec/rails_helper.rb, spec/spec_helper.rb,
-#                test/test_helper.rb. Listed, never judged. The factory-file
-#                check runs first: a factory definition moved into
-#                spec/bakery still FAILs.
+#                When the count, verb and target match but the wrapping code
+#                differs (e.g. `expect(create_list(:post,3).size)` became
+#                `expect(Array.new(3) { bake!(Post) }.size)`), the report
+#                says that instead of claiming the count changed.
+# SUPPORT FILE (exit 0): a NEW file under spec|test/(bakery|support), and
+#                any change to spec/rails_helper.rb, spec/spec_helper.rb,
+#                test/test_helper.rb. Listed, never judged. Edits to files
+#                under spec|test/(bakery|support) are judged like any test
+#                file. The factory-file check runs first: a factory
+#                definition moved into spec/bakery still FAILs.
 # NEW FILE / DELETED FILE / RENAMED FILE (exit 0): file events a rename does
 #                not produce, except the final deletion commit. Listed, never
-#                judged here. A copy prints `NEW FILE <to> (copy of <from>)`.
-#                A rename with content edits lists its edited lines. A human
-#                looks at each. Read `git diff --stat` and `--summary` for
-#                binary and mode changes.
+#                judged here -- except that the edited lines of a renamed
+#                test file ARE judged (a rename is not a place to hide a
+#                non-factory edit). A copy prints
+#                `NEW FILE <to> (copy of <from>)`; its added lines are not
+#                rename pairs and are listed, not judged. Read
+#                `git diff --stat` and `--summary` for binary and mode
+#                changes.
 #
 # The CLEAN whitelist, judged per removed/added pair (exactly one call per
 # line):
@@ -62,41 +99,49 @@
 # FactoryBakery.bake!(X): a call that keeps a receiver (helper.bake!(User))
 # is REVIEW. The target stays the same symbol, or becomes the class the
 # factory name camelizes to (:admin_post -> AdminPost; per segment,
-# w[0].upcase + rest). The text before the call and after the target must be
+# w[0].upcase + rest), and must be a complete literal: immediately followed
+# by `,` or `)`. The text before the call and after the target must be
 # unchanged with leading/trailing whitespace ignored only -- a space changed
-# inside a literal is a change -- and the matched call's parentheses must be
-# balanced on both changed lines (an unbalanced line is a split call:
-# REVIEW).
+# inside a literal is a change -- every argument must be a trait/symbol or a
+# keyword argument, and the matched call's parentheses must be balanced on
+# both changed lines (an unbalanced line is a split call: REVIEW).
 #
 # The accept-set is the allowlist shape itself; a project-local helper
 # coincidentally named create or build is silent.
 
 SUPPORT_PATH = %r{\A(?:spec|test)/(?:bakery|support)/}.freeze
 SUPPORT_FILES = %w[spec/rails_helper.rb spec/spec_helper.rb test/test_helper.rb].freeze
-FACTORY_DIR = %r{\A(?:(?:spec/|test/)?factories\.rb\z|(?:spec/factories|test/factories|factories)/)}.freeze
+# factories.rb at any level, and any factories/ directory:
+# factories.rb, spec/factories.rb, test/factories.rb, spec/factories/,
+# test/factories/, factories/, spec/support/factories/, ...
+FACTORY_DIR = %r{(?:\A|/)factories(?:/|\.rb\z)}.freeze
 
 OLD_CALL = /(?<![.\w])(?:FactoryBot\.)?(create|build|attributes_for)\(\s*:(\w+)/
 NEW_CALL = /(?<![.\w])(?:FactoryBakery\.)?(bake!?|bakery_attributes_for)\(\s*([A-Z][\w:]*|:\w+)/
 OLD_TOKEN = /
-  (?<![.\w])(?:FactoryBot\.)?(?:create|build|attributes_for)(?:_list|_pair)?(?:\(|\s+:)
+  (?<![.\w])(?:FactoryBot\.)?(?:create|build|attributes_for)(?:_list|_pair)?(?:\(|\s+[:A-Z])
   | (?<![.\w])build_stubbed(?:_list|_pair)?(?:\(|\s+:)
   | \bFabricate\b
   | \.make!?\b
   | \.plan\b
 /x
 NEW_TOKEN = /
-  (?<![.\w])(?:FactoryBakery\.)?bake!?(?:\(|\s+:)
-  | (?<![.\w])bakery_attributes_for(?:\(|\s+:)
+  (?<![.\w])(?:FactoryBakery\.)?(?:bake!?|bakery_attributes_for)(?:\(|\s+[:A-Z])
   | (?<![.\w])attributes_for(?:\(|\s+:)
 /x
 RECEIVER_OLD_CALL = /
-  (?<!FactoryBot)\.(?:create|build|attributes_for)(?:_list|_pair)?(?:\(|\s+:)
+  (?<!FactoryBot)\.(?:create|build|attributes_for)(?:_list|_pair)?(?:\(|\s+[:A-Z])
+  | \.\s+(?:create|build|attributes_for)\b
+  | ::(?:create|build|attributes_for)(?:_list|_pair)?(?:\(|\s+[:A-Z])
   | \.create!\(
   | (?<!Array)\.new\(
   | \.make!?\b
   | \.plan\b
 /x
-RECEIVER_NEW_CALL = /(?<!FactoryBakery)\.(?:bake!?|bakery_attributes_for)\(/
+RECEIVER_NEW_CALL = /
+  (?<!FactoryBakery)\.(?:bake!?|bakery_attributes_for)(?:\(|\s+[:A-Z])
+  | ::(?:bake!?|bakery_attributes_for)(?:\(|\s+[:A-Z])
+/x
 BUILD_STUBBED = /\bbuild_stubbed(?:_list|_pair)?(?:\(|\s+:)/
 OLD_LIST = /(?<![.\w])(?:FactoryBot\.)?(create|build)_(list|pair)\(\s*:(\w+)\s*(?:,\s*(\d+))?/
 NEW_WRAPPER = /(?<![.\w])Array\.new\(\s*(\d+)\s*\)\s*\{\s*/
@@ -109,6 +154,12 @@ TARGET_ONLY_NEW = /\A\s*(?:[A-Z][\w:]*|:(?:\w+|"))\s*[,)]/
 SPLIT_NOTE = 'split call: check by hand'
 BLOCKER_NOTE = 'build_stubbed has no FactoryBakery equivalent (blocker)'
 RECEIVER_NOTE = 'call keeps a receiver: the accepted spellings are a bare bake!(X) via FactoryBakery::Methods or FactoryBakery.bake!(X)'
+STRING_NOTE = 'the call sits in a string literal, heredoc body or comment: check by hand'
+TARGET_SHAPE_NOTE = 'target is not a complete literal (e.g. :post.to_s.to_sym): check by hand'
+ARGS_SHAPE_NOTE = 'a positional, non-keyword argument (attrs, a bare hash, a splat) does not map 1:1 (a hash may read as a trait): check by hand'
+FILL_OPTIONAL_NOTE = 'fill_optional: is a FactoryBakery option; Bakery consumes it instead of passing it to the definition: check by hand'
+LIST_NOTE = 'list/pair rename changed the count, verb, target or arguments'
+LIST_EQUIV_NOTE = 'list rename matches on count, verb and target; only the wrapping code differs: check by hand'
 UNKNOWN_FILE = '<unknown>'
 ESC = { 'n' => "\n", 't' => "\t", 'r' => "\r", '"' => '"', '\\' => '\\' }.freeze
 
@@ -145,8 +196,23 @@ class RenameCheck
     @files += 1
   end
 
+  # Edits and renames are judged. New files, deletions and copies are listed,
+  # never judged (a copy's added lines are not rename pairs). Factory files
+  # and new files under spec|test/(bakery|support) are never judged here.
   def judged?(file)
-    !file.nil? && file[:event] == :edit && !factory_file?(file) && !support_file?(file)
+    return false if file.nil?
+    return false unless %i[edit rename].include?(file[:event])
+    return false if factory_file?(file)
+
+    !support_file?(file)
+  end
+
+  # A mode change on a factory file must not swallow the protected FAIL:
+  # only non-factory files are marked reported here.
+  def review_mode_change(file)
+    path = file[:new] || file[:old]
+    review_line("#{path}: file mode changed")
+    file[:reported] = true unless factory_file?(file)
   end
 
   def review_line(message)
@@ -234,10 +300,14 @@ class RenameCheck
 
   private
 
+  # A NEW file under spec|test/(bakery|support) is listed, never judged.
+  # Edits there are judged like any test file. The three suite helpers stay
+  # listed whatever happens to them.
   def support_file?(file)
-    [file[:old], file[:new]].compact.any? do |path|
-      path.match?(SUPPORT_PATH) || SUPPORT_FILES.include?(path)
-    end
+    paths = [file[:old], file[:new]].compact
+    return true if paths.any? { |path| SUPPORT_FILES.include?(path) }
+
+    file[:event] == :new && paths.any? { |path| path.match?(SUPPORT_PATH) }
   end
 
   def factory_file?(file)
@@ -263,6 +333,9 @@ class RenameCheck
       return [:review, SPLIT_NOTE]
     end
 
+    note = quoted_or_commented_note(o, n)
+    return [:review, note] if note
+
     return [:review, nil] if o.strip == ')' && n.strip == '}'
 
     if o.match?(TARGET_ONLY_OLD)
@@ -274,10 +347,11 @@ class RenameCheck
     end
 
     list = list_verdict(o, n)
-    return [:list, nil] if list == :list
-    return [:review, 'list/pair rename changed the count, verb, target or arguments'] if list == :review
+    return [:list, nil] if list && list.first == :list
+    return list if list.is_a?(Array)
 
-    return [:clean, nil] if clean_rename?(o, n)
+    ok, shape = clean_rename?(o, n)
+    return [:clean, nil] if ok
 
     unless o.match?(OLD_TOKEN) && n.match?(NEW_TOKEN)
       return [:review, 'whitespace-only change: check by hand'] if flat(o) == flat(n)
@@ -285,52 +359,237 @@ class RenameCheck
       return [:fail, 'non-factory change']
     end
 
+    return [:review, shape] if shape
+
     [:review, 'differs by more than the call spelling: verb, target or arguments changed']
   end
 
+  # Returns [true, nil] on a clean rename; [false, nil] when the next rule
+  # should judge; [false, note] when the pair is a call rename whose shape a
+  # human must read (incomplete literal target, positional argument,
+  # fill_optional:).
   def clean_rename?(o, n)
     old_calls = matches(o, OLD_CALL)
     new_calls = matches(n, NEW_CALL)
-    return false unless old_calls.size == 1 && new_calls.size == 1
-    return false unless balanced?(o) && balanced?(n)
+    return [false, nil] unless old_calls.size == 1 && new_calls.size == 1
+    return [false, nil] unless balanced?(o) && balanced?(n)
 
     om = old_calls[0]
     nm = new_calls[0]
 
     old_tokens = matches(o, OLD_TOKEN)
-    return false unless old_tokens.size == 1 && old_tokens[0].begin(0) == om.begin(0)
+    return [false, nil] unless old_tokens.size == 1 && old_tokens[0].begin(0) == om.begin(0)
     new_tokens = matches(n, NEW_TOKEN)
-    return false unless new_tokens.size == 1 && new_tokens[0].begin(0) == nm.begin(0)
+    return [false, nil] unless new_tokens.size == 1 && new_tokens[0].begin(0) == nm.begin(0)
 
-    return false unless OLD_VERBS[om[1]] == nm[1]
-    return false unless targets_match?(om[2], nm[2])
+    return [false, nil] unless OLD_VERBS[om[1]] == nm[1]
+    return [false, nil] unless targets_match?(om[2], nm[2])
 
-    o[0...om.begin(0)].strip == n[0...nm.begin(0)].strip &&
-      o[om.end(0)..].strip == n[nm.end(0)..].strip
+    shape = shape_note(o, om, n, nm)
+    return [false, shape] if shape
+
+    return [false, nil] unless o[0...om.begin(0)].strip == n[0...nm.begin(0)].strip &&
+                               o[om.end(0)..].strip == n[nm.end(0)..].strip
+
+    [true, nil]
+  end
+
+  # Silent only when the target is a complete literal, every argument is a
+  # trait/symbol or a keyword, and no fill_optional: appears: the rest needs
+  # a human.
+  def shape_note(o, om, n, nm)
+    return TARGET_SHAPE_NOTE unless complete_target?(o, om) && complete_target?(n, nm)
+    return FILL_OPTIONAL_NOTE if o.match?(/\bfill_optional\s*:/) || n.match?(/\bfill_optional\s*:/)
+
+    return ARGS_SHAPE_NOTE unless args_named?(o, om) && args_named?(n, nm)
+
+    nil
+  end
+
+  # The symbol or class is immediately followed by `,` or `)`
+  # (:post.to_s.to_sym is not).
+  def complete_target?(line, m)
+    line[m.end(0)..].to_s.match?(/\A\s*[,)]/)
+  end
+
+  def args_named?(line, m)
+    open = line.index('(', m.begin(0))
+    return false unless open
+
+    region = call_region(line, open)
+    return false if region.nil?
+
+    # The target itself is the first argument: judge only what follows it.
+    region = region[(m.end(0) - (open + 1))..].to_s
+    split_args(region).all? do |arg|
+      arg = arg.strip
+      arg.empty? || arg.match?(/\A:(\w+|")/) || arg.match?(/\A(?:[A-Za-z_]\w*|"(?:\\.|[^"])*"|'(?:\\.|[^'])*')\s*:(?!:)/)
+    end
+  end
+
+  # The text between the call's parens, found by depth, ignoring parens
+  # inside string literals. nil when the parens never close on this line.
+  def call_region(line, open)
+    depth = 0
+    state = :code
+    i = open
+    while i < line.length
+      ch = line[i]
+      case state
+      when :code
+        case ch
+        when "'" then state = :sq
+        when '"' then state = :dq
+        when '(' then depth += 1
+        when ')'
+          depth -= 1
+          return line[(open + 1)...i] if depth.zero?
+        end
+      when :sq
+        i += 1 if ch == '\\'
+        state = :code if ch == "'"
+      when :dq
+        i += 1 if ch == '\\'
+        state = :code if ch == '"'
+      end
+      i += 1
+    end
+    nil
+  end
+
+  # Split a call's argument region on top-level commas only (string- and
+  # depth-aware).
+  def split_args(region)
+    args = []
+    depth = 0
+    state = :code
+    start = 0
+    i = 0
+    while i < region.length
+      ch = region[i]
+      case state
+      when :code
+        case ch
+        when "'" then state = :sq
+        when '"' then state = :dq
+        when '(', '[', '{' then depth += 1
+        when ')', ']', '}' then depth -= 1
+        when ','
+          if depth.zero?
+            args << region[start...i]
+            start = i + 1
+          end
+        end
+      when :sq
+        i += 1 if ch == '\\'
+        state = :code if ch == "'"
+      when :dq
+        i += 1 if ch == '\\'
+        state = :code if ch == '"'
+      end
+      i += 1
+    end
+    args << region[start..]
+    args
+  end
+
+  # A rename whose match sits inside a string literal, a heredoc body or a
+  # comment is REVIEW, never silent. A line whose quotes do not close is a
+  # multiline string or a heredoc body: REVIEW too. (%w[]/%q{} and heredoc
+  # openers are not modeled; a body line with unbalanced quotes still lands
+  # in :sq/:dq.)
+  def quoted_or_commented_note(o, n)
+    [[matches(o, OLD_CALL) + matches(o, OLD_LIST), o],
+     [matches(n, NEW_CALL) + matches(n, NEW_WRAPPER), n]].each do |ms, line|
+      next unless ms.size == 1
+
+      return STRING_NOTE if scan_state(line, ms[0].begin(0)) != :code
+      return STRING_NOTE if %i[sq dq].include?(scan_state(line))
+    end
+    nil
+  end
+
+  # Ruby string/comment scanner: the state at character offset `limit`.
+  # States: :code, :sq, :dq, :comment. Handles backslash escapes.
+  def scan_state(line, limit = line.length)
+    state = :code
+    i = 0
+    max = [limit, line.length].min
+    while i < max
+      ch = line[i]
+      case state
+      when :code
+        state = :comment if ch == '#'
+        state = :sq if ch == "'"
+        state = :dq if ch == '"'
+      when :sq
+        i += 1 if ch == '\\'
+        state = :code if ch == "'"
+      when :dq
+        i += 1 if ch == '\\'
+        state = :code if ch == '"'
+      end
+      i += 1
+    end
+    state
+  end
+
+  # Parens are counted in code only: string contents and trailing comments
+  # are ignored, so a ')' literal cannot balance a multiline call.
+  def balanced?(line)
+    depth = 0
+    state = :code
+    i = 0
+    while i < line.length
+      ch = line[i]
+      case state
+      when :code
+        case ch
+        when '#' then return depth.zero?
+        when "'" then state = :sq
+        when '"' then state = :dq
+        when '(' then depth += 1
+        when ')' then depth -= 1
+        end
+      when :sq
+        i += 1 if ch == '\\'
+        state = :code if ch == "'"
+      when :dq
+        i += 1 if ch == '\\'
+        state = :code if ch == '"'
+      end
+      i += 1
+    end
+    depth.zero?
   end
 
   # create_list(:post, 3) -> Array.new(3) { FactoryBakery.bake!(Post) }.
-  # A pair means 2. nil when the removed line is no list call at all.
+  # A pair means 2. nil when the removed line is no list call at all. A split
+  # call (parens unbalanced on the line) is REVIEW split, never judged as a
+  # list.
   def list_verdict(o, n)
     lists = matches(o, OLD_LIST)
     return nil unless lists.size == 1 && matches(o, OLD_TOKEN).size == 1
+    return [:review, SPLIT_NOTE] unless balanced?(o)
 
     om = lists[0]
     old_count = om[2] == 'pair' ? '2' : om[4]
     wrappers = matches(n, NEW_WRAPPER)
-    return :review if wrappers.size != 1
-    return :review if old_count.nil? || old_count != wrappers[0][1]
+    return [:review, LIST_NOTE] if wrappers.size != 1
+    return [:review, LIST_NOTE] if old_count.nil? || old_count != wrappers[0][1]
 
     stripped = n.sub(NEW_WRAPPER, '').sub(/\}\s*\z/, '')
     inners = matches(stripped, NEW_CALL)
-    return :review if inners.size != 1
+    return [:review, LIST_NOTE] if inners.size != 1
 
     im = inners[0]
-    return :review unless LIST_VERBS[om[1]] == im[1]
-    return :review unless targets_match?(om[3], im[2])
+    return [:review, LIST_NOTE] unless LIST_VERBS[om[1]] == im[1]
+    return [:review, LIST_NOTE] unless targets_match?(om[3], im[2])
 
-    o[0...om.begin(0)].strip == stripped[0...im.begin(0)].strip &&
-      o[om.end(0)..].strip == stripped[im.end(0)..].strip ? :list : :review
+    return [:list, nil] if o[0...om.begin(0)].strip == stripped[0...im.begin(0)].strip &&
+                           o[om.end(0)..].strip == stripped[im.end(0)..].strip
+
+    [:review, LIST_EQUIV_NOTE]
   end
 
   # The removed symbol target matches the added spelling exactly (:admin ->
@@ -351,10 +610,6 @@ class RenameCheck
 
   def matches(str, regex)
     str.to_enum(:scan, regex).map { Regexp.last_match }
-  end
-
-  def balanced?(line)
-    line.count('(') == line.count(')')
   end
 
   def flat(str)
@@ -421,8 +676,7 @@ $stdin.each_line(chomp: true) do |raw|
     state[:file][:event] = :deleted if state[:file] && !state[:in_hunk]
   when /\A(?:old|new) mode /
     if state[:file] && !state[:in_hunk] && !state[:file][:reported]
-      checker.review_line("#{state[:file][:new] || state[:file][:old]}: file mode changed")
-      state[:file][:reported] = true
+      checker.review_mode_change(state[:file])
     end
   when /\ABinary files .+ differ/, /\AGIT binary patch/
     if state[:file] && !state[:file][:reported]

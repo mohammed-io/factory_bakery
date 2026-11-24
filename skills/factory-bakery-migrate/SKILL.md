@@ -51,6 +51,8 @@ git rev-parse HEAD                        # the starting SHA. Write it down: the
 
 Replace `<repo>` with the repository directory name. All work happens in that worktree.
 
+A new worktree checks out only tracked files. Gitignored config the suite needs — `config/master.key`, `.env*`, a gitignored `config/database.yml` — is missing there. List what is missing with `git ls-files --others --ignored --exclude-standard`, and **ask before copying any of it** (these files hold secrets). Never run the suite in both checkouts at the same time: they share one database server, and both would point at the same test database unless configured apart.
+
 Capture the **baseline**: the full suite's example count, failures, pending/skipped and seed ([`verification.md`](references/verification.md#1-baseline-before-any-change)). If it is not green, tell the user, and aim for "the same".
 
 ### Phase 1. Inventory (two-way, read-only)
@@ -58,6 +60,9 @@ Capture the **baseline**: the full suite's example count, failures, pending/skip
 Search the repository and write down:
 
 - Factory files and factory count (`FactoryBot.define`, `factory :`), fabricators, machinist blueprints, fixture directories, hand-rolled `create!` helpers.
+- **Every** test directory — `spec`, `test`, `features`, `engines/*/spec`, `components/*/spec` — and feed all of them into the rename check's pathspec (Phase 5), not only `spec` and `test`.
+- Factories that leave a required edge undeclared or `nil` on purpose (`user { nil }`): doctor fails those by design, so note the call sites that pass the edge.
+- Factories declared with `class:` (a named factory building another class): keep the symbol at the call site later; never camelize the factory name into a class.
 - Call-site forms: `create(`, `build(`, `build_stubbed(`, `create_list(`, `build_list(`, `create_pair(`, `attributes_for(`, and block forms `create(:x) { |x| ... }`.
 - Constructs that need care or have no equivalent: `sequence`, `transient`, `after(`, `before(`, `callback(`, `initialize_with { }`, nested `factory` / `parent:`, `aliases:`, `traits_for_enum`, `skip_create`, `to_create`.
 - Config: `FactoryBot.use_parent_strategy`, `FactoryBot.lint`, `definition_file_paths`.
@@ -66,13 +71,13 @@ Classify each finding with the [capability matrix](references/capability-matrix.
 
 ### Phase 2. Side-by-side setup (two-way)
 
-1. Add the gem to the test groups, then check the install **before configuring anything**. Use `gem 'factory_bakery', path: '/absolute/path/to/factory_bakery'` for a local checkout (or a git ref known to contain the features: the git remote's default branch is an older 0.0.1.0 without the generators and doctor). Then:
+1. Add the gem to the test groups, then check the install **before configuring anything**. Use `gem 'factory_bakery', path: '/absolute/path/to/factory_bakery'` for a local checkout (or a git ref known to contain the features: the git remote's default branch is an older 0.0.1.0 without the generators and doctor). A `path:` source is machine-local and bundler records the absolute path in the committed `Gemfile.lock`; before merging, replace it with `git:` + `ref:` or a released version and run `bundle install` again — and say so in the final report. Then:
    ```sh
    bundle install
    bundle exec ruby -e 'require "factory_bakery"; puts FactoryBakery::VERSION'   # must be >= 0.0.2.0
    RAILS_ENV=test bin/rails -T factory_bakery                                    # must list factory_bakery:doctor
    ```
-2. Give FactoryBakery its **own** definitions directory, `spec/bakery` or `test/bakery`, and state it. Do not rely on factory_bot detection. `RAILS_ENV=test bin/rails g factory_bakery:install` creates the directory and an initializer (with `definition_paths` active when it detects factory_bot). The gem is only in the test groups, so keep production booting:
+2. Give FactoryBakery its **own** definitions directory, `spec/bakery` or `test/bakery`, and state it. Do not rely on factory_bot detection. When the old tool owns a conventional definitions path (factory_bot's `spec/factories`, Fabrication's `spec/fabricators`, Machinist's `spec/blueprints`), state `definition_paths` **before the first `bin/rails` command** — write the guarded initializer by hand first if needed: Rails boot loads the definitions directory once (`after_initialize` → `find_definitions`), and without explicit `definition_paths` the default is the first existing conventional directory or `spec/factories` (`lib/factory_bakery/active_record_mapper/definition_paths.rb:41`), so boot would evaluate the old tool's files. `RAILS_ENV=test bin/rails g factory_bakery:install` creates the directory and an initializer (with `definition_paths` active when it detects factory_bot). The gem is only in the test groups, so keep production booting:
    - Wrap the whole generated `config/initializers/factory_bakery.rb` in `if defined?(FactoryBakery::Railtie) ... end`. Its template has no guard, and its `require` and `config.factory_bakery` lines fail where the gem is not loaded.
    - Put config in `config/environments/test.rb`, or guard it with `if config.respond_to?(:factory_bakery)`. In `config/application.rb` it raises `NoMethodError` at production boot.
    ```ruby
@@ -99,7 +104,7 @@ For each factory, write the translation in the **new** directory, following [`tr
 | `association :x, :admin` | `association :x, :admin`. `:admin` is a trait on the **target's** definition, so declare it there |
 | `strategy: :create` | `persist: true`. Keep the ordered attribute block or a preserving helper when a sibling read, an owner setter or another declaration needs the parent saved earlier than the association phase |
 | `author { create(:user) }` | `association :author, User, persist: true`. Keep it saved: the old factory saved the parent. If a sibling block reads `author`, keep `author { FactoryBakery.bake!(User) }`: with an explicit `association`, a sibling block that reads it gets nil and the edge is then not built at all (the record can end up invalid). Keep the attribute block |
-| `parent:` / nested factory, same class | `define(:admin, klass: User)` repeating the parent's lines, so the call stays a pure rename: `bake!(:admin)`. Not a trait, not a call-site argument |
+| `parent:` / nested factory, same class | `define(:admin, klass: User)` repeating the parent's lines **and traits** plus the child's, so the call stays a pure rename: `bake!(:admin)`. Not a trait, not a call-site argument |
 | A factory naming a subclass with no `parent:` (`class: 'Admin'`, `Admin < User`) | Register an exact `define(Admin)` with the factory's own lines — even when the body is empty (`define(Admin) {}`), because a bare `class:` inherits no factory_bot factory and the empty exact definition shadows the unintended ancestor definition. Keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. Remove it in Phase 7 only when the effective ancestor's reduced definition reproduces it for every used call; an empty ancestor alone is not enough |
 | `parent:` / nested factory with `class: 'Admin'` (`Admin < User`) | An empty body may translate to nothing: `bake!(Admin)` uses `define(User)`, but only when the effective ancestor definition already reproduces the selected parent's declarations, traits and defaults for every used call (a different named parent or a factory-level trait means register an exact subclass definition instead). With a body, in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
 | `skip_create`, `to_create` | **Blocker.** `bake!` always calls `save!` |
@@ -135,14 +140,14 @@ Small batches, one commit per batch, using [`translation-rules.md`](references/t
 
 While rewriting: edit **only** the factory call, and let arguments after the name carry over unchanged. Do not touch an assertion, a `let`, a `before`, a description or a literal. If a thin helper keeps the call a rename, add it. Otherwise report the blocker.
 
-After each batch run the suite, compare with the baseline, then the rename check ([`verification.md`](references/verification.md#3-the-rename-check)). `<skill-dir>` is the absolute path of this skill's directory. Run it on the **uncommitted** work before each commit, and against the starting SHA at the end:
+After each batch run the suite, compare with the baseline, then the rename check ([`verification.md`](references/verification.md#3-the-rename-check)). `<skill-dir>` is the absolute path of this skill's directory. Run it on the **uncommitted** work before each commit, and against the starting SHA at the end. The pathspec lists every test directory Phase 1 recorded:
 
 ```sh
-git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test factories factories.rb | ruby <skill-dir>/references/check_renames.rb              # before each commit
-git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ <start-sha> HEAD -- spec test factories factories.rb | ruby <skill-dir>/references/check_renames.rb   # at the end
+git diff -U0 --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test features engines/*/spec components/*/spec factories factories.rb | ruby <skill-dir>/references/check_renames.rb              # before each commit
+git diff -U0 --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <start-sha> HEAD -- spec test features engines/*/spec components/*/spec factories factories.rb | ruby <skill-dir>/references/check_renames.rb   # at the end
 ```
 
-Any `FAIL` means stop and revert that change. Read every `REVIEW`.
+Any `FAIL` means stop and revert that change. Read every `REVIEW`. At the end, gate the file list too: `git diff --name-only <start-sha> HEAD` must contain only the expected files (renamed call sites, definition and helper files, wiring committed on purpose). Anything else: stop and report it.
 
 ### Phase 6. Verify the 1:1 migration (two-way)
 
@@ -150,10 +155,10 @@ Any `FAIL` means stop and revert that change. Read every `REVIEW`.
 | --- | --- |
 | Full suite vs baseline | Same example count, same failures, same pending/skipped |
 | Test diff | Renames only (rename check clean or fully reviewed) |
-| `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'` for every baked model | Passes |
-| Every used named target + trait combination (`bake!(:admin, :published)`) exercised directly with the migrated verb — `bake!` plus `!record.new_record?` (`!record.new?` for Sequel) for a former `create` call — in the test environment, inside `Model.transaction(requires_new: true) { ...; raise ActiveRecord::Rollback }` (the target's own class, plus the same wrapper around every other pool or Sequel database the graph writes to). Doctor runs for class targets only | Passes; repeated after simplifying a named definition |
+| `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'` for every **persistable class target** the tests bake (doctor runs class targets only, concrete Active Record models) | Passes |
+| Every used named target + trait combination (`bake!(:admin, :published)`) exercised directly — the **actual target, traits and overrides the call sites use, with the migrated verb**. Doctor runs for class targets only, and a fix made inside a named definition is verified by baking that named definition. A `build`-migrated target verifies with plain `bake` and is **not** required to survive `bake!` | Passes; repeated after simplifying a named definition |
 | Suite run with two different seeds (`rspec --seed A`, then `--seed B`, or `FACTORY_BAKERY_SEED`) | Same result |
-| No leftover use of the old library in tests | Search `create(`, `build(`, `FactoryBot`, `Fabricate`, `.make` |
+| No leftover use of the old library in tests | Search `spec`/`test` for the call forms: `create(`, `build(`, `build_stubbed`, `attributes_for`, `_(list|pair)\(`, `FactoryBot`, `Fabricate`, `.make`, `.plan`, `srand` |
 
 If something fails, use [`factory-bakery-diagnostics`](../factory-bakery-diagnostics/SKILL.md): reproduce with the printed seed, then fix it in a definition or helper. Never fix it by changing the test.
 
@@ -170,9 +175,9 @@ Start only when Phase 6 is green and committed.
    | **Keep a 1:1 translation of every factory** | Nothing is dropped. Safe, verbose |
 
 3. Reduce **only if the user agrees**. If no answer is possible, keep the 1:1 translation.
-4. Remove lines **one model at a time**. After each drop, re-run the tests that bake that model, and run doctor for it under three seeds:
+4. Remove lines **one model at a time**. After each drop, re-run the tests that bake that model, and run doctor for it under three seeds, stopping at the first failing seed:
    ```sh
-   for s in 1 2 3; do FACTORY_BAKERY_SEED=$s RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post]'; done
+   for s in 1 2 3; do FACTORY_BAKERY_SEED=$s RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post]' || { echo "seed $s failed"; break; }; done
    ```
    One green run proves little: a value that fails on some seeds passes on others. If a test or a seed fails, restore the line and record why.
 5. Keep a line only for one of these reasons, and say which:
@@ -183,7 +188,7 @@ Start only when Phase 6 is green and committed.
 
 ### Phase 8. Report blockers and results (two-way)
 
-Give the user the baseline and final numbers, what changed (definition files, lines kept and dropped with the reason for each kept line, helper files, call sites renamed), the **blocker list** (file, line, what would be needed), and anything not converted (fixtures, seeds, rake tasks).
+Give the user the baseline and final numbers, what changed (definition files, lines kept and dropped with the reason for each kept line, helper files, call sites renamed), the **blocker list** (file, line, what would be needed), anything not converted (fixtures, seeds, rake tasks), and — if the Gemfile used a `path:` source — the reminder to replace it with `git:` + `ref:` or a release and re-run `bundle install` before merging.
 
 ### Phase 9. Ask about the old factories. The last one-way door
 
@@ -191,7 +196,8 @@ Only after the migration is done and the **full suite is green**. Ask the user (
 
 - Delete **only** on an explicit "delete". Silence or "continue" means keep. If no answer is possible, keep, and say so.
 - Search for remaining uses first (`FactoryBot`, `factory_bot`, `Fabricate`, `Fabricator`, `.blueprint`, `.make`), including seeds, rake tasks, runners and docs. Report hits and do not delete until the user decides.
-- Delete in **one separate commit** (old factory files, gem entry, lockfile, nothing else), then rerun the suite. It must equal the baseline, else `git revert` the commit and report.
+- The deletion commit removes the old factory files **and the old library's wiring**: the `config.include FactoryBot::Syntax::Methods` line, `require 'factory_bot...'` lines (Gemfile and helpers), `config/initializers/factory_bot*.rb`, support files that only configure factory_bot, and a `FactoryBot.lint` spec. **List every removed line to the user first**, and remove nothing else.
+- Delete in **one separate commit** (the files above, the gem entry, the lockfile — nothing else), then rerun the suite. It must equal the baseline, else `git revert` the commit and report.
 - Never merge or push unless the user asks. Leave the branch in the worktree.
 
 ## Bad patterns (top ones)

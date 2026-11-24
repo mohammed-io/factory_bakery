@@ -27,7 +27,7 @@ Deleting the old factories, fabricators, blueprints, fixtures and the `factory_b
 | Step | Why it is hard to undo | Rule |
 | --- | --- | --- |
 | **Delete the factory_bot factories** | Their content is gone from the working tree. `git revert` can restore it, but only if the deletion was an isolated commit | Only on an explicit "delete" answer. Separate commit |
-| **Remove the `factory_bot` / `factory_bot_rails` gem** | The lockfile and other branches change. Other code may still use it | Same commit as the factory deletion, only on "delete" |
+| **Remove the `factory_bot` / `factory_bot_rails` gem and its wiring** | The lockfile and other branches change. Other code may still use it | Same commit as the factory deletion, only on "delete": the `config.include FactoryBot::Syntax::Methods` line, `require 'factory_bot...'` lines, `config/initializers/factory_bot*.rb`, support files that only configure it, a `FactoryBot.lint` spec. List each removed line to the user first |
 | **Delete fabricators, machinist blueprints** | Same as factories | Same rule |
 | **Delete Rails fixtures** (`test/fixtures`, `spec/fixtures`) | Tests, seeds and other tools may load them by name. Converting them changes tests | Never automatic. Report. Ask separately |
 | **Change DB constraints or app validations** to make baking easier | Changes production behavior and data rules | Never as part of a migration. Ask, and explain why |
@@ -51,7 +51,7 @@ Rules:
 1. Delete **only** on an explicit "delete" answer. Silence, "ok", "looks good" or "continue" is not a "delete" answer.
 2. If no answer can be obtained (a non-interactive run), **keep**. Report that the old files were left.
 3. Before deleting, check nothing still calls the old library: search the repository for `FactoryBot`, `factory_bot`, `Fabricate`, `Fabricator`, `.blueprint`, `.make`. Seeds, rake tasks, rails runners and docs are included. Report any hit and do not delete until the user decides.
-4. The deletion is **one commit**: the old factory files and the gem entry (with the lockfile). Nothing else.
+4. The deletion is **one commit**: the old factory files, the gem entry (with the lockfile), and the old library's wiring — the `config.include FactoryBot::Syntax::Methods` line, `require 'factory_bot...'` lines, `config/initializers/factory_bot*.rb`, support files that only configure factory_bot, and a `FactoryBot.lint` spec. **List each removed line to the user before deleting.** Nothing else goes in.
 5. After the commit, run the full suite. It must match the baseline. If it does not, `git revert` the commit and report.
 
 ## Using this table

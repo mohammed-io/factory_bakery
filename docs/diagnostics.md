@@ -54,6 +54,7 @@ Conventions:
 | `Items is invalid` with several literal children | [#literal-override-uniqueness](#literal-override-uniqueness) |
 | `PG::UniqueViolation` / `RecordNotUnique` on a has_one | [#has-one-created-by-callback](#has-one-created-by-callback) |
 | `NotNullViolation`, `InvalidForeignKey` *(Rails)* | [#db-only-constraints](#db-only-constraints) |
+| `undefined method '...' for nil` *(Ruby, from a definition block)* | [#sibling-reads-explicit-association](#sibling-reads-explicit-association) |
 | `Chosen at random:` or `FactoryBakery could not produce a valid` after a validation error | [#random-value-rejected-by-app-rule](#random-value-rejected-by-app-rule) |
 | `Static attributes are unsupported` | [#factory-attribute-errors](#factory-attribute-errors) |
 | `Cyclic attribute dependency` | [#factory-attribute-errors](#factory-attribute-errors) |
@@ -270,6 +271,13 @@ All `ArgumentError`. Gem: `associations/declaration_rules.rb`, `associations/reu
   - Mastodon `EmailDomainBlock`: `skip :parent`.
 - **Optional edges** never raise this error. They are left `nil`.
 
+### sibling-reads-explicit-association
+
+- **Message *(Ruby, not the gem's)*:** `NoMethodError: undefined method 'name' for nil`, raised from an app definition block while baking.
+- **Cause:** A sibling block reads an attribute that is now an explicit `association` declaration. With an explicit `association`, a sibling block that reads it gets `nil` (the edge is built later and is not assigned back as an attribute read), so `name { "#{author.name}'s post" }` raises. The block-parameter form shares the entry: `attr { |rec| rec.sibling }` — FactoryBakery calls declaration blocks with **no** argument, so the parameter is `nil` and calling a method on it raises the same error.
+- **Where to look:** App: the definition file of the model being baked, the block named by the backtrace.
+- **Fix:** Read the sibling bare: `name { "#{author}'s post" }` reads the winning `author` (override, trait, declaration or inference). When the sibling must see a **saved** parent, keep the attribute block and drop the explicit declaration: `author { FactoryBakery.bake!(User) }`. For the block-parameter form, read siblings bare instead of calling methods on the parameter.
+
 ---
 
 ## Persistence errors
@@ -328,8 +336,8 @@ If `IncompletePersistenceError` names the sibling, the fix is in the current sou
 ### must-exist-error
 
 - **Message *(Rails)*:** `Validation failed: Post must exist` (or `Post can't be blank`)
-- **Cause:** A required `belongs_to` is `nil`. Either the associations plugin is not loaded, the mode is `:none`, or the edge is optional in `:required_only` but a custom validator needs it.
-- **Fix:** Load the plugin (`config.factory_bakery.associations = { mode: :required_only }`). If a custom validator needs an optional parent, the verified fallback tries to build it after the lean attempt fails. If it still fails, declare `association :post`.
+- **Cause:** A required `belongs_to` is `nil`. Either the associations plugin is not loaded, the mode is `:none`, the edge is optional in `:required_only` but a custom validator needs it — or the old factory left the edge `nil` on purpose (`user { nil }`) and only some call sites pass it. A model whose definition deliberately leaves a required edge nil **fails doctor by design**: verify it through the call sites that pass the edge, and name the other models to doctor.
+- **Fix:** Load the plugin (`config.factory_bakery.associations = { mode: :required_only }`). If a custom validator needs an optional parent, the verified fallback tries to build it after the lean attempt fails. If it still fails, declare `association :post`. For the deliberate-nil case, keep `post { nil }` and bake the edge at the call sites that need it.
 
 ### has-one-created-by-callback
 
@@ -342,8 +350,8 @@ If `IncompletePersistenceError` names the sibling, the fix is in the current sou
 ### db-only-constraints
 
 - **Messages *(Rails)*:** `ActiveRecord::NotNullViolation`, `ActiveRecord::InvalidForeignKey`, `ActiveRecord::StatementInvalid` with a check-constraint name, `PG::UniqueViolation` for a composite index.
-- **Cause:** A rule that lives only in the database: a check constraint, a composite unique index, a trigger, a NOT NULL column with no model validator that the gem filled with a plausible but wrong value.
-- **Where to look:** `db/schema.rb` or `structure.sql`.
+- **Cause:** A rule that lives only in the database: a check constraint, a composite unique index, a trigger, a NOT NULL column with no model validator that the gem filled with a plausible but wrong value. A `NotNullViolation` **on an `*_id` column can also mean the parent's definition is invalid**, not this model's: `bake!(Post)` failing on `posts.author_id` happens when `define(User)` leaves `email` `nil` and the plugin could not build a valid parent to point at.
+- **Where to look:** `db/schema.rb` or `structure.sql`. For the `*_id` case: the parent class's definition — run doctor on the parent class first (`factory_bakery:doctor[User]`), and fix the parent's definition before touching this model's.
 - **Fix:** A definition line giving the value the database accepts. A `NOT NULL` foreign key is built by the plugin in `:required_only`. Without the plugin it stays `nil`.
 - **Note:** A composite unique index forces a fresh parent on that edge under `:reuse_non_unique`, and its values are not regenerated on collision.
 
@@ -576,8 +584,8 @@ These raise nothing. The result is wrong. Look here when a value is missing or o
 | A sequel `many_to_one` is `nil` | Sequel associations are never built | Assign in a block |
 | A `has_many_attached` is empty | Not filled | Declare it |
 | `bake` inserted a row | A raw-FK presence parent, `persist: true`, or your own `bake!` in a block | Expected |
-| STI `type` is `nil` on the base | Left to Rails | Bake the subclass, or `initialize_with(type: 'Sub')` |
-| Abstract STI base fails validation | Concrete subclass choice is not discoverable | `initialize_with(type: 'CategoryChannel')` (Discourse `Chat::Channel`) |
+| STI `type` is `nil` on the base | Left to Rails | Bake the subclass, or `initialize_with(type: 'Sub')` for an **instantiable** base that dispatches on `type` |
+| Abstract STI base fails validation or construction | Concrete subclass choice is not discoverable; on a base with `self.abstract_class = true`, `initialize_with(type: ...)` only sets constructor attributes — instantiating the base still raises `NotImplementedError` ("... is an abstract class and cannot be instantiated") | Bake the concrete subclass directly (`bake!(Chat::Channel)`), or bind a named definition to it (`define(:channel, klass: Chat::Channel)`). Discourse `Chat::Channel` |
 
 ### null-objects-and-unbakeable-classes
 

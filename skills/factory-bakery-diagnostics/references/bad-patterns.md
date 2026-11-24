@@ -168,8 +168,11 @@ FactoryBakery.bake(Post, fill_optional: [:title])
 # bad: unseeded while diagnosing
 username { "fb_#{SecureRandom.hex(5)}" }
 
-# good: pin a literal for the replay, then restore the generator once the cause is found
-username { 'fb_diag_1' }
+# good: pin for the replay — a literal, or, on a uniqueness-validated column,
+# a file-level counter, because the bake! warm-up bakes and the replay both
+# insert and a literal would collide
+n = 0
+username { "diag_#{n += 1}" }
 ```
 
-If the line is the cause (a collision from a literal or a narrow generator), fix it as the catalog entry says.
+If the line is the cause (a collision from a literal or a narrow generator), fix it as the catalog entry says. A pinned literal that only the replay's first bake sees is fine; two `bake!`s of the same class with one literal is a guaranteed collision.

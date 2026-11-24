@@ -5,7 +5,7 @@
 ## RSpec
 
 ```ruby
-# spec/rails_helper.rb (or spec_helper.rb for non-Rails)
+# spec/rails_helper.rb — after the Rails environment load
 require 'factory_bakery/rspec'
 
 RSpec.configure do |config|
@@ -13,7 +13,18 @@ RSpec.configure do |config|
 end
 ```
 
+Put the require **after Rails boots**: `rails_helper` loads the environment near the top (`require_relative '../config/environment'`), and the require belongs with the configuration that follows it — never at the top of a file that can run before Rails. For a non-Rails suite, keep the standalone `spec_helper.rb` snippet below, separate from the Rails helper.
+
 `require 'factory_bakery/rspec'` makes generated values follow RSpec's seed: `rspec --seed 12345` reproduces a run, and the gem logs `using RSpec seed 12345` once. Without it the seed comes from `FACTORY_BAKERY_SEED`, `FactoryBakery.seed =` (an Integer or a callable), or a random choice per process (logged at WARN). Keep one framework require: the seed has one framework slot, and the last require wins. Run `RAILS_ENV=test bin/rails g factory_bakery:install` **before** editing the helper: it writes the require into `config/initializers/factory_bakery.rb` (RSpec when `spec/` exists, else Minitest when `test/` exists), and that file must wrap its body in `if defined?(FactoryBakery::Railtie)` (see [generators-and-rake.md](generators-and-rake.md#install-generator)). If the initializer has the require, add only the `include` in the helper, so the require is not duplicated. The seed is announced once, at INFO when it comes from the framework and at WARN otherwise ([Randomness](../../../docs/guide/configuration.md#randomness)).
+
+```ruby
+# spec_helper.rb — non-Rails, no Rails environment involved
+require 'factory_bakery/rspec'
+
+RSpec.configure do |config|
+  config.include FactoryBakery::Methods
+end
+```
 
 Use in examples:
 

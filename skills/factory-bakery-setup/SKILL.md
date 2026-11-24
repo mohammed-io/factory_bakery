@@ -39,13 +39,15 @@ If the user also wants to move off a factory library, finish this setup first, t
 ```ruby
 # Gemfile
 group :development, :test do
-  gem 'factory_bakery', path: '/absolute/path/to/factory_bakery'   # a local checkout
+  gem 'factory_bakery', path: '/absolute/path/to/factory_bakery'   # a local checkout — machine-local: bundler records the absolute path in Gemfile.lock
 end
 ```
 
-Use `path:` for a local checkout, or `git:` with a `ref:` known to contain the features. Do not point at the bare git remote: its default branch is an older release (0.0.1.0) without the generators and `factory_bakery:doctor`.
+Use `path:` for a local checkout, or `git:` with a `ref:` known to contain the features. Do not point at the bare git remote: its default branch is an older release (0.0.1.0) without the generators and `factory_bakery:doctor`. A `path:` source is machine-local and lands in the committed `Gemfile.lock`: before merging, replace it with `git:` + `ref:` or a released version and run `bundle install` again — say so in the final report (step 9).
 
 Run `bundle install`, then check the install **before configuring anything**:
+
+One exception to "before configuring anything": when another factory tool owns a conventional definitions path (factory_bot's `spec/factories`, Fabrication's `spec/fabricators`, Machinist's `spec/blueprints`), write the guarded initializer with `definition_paths` (step 3/4) **before** the first `bin/rails` command below. Rails boot evaluates the definitions directory's files once (`after_initialize` → `find_definitions`), and without explicit `definition_paths` the default is the first existing conventional directory or `spec/factories` (`lib/factory_bakery/active_record_mapper/definition_paths.rb:41`), so the first boot can load the old tool's files.
 
 ```sh
 bundle exec ruby -e 'require "factory_bakery"; puts FactoryBakery::VERSION'
@@ -64,7 +66,7 @@ RAILS_ENV=test bin/rails g factory_bakery:install   # initializer + definitions 
 
 It writes `config/initializers/factory_bakery.rb` (with the framework `require` for RSpec or Minitest) and creates the definitions directory. If `RAILS_ENV=test bin/rails g --help` does not list `factory_bakery:install`, create the directory and the initializer by hand. Existing files are skipped, never overwritten, unless the user asks for `--force`.
 
-**Guard the generated initializer.** Three production-boot outcomes of an unguarded initializer: with the gem installed in production it loads FactoryBakery and its definitions into the process; with every group that lists the gem excluded (`BUNDLE_WITHOUT=development:test`, or `=test` when the gem is in `group :test` only) its `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. Wrap the whole body in all three cases:
+**Guard the generated initializer.** An unguarded initializer has three production-boot outcomes: with the gem installed in production it loads FactoryBakery and its definitions into the process; with every group that lists the gem excluded (`BUNDLE_WITHOUT=development:test`, or `=test` when the gem is in `group :test` only) its `require 'factory_bakery/rspec'` raises `LoadError: cannot load such file -- factory_bakery/rspec`; with no framework require written, `Rails.application.config.factory_bakery` raises `NoMethodError: undefined method 'factory_bakery'`. The `if defined?(FactoryBakery::Railtie)` guard removes the **second and third** outcomes only (the `LoadError` and the `NoMethodError`); the first is prevented by keeping the gem out of the production groups (the rule above), not by the guard. Wrap the whole body, and keep the group rule:
 
 ```ruby
 # config/initializers/factory_bakery.rb
@@ -81,7 +83,7 @@ end
 | Situation | Directory |
 | --- | --- |
 | No other factory library | `spec/factories` or `test/factories`. Rails finds it with no config |
-| `factory_bot` (or another) present | `spec/bakery` or `test/bakery`, with `config.definition_paths = [...]` stated explicitly — in the guarded initializer (step 3, inside the generated `tap` block), so generators and rake tasks read it in the environment they run in (run them with RAILS_ENV=test) |
+| `factory_bot` (or another — Fabrication, Machinist) present | `spec/bakery` or `test/bakery`, with `config.definition_paths = [...]` stated explicitly — in the guarded initializer (step 3, inside the generated `tap` block), so generators and rake tasks read it in the environment they run in (run them with RAILS_ENV=test). State it **before the first `bin/rails` command** when the old tool owns a conventional definitions path: Rails boot evaluates that directory's files, and the default without `definition_paths` is the first existing conventional directory (`lib/factory_bakery/active_record_mapper/definition_paths.rb:41`) |
 
 Never under `app/` or any autoload path. The install generator (step 3) created the directory and, when it detects factory_bot, wrote the `definition_paths` line. Confirm both.
 
@@ -154,18 +156,19 @@ Run in order. Stop at the first failure. Rails commands run in the test environm
 
 1. Load check (Rails):
    ```sh
-   RAILS_ENV=test bin/rails runner 'p FactoryBakery::VERSION, FactoryBakery::PluginRegistry.plugins.size, FactoryBakery.definition_paths'
+   RAILS_ENV=test bin/rails runner 'p FactoryBakery::VERSION, FactoryBakery::PluginRegistry.plugins, FactoryBakery.definition_paths'
    ```
-   The plugin count is `1` with the associations config, and `2` when the attachments plugin is also required. `definition_paths` must list the directory from step 4.
+   Check plugin **membership**, not a count: `FactoryBakery::PluginRegistry.plugins.include?(FactoryBakery::Associations::Plugin)` — a `1`/`2` count assumes no other plugin is registered; membership is exact (the attachments plugin appears as `FactoryBakery::Attachments::Plugin` when required). `definition_paths` must list the directory from step 4.
 2. One bake of a real model. It must abort when the record is invalid, so a bad bake cannot print as a pass. Rails, rolled back:
    ```sh
    RAILS_ENV=test bin/rails runner 'RealModel.transaction(requires_new: true) { record = FactoryBakery.bake(RealModel); abort FactoryBakery.explain(record) unless record.valid?; puts "#{RealModel} baked and valid"; raise ActiveRecord::Rollback }'
    ```
-   A wrapper covers one pool; wrap every other pool or Sequel database the graph writes to the same way, each with its own raise (a Sequel model: `Model.db.transaction(rollback: :always)`). Omit a wrapper only when the whole call — declarations and callbacks included — performs no database writes. Outside Rails, the same check as a script run with `bundle exec ruby`; a plain `bake` can still insert raw-FK parents, so it stays inside the wrapper:
+   A wrapper covers one pool; wrap every other pool or Sequel database the graph writes to the same way, each with its own raise (a Sequel model: `Model.db.transaction(rollback: :always)`). Omit a wrapper only when the whole call — declarations and callbacks included — performs no database writes. Outside Rails, the same check as a script run with `bundle exec ruby`; it uses the **same requires** as step 5 (the associations plugin when enabled, attachments/sequel when present) and the **same definitions directory as step 4** — do not hard-code `spec/bakery`; a plain `bake` can still insert raw-FK parents, so it stays inside the wrapper:
    ```ruby
    require 'factory_bakery'
+   require 'factory_bakery/associations'   # same requires as step 5: plugins the app uses, none it does not
    # load the app's models here
-   FactoryBakery.definition_paths = ['spec/bakery']
+   FactoryBakery.definition_paths = ['<the directory chosen in step 4>']
    FactoryBakery.find_definitions
    RealModel.transaction(requires_new: true) do
      record = FactoryBakery.bake(RealModel)
@@ -174,18 +177,18 @@ Run in order. Stop at the first failure. Rails commands run in the test environm
    end
    puts "#{RealModel} baked and valid"
    ```
-3. Doctor, every concrete model, rolled back:
+3. Doctor, every concrete model, rolled back — **Active Record only**:
    ```sh
    RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor
    ```
-   `NO_FAIL=1` keeps exit status `0` so the report is not a command failure. The last line is `N valid, M needs definition`. Fix nothing yet. List the failing models with their hint links. Doctor wraps every Active Record pool registered for the current role and rolls those rows back; effects outside those pools are not rolled back — a job, an HTTP call or a file write that a model callback makes still happens, and Sequel databases are not covered.
+   Doctor runs concrete, non-abstract Active Record models only. On Sequel or plain ActiveModel projects, skip doctor and verify with the script from step 2 adapted per model (`Model.db.transaction(rollback: :always)` for Sequel). With no names, doctor also covers framework and engine models (`ActiveStorage::Blob` and friends): name your app models, or ignore failures from gem-owned models — **never write stubs for them** (`WRITE=1` on a gem-owned model). And the sweep runs outside the suite, so rails_helper stubs and the job adapter are not active: before trusting its output, name a few real app models and watch them pass. `NO_FAIL=1` keeps exit status `0` so the report is not a command failure. The last line is `N valid, M needs definition`. Fix nothing yet. List the failing models with their hint links. Doctor wraps every Active Record pool registered for the current role and rolls those rows back; effects outside those pools are not rolled back — a job, an HTTP call or a file write that a model callback makes still happens, and Sequel databases are not covered.
 4. Run the project's existing suite. It must pass exactly as before. Setup alone changes no test.
 
 Failures from doctor go to the `factory-bakery-diagnostics` skill. Each usually needs one definition line, and a model that already bakes needs none.
 
 ### 9. Report
 
-Tell the user what was added (gem, config, directory, helper include, seed require), which plugins are on, the doctor counts and failing models, and every file changed. Offer next steps: stubs for failing models (`RAILS_ENV=test WRITE=1 NO_FAIL=1 bin/rails factory_bakery:doctor`), or a migration from factory_bot.
+Tell the user what was added (gem, config, directory, helper include, seed require), which plugins are on, the doctor counts and failing models, and every file changed. Note that the install turns the **model-generator hook on**: the next `bin/rails g model` writes a FactoryBakery stub and no fixtures file (unless the app already chose another `fixture_replacement`; setting `generators = true` to force it needs the user's ask). If the Gemfile used a `path:` source, repeat the reminder: replace it with `git:` + `ref:` or a release and re-run `bundle install` before merging. Offer next steps: stubs for failing models (`RAILS_ENV=test WRITE=1 NO_FAIL=1 bin/rails factory_bakery:doctor`), or a migration from factory_bot.
 
 ## Bad patterns (top ones)
 

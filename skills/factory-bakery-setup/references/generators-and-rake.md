@@ -20,9 +20,11 @@ An existing file is **skipped**. `--force` overwrites it. The stub is:
 FactoryBakery.define(Post) do
   # title { "MyString" }
   # user { FactoryBakery.bake(User) }
-  # subject { FactoryBakery.bake(SomeModel) }   # polymorphic reference
+  # subject { FactoryBakery.bake(SomeModel) }
 end
 ```
+
+(A polymorphic reference becomes `# subject { FactoryBakery.bake(SomeModel) }` — the generator prints no extra annotation. Docs/guide wording may call it a polymorphic reference; the stub itself is just the line.)
 
 Attributes given on the command line become commented examples. For a model with no ancestor definition the stub changes nothing until a line is uncommented.
 

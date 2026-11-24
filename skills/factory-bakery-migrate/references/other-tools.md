@@ -53,7 +53,7 @@ end
 | `User.make(:admin, name: 'x')` | `FactoryBakery.bake!(User, :admin, name: 'x')` |
 | `User.plan` | A helper, or blocker |
 | `sn` (serial number) | A counter local at the top of the definition file |
-| `object` inside a blueprint | `association :x` |
+| `object` inside a blueprint (the Lathe's `object` is the object under construction, not an association) | Read the sibling attribute bare in a block; where the old code passed `object` to another make, pass the owner: `FactoryBakery.bake(Edge, owner: object)` |
 
 Check the Machinist version first: `make` saves in Machinist 1 and only builds in 2. A wrong choice changes behavior, so confirm with a test run.
 

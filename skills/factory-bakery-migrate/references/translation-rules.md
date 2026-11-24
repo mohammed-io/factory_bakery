@@ -41,6 +41,7 @@ Use a **class** key when the factory name equals the class (`:post` and `Post`).
 | `created_at { 1.day.ago }` | `created_at { 1.day.ago }` | Keep if a test depends on it |
 | `title { nil }` | `title { nil }` | Explicit `nil` is honored |
 | `email { "#{name}@x.com" }` | Same block | Resolves the winning `name` (call-site override, trait, declaration or inference). A cycle (`a { b }`, `b { a }`) raises `Cyclic attribute dependency: a -> b -> a` |
+| `attr { \|rec\| ... }` (attribute block with a parameter) | Read siblings bare: `attr { sibling }`, or move the logic out of the block | factory_bot passes the record to attribute blocks that declare a parameter (`instance_exec(self, &block)`); FactoryBakery calls declaration blocks with **no** argument, so the parameter is `nil` and calling a method on it raises `NoMethodError: undefined method '...' for nil`. Read the sibling by bare name instead |
 | `skip_create`, `to_create { ... }` | **Blocker** | `bake!` always calls `save!`. A test that relies on the record not being saved (or saved another way) cannot be a rename. Dropping the line is not a translation |
 
 ## Sequences
@@ -71,7 +72,7 @@ If the column is `uniqueness`-validated and no test checks the shape, the 1:1 tr
 | `association :author, name: 'Ann'` | `association :author, with: { name: 'Ann' }` |
 | `association :author, strategy: :create` | `association :author, persist: true` |
 | `association :author, strategy: :build` | `association :author` |
-| bare `author` (implicit association) | `association :author`, or nothing when the edge is required |
+| bare `author` (implicit association) | `association :author`, or nothing when the edge is required — but see the factory-name caution below |
 | `author { association :user }` | `association :author, User` |
 | `author { create(:user) }` | `association :author, User, persist: true` |
 | `author { build(:user) }` | `association :author, User` |
@@ -84,8 +85,9 @@ If the column is `uniqueness`-validated and no test checks the shape, the 1:1 tr
 
 **Check the save timing of every edge.** For each migrated `association` line and each call strategy that uses it: factory_bot's default `create` saves a declared parent during owner construction. Use `persist: true` only when all relevant calls need an already-saved parent **and** the association phase runs early enough for them; when a sibling read, an owner setter or another declaration observes the saved parent earlier (an attribute block in declaration order), keep an ordered attribute block or a helper instead. Where `build` and `create` need different timing, a preserving helper is required — or report a blocker.
 
-Two cautions on the `author { ... }` rows:
+Two cautions on the `author { ... }` rows, plus one on the edge's name:
 
+- **The edge resolves by class, not by factory name.** In factory_bot, `association :author` and a bare `author` build the factory named `:author`. In FactoryBakery the target is the association's **class** (the reflection's), and the definition used is that class's own or nearest-ancestor definition. So whenever a factory named `:x` exists and was **not** translated as the class-keyed definition holding the same lines (for example it became `define(:x, klass: OtherClass)`), translate to `association :x, factory: :x` — `factory:` resolves the registered symbol factory (`BakeryBuilder.resolve`), so the named definition's lines are used. Check every `bake!(X)` call site that relied on the same factory name the same way.
 - **A sibling reads it.** With an explicit `association`, a sibling block that reads it gets nil and the edge is then not built at all (the record can end up invalid), so `name { "#{author.name}'s post" }` breaks. Keep the attribute block when any sibling reads `author`, with the old verb preserved: `author { create(:user) }` stays `author { FactoryBakery.bake!(User) }`, `author { build(:user) }` stays `author { FactoryBakery.bake(User) }`. Unrewritten means more lines, not a different test ([definitions guide](../../../docs/guide/definitions.md)). A factory the tests use as both `build` and `create`, with timing-sensitive associations, is a blocker unless a helper preserves both.
 - **It was saved.** `author { create(:user) }` and `strategy: :create` saved the parent, and `author { build(:user) }` did not. Keep `persist: true` wherever the old factory saved the parent (those two, or `use_parent_strategy = false`, which made a `build` create its parents). Dropping it changes row counts and ids. The save-timing check above applies to this bullet too: persist early enough for every reader, or keep an ordered attribute block or helper.
 
@@ -109,7 +111,7 @@ association(:comments) { |post| Array.new(2) { |i| FactoryBakery.bake(Comment, p
 | --- | --- |
 | `trait :admin do ... end` | `trait :admin do ... end` (same) |
 | trait using another trait (`admin` inside a trait body) | Repeat the lines. A trait cannot call a trait |
-| `factory :admin, parent: :user` (same class) | `define(:admin, klass: User)` repeating the parent's lines plus the child's, so the call stays a pure rename: `create(:admin)` becomes `bake!(:admin)`. Not a trait on the parent: that changes the call to `bake!(User, :admin)`, which is not a rename |
+| `factory :admin, parent: :user` (same class) | `define(:admin, klass: User)` repeating the parent's lines **and traits** plus the child's, so the call stays a pure rename: `create(:admin)` becomes `bake!(:admin)`. Not a trait on the parent: that changes the call to `bake!(User, :admin)`, which is not a rename |
 | `factory :admin, parent: :user, class: 'Admin'` with `Admin < User` | The factory inherits :user's attributes. An empty body may translate to nothing: `bake!(Admin)` uses `define(User)`, but only when the effective ancestor definition already reproduces the selected parent's declarations, traits and defaults for every used call (a different named parent or a factory-level trait means register an exact subclass definition instead). With a body, in the 1:1 step: `define(Admin)` with the parent's lines plus the child's. Falling back to inheritance is a Phase 7 drop |
 | The same, and a test depends on a value that differs | In the 1:1 step: `define(Admin)` with the parent's lines plus the child's. It **replaces** the inherited definition (no merge). Falling back to inheritance is a Phase 7 drop |
 | `parent:` across unrelated classes | A second definition with the parent's lines repeated. Only ancestor classes are searched |
@@ -149,6 +151,15 @@ Only the factory call changes. Arguments after the name carry over unchanged.
 
 Which spelling for the name? A symbol name maps to the class (`:post` to `Post`). If the factory was registered under a different name than the class, keep the symbol (`bake!(:admin)`) and register it with `klass:`.
 
+### Call-site argument rules
+
+Arguments do not all carry over blindly. `check_renames.rb` marks each of these REVIEW; treat them as a blocker unless the equivalence is provable:
+
+- **`fill_optional:` is a FactoryBakery option**, not an attribute: `FactoryBakery.bake(target, *traits, fill_optional: nil, **overrides)` consumes it. A factory_bot call that passed `fill_optional:` as a (transient) override is silently swallowed by the option after the rename — translate it explicitly (a transient passed at the call site is a blocker anyway).
+- **Positional, non-keyword arguments** (`create(:post, attrs)`, a bare hash, a splat): a trailing Hash is factory_bot attributes, and FactoryBakery may read a non-trait positional as a trait. REVIEW unless provably equivalent.
+- **`create_list` overrides are evaluated once per list call in factory_bot; the `Array.new(n) { ... }` rewrite evaluates them once per item.** A counter in an override gives `[1, 1]` from factory_bot and `[1, 2]` from the rewrite. Anything but provably identical values for every item: REVIEW or blocker.
+- **Abstract STI base** (`self.abstract_class = true`): bake the concrete subclass directly (`bake!(Chat::Channel)`); do not reach for `initialize_with(type: ...)` — instantiating the abstract base raises `NotImplementedError` (see the [diagnostics catalog](../../factory-bakery-diagnostics/references/diagnostics.md#silent-failures)).
+
 ### The helper for `attributes_for`
 
 Only when tests use it. A new file, so the test diff stays renames. Give it a **distinct name**, so it never shadows factory_bot's `attributes_for` while both libraries coexist.
@@ -164,6 +175,8 @@ end
 
 RSpec.configure { |config| config.include BakeryHelpers }
 ```
+
+Minitest: include it where `FactoryBakery::Methods` is included — `class ActiveSupport::TestCase; include BakeryHelpers; end` in `test/test_helper.rb`, or `include BakeryHelpers` in the test class.
 
 (If you must keep the name `attributes_for`, start the method with `return super unless klass.is_a?(Class)`, so factory_bot's symbol form still reaches factory_bot. The distinct name is simpler and safer.)
 

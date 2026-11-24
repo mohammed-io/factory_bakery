@@ -46,22 +46,22 @@ After the migration, the same `--seed N` also fixes FactoryBakery's generated va
 Every changed test line must be a factory-call rename. The helper [`check_renames.rb`](check_renames.rb) reads a unified diff and judges it. It is read-only.
 
 ```sh
-git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test factories factories.rb | ruby <skill-dir>/references/check_renames.rb              # uncommitted work, before each commit
-git diff -U0 --no-color --no-ext-diff --src-prefix=a/ --dst-prefix=b/ <start-sha> HEAD -- spec test factories factories.rb | ruby <skill-dir>/references/check_renames.rb   # the whole migration, at the end
+git diff -U0 --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ HEAD -- spec test features engines/*/spec components/*/spec factories factories.rb | ruby <skill-dir>/references/check_renames.rb              # uncommitted work, before each commit
+git diff -U0 --no-color --no-ext-diff --no-textconv --src-prefix=a/ --dst-prefix=b/ <start-sha> HEAD -- spec test features engines/*/spec components/*/spec factories factories.rb | ruby <skill-dir>/references/check_renames.rb   # the whole migration, at the end
 ```
 
-Run it from the worktree. `<skill-dir>` is the absolute path of the `factory-bakery-migrate` skill directory (the script is not in the project). `<start-sha>` is the commit the worktree started from (Phase 0: `git rev-parse HEAD`). The first form checks each batch before it is committed. Only staged or tracked changes appear in a diff, so `git add` a new file first. The second form catches anything an earlier check missed.
+Run it from the worktree. `<skill-dir>` is the absolute path of the `factory-bakery-migrate` skill directory (the script is not in the project). `<start-sha>` is the commit the worktree started from (Phase 0: `git rev-parse HEAD`). The first form checks each batch before it is committed. Only staged or tracked changes appear in a diff, so `git add` a new file first. The second form catches anything an earlier check missed. The pathspec lists every test directory Phase 1 recorded — `spec`, `test`, `features`, `engines/*/spec`, `components/*/spec` — not only `spec` and `test`. `--no-textconv` keeps external diff drivers from rewriting the stream the script parses.
 
 | Output | Meaning | Action |
 | --- | --- | --- |
 | nothing for a line | A clean rename: the whitelist accepted it (one factory call per line, the verb mapped, the target kept or camelized, the text before and after the call unchanged with leading/trailing whitespace ignored, and the call's parentheses balanced on both changed lines) | Fine |
 | `LIST` | `create_list`/`build_list`/`create_pair`/`build_pair` became `Array.new(n) { ... }` with the count, verb, target and arguments unchanged (a pair means 2) | Glance at it |
-| `REVIEW` | Anything the whitelist does not accept, and a human reads each: every call split over lines, a changed target or namespace, a changed verb or count, a changed literal or argument, two calls on one line, a scalar call that becomes `Array.new(n)`, a whitespace-only change, a paren-less call (`create :post`, `build :user, name: 'x'`, `create_list :post, 3`, `attributes_for :post`), a Machinist, Fabrication or hand-rolled form (`User.make`, `User.make!`, `User.plan`, `Post.create!(attrs)`, `Post.new(attrs)`, `Fabricate(...)`), a call that keeps a receiver (only a bare `bake!(X)` via `FactoryBakery::Methods`, or `FactoryBakery.bake!(X)`, is accepted), a binary file (`REVIEW <path>: binary file changed`), a file mode change (`REVIEW <path>: file mode changed`) | A changed verb or count is never fine: restore the mapped verb (create -> bake!, build -> bake) and the count. A changed target is fine only when it is the class the old factory built (namespaced class, quoted symbol's class, acronym class); otherwise restore it. For a split call or anything else: if only the call's spelling changed, fine; otherwise revert that line |
-| `FAIL` | A non-factory edit, a `build_stubbed` / `build_stubbed_list` / `build_stubbed_pair` call, paren-less or not (a documented blocker), a hunk whose removed and added line counts differ, an edited or moved tracked factory definition file (`spec/factories.rb`, `test/factories.rb`, `factories.rb`, or a file under `spec/factories/`, `test/factories/`, `factories/`), or input the script could not parse | **Stop.** Revert the change. Report a blocker. A wrapped `create_list` that gains a `}` line still FAILs on the line count; report it as a blocker |
-| `SUPPORT FILE` | A change in a helper, definition or suite-wiring file: `spec`/`test` `bakery`/`support` directories, `spec/rails_helper.rb`, `spec/spec_helper.rb`, `test/test_helper.rb` | Listed, never judged. Review by hand. New files under `spec/support` and `spec/bakery` are expected |
-| `NEW FILE` | A new file under `spec` or `test` outside the bakery and support directories, typically a new spec; a copy prints `NEW FILE <to> (copy of <from>)` | Not expected: a rename adds no test file. Review by hand |
+| `REVIEW` | Anything the whitelist does not accept, and a human reads each: every call split over lines, a changed target or namespace, a changed verb or count, a changed literal or argument, two calls on one line, a scalar call that becomes `Array.new(n)`, a whitespace-only change, a paren-less call (`create :post`, `build :user, name: 'x'`, `create_list :post, 3`, `attributes_for :post` — the valid paren-less renames such as `create :post` -> `bake! Post` are REVIEW, never FAIL), a Machinist, Fabrication or hand-rolled form (`User.make`, `User.make!`, `User.plan`, `Post.create!(attrs)`, `Post.new(attrs)`, `Fabricate(...)`), a call that keeps a receiver (only a bare `bake!(X)` via `FactoryBakery::Methods`, or `FactoryBakery.bake!(X)`, is accepted; `Helper::create(...)` and a dot with whitespace before the call are receivers too), a call sitting inside a string literal, a heredoc body or a comment (`it "uses create(:post)"`, `# create(:post)`), a target that is not a complete literal (`:post.to_s.to_sym`), a positional non-keyword argument (`create(:post, attrs)`, a bare hash, a splat), a `fill_optional:` keyword among the overrides (Bakery consumes it as an option), a binary file (`REVIEW <path>: binary file changed`), a file mode change (`REVIEW <path>: file mode changed`) | A changed verb or count is never fine: restore the mapped verb (create -> bake!, build -> bake) and the count. A changed target is fine only when it is the class the old factory built (namespaced class, quoted symbol's class, acronym class); otherwise restore it. For a split call or anything else: if only the call's spelling changed, fine; otherwise revert that line |
+| `FAIL` | A non-factory edit, a `build_stubbed` / `build_stubbed_list` / `build_stubbed_pair` call, paren-less or not (a documented blocker), a hunk whose removed and added line counts differ, an edited or moved tracked factory definition file (`factories.rb` at any level, or a file under any `factories/` directory — `spec/factories/`, `test/factories/`, `factories/`, `spec/support/factories/`, ...; a mode change on a factory file does not suppress the FAIL), or input the script could not parse | **Stop.** Revert the change. Report a blocker. A wrapped `create_list` that gains a `}` line still FAILs on the line count; report it as a blocker |
+| `SUPPORT FILE` | A **new** file under `spec`/`test` `bakery`/`support` (never judged — expected), and any change to `spec/rails_helper.rb`, `spec/spec_helper.rb`, `test/test_helper.rb` | Listed, never judged. Review by hand |
+| `NEW FILE` | A new file under `spec` or `test` outside the bakery and support directories, typically a new spec; a copy prints `NEW FILE <to> (copy of <from>)` (a copy's added lines are not rename pairs: listed, not judged) | Not expected: a rename adds no test file. Review by hand |
 | `DELETED FILE` | A file was deleted | Expected **only** in the final deletion commit (the last door) |
-| `RENAMED FILE` | A file under `spec` or `test` was renamed; a rename with content edits lists its edited lines under this label | Not expected: a rename moves no test file. Review by hand |
+| `RENAMED FILE` | A file under `spec` or `test` was renamed; its edited lines are **judged**, not only listed — a rename is not a place to hide a non-factory edit | Not expected: a rename moves no test file. Review by hand |
 
 Exit status is `1` when any `FAIL` appears. Read every `REVIEW`. The accept-set is the allowlist shape itself; a project-local helper coincidentally named create or build is silent. Read `git diff --stat` and `--summary` for binary and mode changes.
 
@@ -96,9 +96,9 @@ Not allowed (blockers):
 Remove lines **one factory at a time**, not in bulk.
 
 1. Remove the lines the user approved for one model.
-2. Run doctor under three seeds. Each must exit `0` and print `1 valid, 0 needs definition`:
+2. Run doctor under three seeds. Each must exit `0` and print `1 valid, 0 needs definition`; stop at the first failing seed:
    ```sh
-   for s in 1 2 3; do FACTORY_BAKERY_SEED=$s RAILS_ENV=test bin/rails 'factory_bakery:doctor[Model]'; done
+   for s in 1 2 3; do FACTORY_BAKERY_SEED=$s RAILS_ENV=test bin/rails 'factory_bakery:doctor[Model]' || { echo "seed $s failed"; break; }; done
    ```
 3. Re-run the tests that bake that model (search for the class name, or run the whole suite).
 4. If a test or a seed now fails, **restore the line** and note the reason ("a test depends on this value" or "the model cannot bake without it"). One green run is not enough to drop a line.
@@ -113,8 +113,10 @@ Run the whole suite at the end, twice with different seeds (`bundle exec rspec -
 | --- | --- |
 | Suite equals baseline | Full run, compare counts |
 | Test diff is renames only | The rename check against `<start-sha>`, clean or fully reviewed |
-| Every baked model passes doctor | `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'` naming every model the tests bake. Exit `0`, `N valid, 0 needs definition`. The unnamed form checks all models and may fail on ones the tests never bake |
-| No remaining uses of the old library in tests | Search `spec`/`test` for `create(`, `build(`, `create_list`, `FactoryBot`, `Fabricate`, `.make` |
+| Changed files are only the expected ones | `git diff --name-only <start-sha> HEAD` is an allowlist: renamed call sites, definition and helper files, wiring committed on purpose. Anything else: stop and report |
+| Every persistable class target passes doctor | `RAILS_ENV=test bin/rails 'factory_bakery:doctor[Post,Comment]'` naming every model the tests bake. Exit `0`, `N valid, 0 needs definition`. The unnamed form checks all concrete models, including framework and engine ones, and may fail on ones the tests never bake |
+| Every used named target + trait combination exercised directly, with the migrated verb | A `build`-migrated target verifies with plain `bake` — it is not required to survive `bake!`. A fix in a named definition is verified by baking that named definition |
+| No remaining uses of the old library in tests | Search `spec`/`test` for the call forms: `create(`, `build(`, `build_stubbed`, `attributes_for`, `_(list|pair)\(`, `FactoryBot`, `Fabricate`, `.make`, `.plan`, `srand` |
 | Blockers are written down | A list with file, line, reason |
 
 Only then ask the keep/delete question (see [doors.md](doors.md)).
@@ -125,8 +127,8 @@ Only then ask the keep/delete question (see [doors.md](doors.md)).
 | --- | --- |
 | One batch broke the suite | `git revert <commit>` in the worktree, or `git restore .` for uncommitted work |
 | A definition is wrong | Edit or delete the file in `spec/bakery`. The old factory still exists |
-| The whole migration is wrong | `cd ../<repo> && git worktree remove ../<repo>-bakery-migration && git branch -D factory-bakery-migration` |
+| The whole migration is wrong | `cd ../<repo> && git worktree remove ../<repo>-bakery-migration`, then — ask the user first, it discards the branch — `git branch -D factory-bakery-migration` |
 | The deletion commit was a mistake | `git revert <deletion commit>` |
 | The user's main checkout | Never touched. Nothing to roll back |
 
-Never use `git reset --hard`, `git checkout .` in the user's main checkout, `git clean`, or a force push. Never rewrite history.
+Never use `git reset --hard`, `git restore .`/`git checkout .` in the user's main checkout, `git clean`, or a force push. Never rewrite history.
