@@ -3,6 +3,7 @@
 ### Added
 
 - Sorbet signatures (`rbi/factory_bakery.rbi`): `FactoryBakery.bake(User)` and `bake!` are typed as `User`, and the block receives a `User`. A symbol target returns `T.untyped`. See the Types guide.
+- `FactoryBakery.recipe(...).bake` and `.bake!` build or save a record from a reusable recipe with a target, traits and optional overrides.
 
 ### Changed
 

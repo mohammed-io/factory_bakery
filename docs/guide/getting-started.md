@@ -73,6 +73,14 @@ FactoryBakery.bake(User, :admin)  # role is 'admin'
 
 Only declare what inference cannot produce or what a test asserts on. Everything else stays automatic.
 
+Use `FactoryBakery.recipe` to keep a target and its traits for later bakes.
+
+```ruby
+admin = FactoryBakery.recipe(User, :admin)
+admin.bake(name: 'Grace')  # builds an unsaved admin
+admin.bake!(name: 'Ada')   # builds and saves an admin
+```
+
 ## Use it in tests
 
 FactoryBakery never adds global methods. Include the module you want:
@@ -126,4 +134,5 @@ This bakes every concrete Active Record model, with `bake` and `valid?` and then
 
 - Saving, transactions and verification: [`bake` vs `bake!`](bake-vs-bake-bang.md).
 - Which value wins: [Overrides and precedence](overrides-and-precedence.md).
+- Typed returns and blocks: [Types (Sorbet)](types.md).
 - Moving from factory_bot: [Migrating from factory_bot](migrating-from-factory-bot.md).

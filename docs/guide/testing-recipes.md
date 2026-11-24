@@ -4,6 +4,8 @@
 
 FactoryBakery adds no global methods. `FactoryBakery::Methods` provides bare `bake` and `bake!` and nothing else. It takes the same arguments as `FactoryBakery.bake` / `bake!`.
 
+Call `FactoryBakery.recipe` directly. If you use Sorbet, the [shipped signatures](types.md) type the record returned or yielded by a module-level bake or by a recipe for a class target.
+
 ### RSpec
 
 ```ruby
@@ -71,6 +73,13 @@ let(:post) { bake!(Post) }
 ```
 
 Under transactional tests, every `bake!` row rolls back with the example. `bake` rows in the raw-FK and `persist: true` cases roll back too, because they are written inside the test transaction.
+
+You can share a frozen recipe across examples. Call `.bake` or `.bake!` inside each example that needs a record.
+
+```ruby
+published_post = FactoryBakery.recipe(Post, :published)
+let(:post) { published_post.bake!(title: 'Hello') }
+```
 
 Without transactional tests (system tests, `use_transactional_tests = false`), clean up as you would for any data: `DatabaseCleaner` or an `after` hook.
 

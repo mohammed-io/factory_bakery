@@ -3,7 +3,7 @@
 | | `FactoryBakery.bake` | `FactoryBakery.bake!` |
 | --- | --- | --- |
 | Returns | The object, **unsaved** | The object, **saved**, after the whole graph is verified |
-| Writes to the database | Nothing of its own (exceptions below) | The whole graph, in one transaction |
+| Writes to the database | Nothing of its own (exceptions below) | The whole graph, wrapped in one transaction when `FactoryBakery.savepoints` is enabled |
 | Validates | Only when needed to verify a lean bake (see [Heuristics](heuristics.md#the-verified-fallback)) | Through `save!` |
 | On an invalid record | Returns it. You check `valid?` | Raises (`ActiveRecord::RecordInvalid`) and, with `FactoryBakery.savepoints = true`, rolls back |
 | Target without `save!` (a PORO) | Returns the object | Returns the object, nothing saved |
@@ -13,6 +13,14 @@ Both take the same arguments: a class or registered symbol, any number of traits
 ```ruby
 FactoryBakery.bake(Post, :published, title: 'Hello')
 FactoryBakery.bake!(Post, :published, title: 'Hello')
+```
+
+You can also set the target and traits on a recipe and call `bake` or `bake!` when you need the record. The same persistence rules and block behavior apply.
+
+```ruby
+published_post = FactoryBakery.recipe(Post, :published)
+published_post.bake(title: 'Hello')
+published_post.bake!(title: 'Hello')
 ```
 
 ## `bake`: build only
@@ -109,11 +117,11 @@ If no mapper claims the class, `bake!` is `bake` plus `save!` when the object re
 
 ## Things that surprise people
 
-- A block passed to `bake!` is **ignored**. `FactoryBakery.bake!(User) { |u| u.admin! }` runs the block never. Do the work after the call.
+- A block passed to `bake!` runs after persistence. The method returns the record. The same holds for a recipe's `.bake!`.
 - `bake!` returns the object with in-memory state. Call `reload` if a test needs database state.
 - Depth is capped. Nested bakes deeper than `FactoryBakery.max_bake_depth` (default 10) raise `FactoryBakery::NestingTooDeepError`:
   ```
   bake nesting exceeded max_bake_depth (2): User -> User -> User
   ```
-- Declaration blocks can run twice when the verified fallback fires. See [Heuristics](heuristics.md#the-verified-fallback).
+- Attribute value blocks can run twice when the verified fallback rebuilds a record. See [Heuristics](heuristics.md#the-verified-fallback).
 - Each bake keeps its own state per fiber, so threads do not share a graph.

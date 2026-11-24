@@ -108,7 +108,7 @@ association(:comments) { |post| Array.new(2) { |i| FactoryBakery.bake(Comment, p
 
 | factory_bot | FactoryBakery |
 | --- | --- |
-| `transient do foo { 1 } end` used only to compute attributes | A local inside `define`: `foo = 1` |
+| `transient do foo { 1 } end` used only to compute attributes | A local: `foo = 1` in the `define` body if it is a constant, inside the value block if it is computed or random (the `define` body runs once, ADR-0008) |
 | `transient` passed at the call site | Not supported. Blocker |
 | `after(:build)`, `after(:create)`, `before(:create)`, `callback` | Report definition callbacks. Keep existing call-site blocks on `bake` or `bake!` |
 | `initialize_with { new(a: 1) }` | `initialize_with(a: 1)` |
@@ -123,6 +123,7 @@ Only the factory call changes. Arguments after the name carry over unchanged.
 | `create(:post)` | `FactoryBakery.bake!(Post)` |
 | `create(:post, title: 'x')` | `FactoryBakery.bake!(Post, title: 'x')` |
 | `create(:post, :published, title: 'x')` | `FactoryBakery.bake!(Post, :published, title: 'x')` |
+| `create(:user, :admin, name: 'x')` | `FactoryBakery.bake!(User, :admin, name: 'x')` |
 | `build(:post)` | `FactoryBakery.bake(Post)` |
 | `create(:admin)` (symbol factory) | `FactoryBakery.bake!(:admin)` |
 | `FactoryBot.create(:post)` | `FactoryBakery.bake!(Post)` |
@@ -135,6 +136,8 @@ Only the factory call changes. Arguments after the name carry over unchanged.
 | `create(:post) { \|p\| ... }` | `FactoryBakery.bake!(Post) { \|p\| ... }` |
 
 Which spelling for the name? A symbol name maps to the class (`:post` to `Post`). If the factory was registered under a different name than the class, keep the symbol (`bake!(:admin)`) and register it with `klass:`.
+
+For new code, the optional recipe equivalents are `FactoryBakery.recipe(User, :admin).bake!(name: 'x')` for `create` and `FactoryBakery.recipe(Post).bake` for `build`. Use the plain renames in the table by default for migrated tests so only the factory calls change.
 
 ### The helper for `attributes_for`
 

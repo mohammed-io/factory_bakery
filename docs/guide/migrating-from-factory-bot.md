@@ -42,7 +42,7 @@ The full table, with the reason for each row, is in the [skill's door reference]
 | `trait :admin do ... end` | `trait :admin do ... end` (same, local to the definition) |
 | `traits_for_enum :status` | Delete (enum inference), or one trait per state a test needs |
 | `sequence(:email) { \|n\| ... }` | A counter local at the top of the file, or `SecureRandom`. Or delete if the column is unique-validated |
-| `transient do ... end` | A local variable inside `define`. See the limits below |
+| `transient do ... end` | A local variable: in the `define` body for a constant, inside the attribute block for a computed or random value (the `define` body runs once). See the limits below |
 | `email { "#{name}@x.com" }` | Same block. The resolved `name` includes call-site overrides and applied traits |
 | `association :author` | `association :author` (plugin loaded) |
 | `association :author, factory: :editor` | `association :author, factory: :editor` |
@@ -129,6 +129,8 @@ Use `test/bakery` for Minitest. Create the directory. Then wire the test helper:
 ```ruby
 RSpec.configure { |config| config.include FactoryBakery::Methods }  # optional
 ```
+
+If the project uses Sorbet, copy the gem's `rbi/factory_bakery.rbi` into `sorbet/rbi/shims/`. Class targets give typed returns and block arguments for both bake forms. Bakes with a symbol target return `T.untyped`. Sorbet does not check trait names or attribute overrides. See [Types (Sorbet)](types.md).
 
 Run the suite. It must still match the baseline. Nothing uses FactoryBakery yet.
 
@@ -223,6 +225,7 @@ Test files may change only by renaming the factory call. Use these rewrites.
 | `create(:post)` | `FactoryBakery.bake!(Post)` |
 | `create(:post, title: 'x')` | `FactoryBakery.bake!(Post, title: 'x')` |
 | `create(:post, :published)` | `FactoryBakery.bake!(Post, :published)` |
+| `create(:user, :admin, name: 'x')` | `FactoryBakery.bake!(User, :admin, name: 'x')` |
 | `build(:post)` | `FactoryBakery.bake(Post)` |
 | `create(:admin)` where `factory :admin, class: 'User'` | `FactoryBakery.bake!(:admin)` (needs `define(:admin, klass: User)`) |
 | `create_list(:post, 3)` | `Array.new(3) { FactoryBakery.bake!(Post) }` |
@@ -230,6 +233,8 @@ Test files may change only by renaming the factory call. Use these rewrites.
 | `create_pair(:post)` | `Array.new(2) { FactoryBakery.bake!(Post) }` |
 | `attributes_for(:post)` | `attributes_for(Post)` through a helper that keeps the call a rename |
 | `build_stubbed(:post)` | Blocker. Report it |
+
+For new code, `FactoryBakery.recipe(User, :admin).bake!(name: 'x')` is an optional spelling for the same `create` mapping. The `build` equivalent is `FactoryBakery.recipe(Post).bake`. Use the plain renames in the table by default during migration so test files change only by renaming factory calls.
 
 Do it in small batches, one commit each. Run the suite after each batch.
 

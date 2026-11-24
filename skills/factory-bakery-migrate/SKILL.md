@@ -64,7 +64,7 @@ Classify each finding with the [capability matrix](references/capability-matrix.
 
 ### Phase 2. Side-by-side setup (two-way)
 
-1. Add the gem to the test groups of the Gemfile. Run `bundle install`.
+1. Add the gem to the test groups of the Gemfile. Run `bundle install`. For a Sorbet project, optionally copy the gem's `rbi/factory_bakery.rbi` into `sorbet/rbi/shims/`. Class targets give typed returns and block arguments, while bakes with symbol targets return `T.untyped`. Sorbet does not check trait names or attribute overrides. See [Types (Sorbet)](../../docs/guide/types.md).
 2. Give FactoryBakery its **own** definitions directory: `spec/bakery` (RSpec) or `test/bakery` (Minitest). **Edge case:** without factory_bot both gems would default to `spec/factories` and `test/factories` and load each other's files. FactoryBakery switches its default to `spec/bakery`/`test/bakery` when it detects factory_bot, but do not rely on that. Run `bin/rails g factory_bakery:install` (creates the directory and an initializer with `config.definition_paths = ["spec/bakery"]`), or set by hand:
    ```ruby
    config.factory_bakery.definition_paths = [Rails.root.join('spec/bakery').to_s]
@@ -124,10 +124,13 @@ Run the suite after the batch. Commit.
 Rewrite the call sites in small batches, one commit per batch, using the table in [`translation-rules.md`](references/translation-rules.md#call-sites-renames-only):
 
 - `create(:post, ...)` to `FactoryBakery.bake!(Post, ...)`
+- `create(:user, :admin, name: 'x')` to `FactoryBakery.bake!(User, :admin, name: 'x')`
 - `build(:post, ...)` to `FactoryBakery.bake(Post, ...)`
 - `create_list(:post, n, ...)` to `Array.new(n) { FactoryBakery.bake!(Post, ...) }`
 - `attributes_for(:post)` to `attributes_for(Post)` via a thin helper in `spec/support` (a new file)
 - `build_stubbed` and call-site transients are **blockers**. Keep existing `create(:x) { block }` blocks on `bake!`.
+
+`FactoryBakery.recipe(User, :admin).bake!(name: 'x')` and `FactoryBakery.recipe(Post).bake` are optional alternatives for new code. During migration, keep the plain renames as the default to satisfy rule 3.
 
 Rules while rewriting:
 

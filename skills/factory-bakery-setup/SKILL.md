@@ -29,6 +29,7 @@ Find out, and write down:
 | Rails? Version (needs 7.1, 7.2 or 8.0 for ActiveRecord) | `Gemfile.lock` |
 | ORM | ActiveRecord, Sequel, plain ActiveModel |
 | Test framework | RSpec (`spec/`), Minitest (`test/`) |
+| Sorbet | `sorbet/` directory or `sorbet` in `Gemfile.lock` |
 | Existing factory library | `factory_bot`, `fabrication`, `machinist`, fixtures |
 | File attachments | Active Storage, Paperclip / kt-paperclip |
 | Existing definitions directories | `spec/factories`, `test/factories`, `factories` |
@@ -45,6 +46,8 @@ end
 ```
 
 Run `bundle install`. Confirm it resolves.
+
+If the project uses Sorbet, optionally copy the gem's `rbi/factory_bakery.rbi` into the project's `sorbet/rbi/shims/`. See the Sorbet instructions in [`references/test-wiring.md`](references/test-wiring.md#sorbet).
 
 ### 3. Configure
 

@@ -39,7 +39,7 @@ bundle install
 
 ## Quick start
 
-`require 'factory_bakery'` is all the setup there is. `bake` returns an unsaved object; `bake!` calls `save!` when the object supports it.
+`require 'factory_bakery'` is all the setup there is. `bake` returns an unsaved object. `bake!` calls `save!` when the object supports it. `recipe` lets you set up a bake to finish later.
 
 ```ruby
 require 'factory_bakery'
@@ -50,12 +50,18 @@ user.new_record? # => true
 user = FactoryBakery.bake!(User)
 user.persisted? # => true
 
+user_recipe = FactoryBakery.recipe(User)
+user_recipe.bake  # unsaved User
+user_recipe.bake! # saved User
+
 # Override just the value under test; everything else is still filled.
 user = FactoryBakery.bake(User, email: 'john@example.com')
 user.email # => "john@example.com"
 ```
 
 Overrides are keyword arguments. Several can be passed at once, and attributes you do not pass keep their heuristic values. Baking a class requires no factory definition and no configuration.
+
+With the Sorbet signatures installed, both forms are typed to return a `User` when given the `User` class. The block argument is also typed as `User`. See [Types (Sorbet)](docs/guide/types.md).
 
 ## Factory definitions
 

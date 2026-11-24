@@ -72,7 +72,7 @@ Rule for every row: a test that **asserts on** the value, or looks the record up
 | Factory inheritance (`parent:`, nested `factory`) | A trait, or a second definition | No inheritance |
 | `aliases:` | A second `define(:alias, klass: X, &same_block)` | One key per `define` |
 | `sequence` | A counter local at the top of the file | There is no `sequence` DSL |
-| `transient` used only inside the factory | A local inside `define` | Locals are fresh per bake |
+| `transient` used only inside the factory | A local inside the attribute block that uses it | A local declared in the `define` body, outside a value block, is computed once, not per bake ([ADR-0008](../../../docs/adr/0008-definitions-declare-statically.md)); a constant there is fine, a computed or random value belongs inside the block |
 | `association :x, strategy: :create` | `association :x, persist: true` | Same intent |
 | `initialize_with { ... }` that builds from a simple hash | `initialize_with(a: 1)` | A Hash only |
 | DB-only constraint (check constraint, composite unique index, trigger) | A block giving an accepted value | Not visible to the mapper |

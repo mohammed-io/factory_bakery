@@ -24,6 +24,15 @@ FactoryBakery.bake(User, :admin, :vip)            # role is 'vip': later traits 
 FactoryBakery.bake(User, :admin, name: 'Grace')   # overrides beat every trait
 ```
 
+On a recipe, you can pass traits as arguments or chain them in the order you want to apply them.
+
+```ruby
+FactoryBakery.recipe(User, :admin).vip.bake
+FactoryBakery.recipe(User).trait(:admin, :vip).bake!
+```
+
+Use `.trait(:name)` for a name that collides with a recipe method, such as `:bake`, `:bake!` or `:trait`. An undeclared chained trait raises the same error as a trait passed to `bake` when you finish the recipe.
+
 ## Rules
 
 - Traits are applied **after** the base declarations, in the order you list them. For the same attribute, the last one wins.

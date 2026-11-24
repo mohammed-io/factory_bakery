@@ -1,6 +1,6 @@
 # Types (Sorbet)
 
-The gem ships Sorbet signatures for `bake` and `bake!` in [`rbi/factory_bakery.rbi`](../../rbi/factory_bakery.rbi). They make the return type follow the first argument:
+The gem ships Sorbet signatures for `bake`, `bake!`, and `recipe` in [`rbi/factory_bakery.rbi`](../../rbi/factory_bakery.rbi). The type of the baked record follows the target class.
 
 ```ruby
 user = FactoryBakery.bake(User)          # User
@@ -9,7 +9,7 @@ FactoryBakery.bake(User) { |record| record.name }   # record is a User
 user.nope                                # Sorbet: method `nope` does not exist on `User`
 ```
 
-Install: copy the file into `sorbet/rbi/shims/` in your project.
+To install the signatures, copy the RBI into `sorbet/rbi/shims/` in your project.
 
 ## What is and is not checked
 
@@ -17,23 +17,23 @@ Install: copy the file into `sorbet/rbi/shims/` in your project.
 | --- | --- |
 | Return type for a class target | yes, the instance type of that class |
 | Block argument | yes, same type |
-| Symbol target (`bake(:admin_user)`, a registered factory) | no, `T.untyped`: Sorbet cannot know which class a name maps to |
-| Traits | no |
+| Symbol target (`bake(:admin_user)` or `recipe(:admin_user).bake`) | The baked record and block argument are `T.untyped`. Sorbet cannot know the class of a registered factory. |
+| Trait names | no |
 | `fill_optional:`, `validate:`, attribute overrides | no |
 
-Traits and keyword arguments travel in one untyped splat because an RBI overload cannot declare keyword arguments, and one generic signature cannot return the class's type for a class and `T.untyped` for a symbol. A typo in an override name is therefore still silent (see [Definitions](definitions.md#declaring-an-attribute-the-model-does-not-have)).
+The module-level signatures use overloads for class and symbol targets. RBI overloads cannot declare keyword arguments, so those signatures accept traits and keywords as untyped arguments. The recipe's finishing methods also accept untyped keyword values. See [Definitions](definitions.md#declaring-an-attribute-the-model-does-not-have) for what happens to an unknown override at runtime.
 
 ## `recipe`: the same bake, written as a chain
 
 ```ruby
-admin = FactoryBakery.recipe(User, :admin)   # a bake waiting for the rest
-admin.bake(name: 'Ada')                      # == FactoryBakery.bake(User, :admin, name: 'Ada')
-admin.bake!(name: 'Grace')                   # == FactoryBakery.bake!(User, :admin, name: 'Grace')
-FactoryBakery.recipe(User).admin.verified.bake!   # traits can be chained too
+admin = FactoryBakery.recipe(User, :admin)
+admin.bake(name: 'Ada')      # unsaved User
+admin.bake!(name: 'Grace')   # saved User
+FactoryBakery.recipe(User).trait(:admin, :verified).bake!  # saved User
 ```
 
-A recipe is frozen, so one can be kept and reused. `recipe(...).bake` and `recipe(...).bake!` call the module's `bake` and `bake!` with the same traits and overrides, so both spellings produce the same record. Overrides given to the recipe and to `bake` are merged, the later ones winning.
+A recipe is frozen and reusable. With the same target, traits, overrides, and seed at the same point in the bake sequence, the recipe and the equivalent module call generate the same values. When both the recipe and its `bake` or `bake!` call provide an override for the same key, the finishing call wins.
 
-A chained trait name that is not declared raises the usual `Trait :name is not declared` error when the recipe is finished. A trait named `bake`, `bake!` or `trait` is added with `recipe(User).trait(:bake)`.
+At runtime, you can chain traits with `FactoryBakery.recipe(User).admin.verified.bake!`. An undeclared trait raises `Trait :name is not declared for User` when the recipe is finished. Use `.trait(:name)` for a trait named `bake`, `bake!`, or `trait`.
 
-With the shipped signatures, `FactoryBakery.recipe(User).bake` is typed as `User`, like `bake(User)`; traits and overrides are not checked.
+With the shipped signatures, `FactoryBakery.recipe(User)` is a `FactoryBakery::Recipe[User]`. Both `bake` and `bake!` return a `User`. If you pass a block, it also receives a `User`. In Sorbet-checked code, pass trait names as arguments to `recipe` or `.trait`. The RBI has no signatures for dynamic trait methods such as `.admin`.

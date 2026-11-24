@@ -76,7 +76,7 @@ The counter resets when the file is reloaded. It is not thread-safe.
 
 ### Transients
 
-A transient used only to compute another attribute becomes a local inside `define`. A transient passed at the call site (`create(:user, posts_count: 3)`) has no equivalent: blocker.
+A transient used only to compute another attribute becomes a local: a constant in the `define` body, a computed or random value inside the attribute block (the `define` body runs once, ADR-0008). A transient passed at the call site (`create(:user, posts_count: 3)`) has no equivalent: blocker.
 
 ```ruby
 FactoryBakery.define(Account) do

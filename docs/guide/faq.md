@@ -17,10 +17,16 @@ There is no static shorthand. A declaration without a block carries no value and
 Blocks have no access to sibling attributes. `name` inside the block is read as a new empty declaration. Use a local variable in the `define` block, or an override. See [Definitions](definitions.md#what-a-block-can-see).
 
 **Is there `sequence`, `transient`, `after(:create)`, `build_stubbed`?**
-No. Sequences: a counter local at the top of the file, or `SecureRandom`. Transients: locals inside `define`. Callbacks: do the work in a block, or after the `bake!` call. `build_stubbed`: no equivalent. See [Migrating from factory_bot](migrating-from-factory-bot.md).
+No. Sequences: a counter local at the top of the file, or `SecureRandom`. Transients: locals inside the attribute block that uses them (a local in the `define` body is computed once). Callbacks: do the work in a block, or after the `bake!` call. `build_stubbed`: no equivalent. See [Migrating from factory_bot](migrating-from-factory-bot.md).
 
 **Can I pass a block to `bake!`?**
-You can; it is ignored.
+Yes. Module-level and recipe `bake!` yield the saved record after persistence. `bake` yields the unsaved record.
+
+**Can I reuse a bake with the same traits?**
+Keep a recipe such as `FactoryBakery.recipe(User, :admin)`. Each `.bake` or `.bake!` call builds a fresh record. See [Traits](traits.md).
+
+**Does Sorbet know what `bake` returns?**
+With the shipped RBI, a class target gives the model type for the return value and block argument, including recipe bakes. A symbol factory gives `T.untyped`. See [Types (Sorbet)](types.md).
 
 **Where are definitions loaded from?**
 `config.factory_bakery.definition_paths` when set. Otherwise `spec/bakery` or `test/bakery` when factory_bot is detected, else the first existing of `spec/factories`, `test/factories`, `factories`. See [Rails](rails.md#configuration).
