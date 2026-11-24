@@ -1,5 +1,9 @@
 ## [Unreleased]
 
+### Added
+
+- Sorbet signatures (`rbi/factory_bakery.rbi`): `FactoryBakery.bake(User)` and `bake!` are typed as `User`, and the block receives a `User`. A symbol target returns `T.untyped`. See the Types guide.
+
 ### Changed
 
 - A `define` block and each `trait` block now run once and what they declared is reused by every later bake (ADR-0008), instead of re-running on every bake. Definitions must declare statically: the same attributes every time, with anything dynamic inside the value blocks, including locals the values use (a local computed in the `define` block outside a value block is now computed once). `association` declarations are reused too (their `with:` values are read once); a block that calls `initialize_with`, or declares through a plugin that does not pass `reusable: true` to `record_plugin_declaration`, is not reused. Defining the target again replaces what was recorded. See the Definitions guide.

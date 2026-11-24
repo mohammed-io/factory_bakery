@@ -22,6 +22,7 @@ This guide covers the gem as of `v0.0.2` (branch `mohd/v0.0.2`). The code is the
 | 12 | [Rails](rails.md) | Railtie, `config.factory_bakery.*`, generators, rake tasks |
 | 13 | [Testing recipes](testing-recipes.md) | RSpec, Minitest, data per example, speed |
 | 14 | [FAQ](faq.md) | Short answers to common surprises |
+| 15 | [Types (Sorbet)](types.md) | `bake(User)` is typed as `User`; what is and is not checked |
 
 ## Coming from another tool
 
