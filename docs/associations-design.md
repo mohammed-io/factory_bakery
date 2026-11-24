@@ -246,7 +246,7 @@ Per user review: associations are a **separate, opt-in plugin**, a self-containe
 | F10 ambient build context + cycle/depth error | **core** | Hand-written nested `bake` calls overflow today. The plugin reads the same context. |
 | STI column, FK + polymorphic pair not faked, counter caches (F3–F5) | **core** | These are filler correctness ("don't fake what can't be known"), not association building. Without the plugin, output must still be valid. |
 | Plugin hook API (§4.6) | **core** | ~40 lines. Also the future home for sequences/transients plugins. |
-| `association` reserved name | **core** | Without the plugin, `association :x` currently falls into `method_missing` (`bakery_builder.rb:87-91`) and is **silently ignored**: its block is nil, so `declared_values` skips it (`:200`). Core defines a stub that raises "`require 'factory_bakery/associations'` to use `association`". |
+| `association` reserved name | **core** | Without the plugin, `association :x` used to fall into `method_missing` and be **silently ignored** (its block was nil, so the declaration was skipped). It now raises: `BakeryBuilder#method_missing` asks `PluginRegistry.reserved_error_message`, which answers "`association` requires the associations plugin: require 'factory_bakery/associations'" while the plugin is not registered (`RESERVED_DSL_METHODS` in `plugin_registry.rb`). |
 | Modes, `association` DSL, strategies, building, inverse binding | **plugin** | Everything that instantiates associated objects. |
 
 Without the plugin, behavior equals the plugin's `:none` mode minus the DSL.
