@@ -81,7 +81,7 @@ end
 | Situation | Directory |
 | --- | --- |
 | No other factory library | `spec/factories` or `test/factories`. Rails finds it with no config |
-| `factory_bot` (or another) present | `spec/bakery` or `test/bakery`, with `config.definition_paths = [...]` stated explicitly — in the guarded initializer (step 3, inside the generated `tap` block), so generators see it in development too |
+| `factory_bot` (or another) present | `spec/bakery` or `test/bakery`, with `config.definition_paths = [...]` stated explicitly — in the guarded initializer (step 3, inside the generated `tap` block), so generators and rake tasks read it in the environment they run in (run them with RAILS_ENV=test) |
 
 Never under `app/` or any autoload path. The install generator (step 3) created the directory and, when it detects factory_bot, wrote the `definition_paths` line. Confirm both.
 
@@ -178,7 +178,7 @@ Run in order. Stop at the first failure. Rails commands run in the test environm
    ```sh
    RAILS_ENV=test NO_FAIL=1 bin/rails factory_bakery:doctor
    ```
-   `NO_FAIL=1` keeps exit status `0` so the report is not a command failure. The last line is `N valid, M needs definition`. Fix nothing yet. List the failing models with their hint links. Doctor rolls back database rows only: a job, an HTTP call or a file write that a model callback makes still happens.
+   `NO_FAIL=1` keeps exit status `0` so the report is not a command failure. The last line is `N valid, M needs definition`. Fix nothing yet. List the failing models with their hint links. Doctor wraps every Active Record pool registered for the current role and rolls those rows back; effects outside those pools are not rolled back — a job, an HTTP call or a file write that a model callback makes still happens, and Sequel databases are not covered.
 4. Run the project's existing suite. It must pass exactly as before. Setup alone changes no test.
 
 Failures from doctor go to the `factory-bakery-diagnostics` skill. Each usually needs one definition line, and a model that already bakes needs none.

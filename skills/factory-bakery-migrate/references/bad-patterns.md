@@ -150,7 +150,7 @@ To share a record between two blocks of one definition, read the sibling: declar
 
 **Why it hurts.** A class with no definition uses the nearest ancestor class's definition, traits included. An STI subclass often needs nothing: `bake!(Admin)` with `Admin < User` already uses `User`'s definition. A subclass definition **replaces** it entirely (definitions do not merge), so a copy drifts from the original, and a half-copy silently loses lines and traits.
 
-This applies in Phase 7. In the 1:1 step (Phase 3) a `parent:`/nested subclass factory with its own body is translated with the parent's lines copied in, and a bare `class:` factory keeps only its own lines (an exact `define`, even an empty one — a bare `class:` inherits nothing in factory_bot). For the bare `class:` case, keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. It may go only when the ancestor's reduced definition is empty.
+This applies in Phase 7. In the 1:1 step (Phase 3) a `parent:`/nested subclass factory with its own body is translated with the parent's lines copied in, and a bare `class:` factory keeps only its own lines (an exact `define`, even an empty one — a bare `class:` inherits nothing in factory_bot). For the bare `class:` case, keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. Remove it in Phase 7 only when the effective ancestor's reduced definition reproduces it for every used call; an empty ancestor alone is not enough.
 
 ```ruby
 # factory_bot
@@ -159,13 +159,19 @@ factory :admin, parent: :user, class: 'Admin' do ... end
 # bad: a second definition that only repeats the parent's lines
 FactoryBakery.define(Admin) { name { 'x' }; email { 'y' } }
 
-# good: nothing. bake!(Admin) uses User's definition.
-FactoryBakery.define(Admin) do
-end
+# good: nothing. bake!(Admin) uses User's definition. (An empty exact
+# definition is NOT this: it would shadow User's definition and lose
+# the parent's lines.)
 
 # when one is needed, it carries every line: the parent's kept lines (name, email)
 # plus the subclass's own (role)
 FactoryBakery.define(Admin) { name { 'x' }; email { 'y' }; role { 'admin' } }
+
+# different factory_bot shape: `class: 'Admin'` with no parent:. There
+# bake!(Admin) would inherit define(User), so register the exact definition
+# on purpose — even an empty one shadows the ancestor definition
+FactoryBakery.define(Admin) do
+end
 ```
 
 The call site stays a rename (`create(:admin)` to `FactoryBakery.bake!(Admin)`), so a differing value has to live in the definition. Do not add a call-site argument to carry it.

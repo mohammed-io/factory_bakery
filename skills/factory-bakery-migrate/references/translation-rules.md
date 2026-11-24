@@ -25,7 +25,7 @@ end
 | `factory :post` (class `Post`) | `FactoryBakery.define(Post)` |
 | `factory :admin, class: 'User'` | `FactoryBakery.define(:admin, klass: User)` |
 | `factory :admin, class: User` | `FactoryBakery.define(:admin, klass: User)` |
-| `factory :admin, class: 'Admin'` where `Admin < User` (no `parent:`, not nested) | Register an exact `define(Admin)` with the factory's own lines — even when the body is empty (`define(Admin) {}`), because a bare `class:` inherits no factory_bot factory and the empty exact definition shadows the unintended ancestor definition. Keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. It may go only when the ancestor's reduced definition is empty |
+| `factory :admin, class: 'Admin'` where `Admin < User` (no `parent:`, not nested) | Register an exact `define(Admin)` with the factory's own lines — even when the body is empty (`define(Admin) {}`), because a bare `class:` inherits no factory_bot factory and the empty exact definition shadows the unintended ancestor definition. Keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. Remove it in Phase 7 only when the effective ancestor's reduced definition reproduces it for every used call; an empty ancestor alone is not enough |
 | `factory :post` where call sites only use `create(:post)` | `define(Post)` and the call becomes `bake!(Post)` |
 | One file, many factories | One definition per model, in one file per model |
 
@@ -82,7 +82,7 @@ If the column is `uniqueness`-validated and no test checks the shape, the 1:1 tr
 | polymorphic `commentable { association :post }` | `association :commentable, Post` |
 | `post { nil }` | `post { nil }` |
 
-**Check the save timing of every edge.** For each migrated `association` line and each call strategy that uses it: factory_bot's default `create` saves a declared parent during owner construction. Use `persist: true` only when all relevant calls need an already-saved parent **and** the association phase runs early enough for them; when an owner setter or another declaration observes the saved parent earlier (an attribute block in declaration order), keep an ordered attribute block or a helper instead. Where `build` and `create` need different timing, a preserving helper is required — or report a blocker.
+**Check the save timing of every edge.** For each migrated `association` line and each call strategy that uses it: factory_bot's default `create` saves a declared parent during owner construction. Use `persist: true` only when all relevant calls need an already-saved parent **and** the association phase runs early enough for them; when a sibling read, an owner setter or another declaration observes the saved parent earlier (an attribute block in declaration order), keep an ordered attribute block or a helper instead. Where `build` and `create` need different timing, a preserving helper is required — or report a blocker.
 
 Two cautions on the `author { ... }` rows:
 

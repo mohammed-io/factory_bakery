@@ -6,9 +6,9 @@ Source: `lib/generators/factory_bakery/**`, `lib/tasks/factory_bakery.rake`, `li
 
 All generators and `factory_bakery:definitions` write into one directory, `<dir>/<underscored class name>.rb` (`Admin::Post` is `admin/post.rb`):
 
-1. The **first** entry of `config.factory_bakery.definition_paths` when set, read as set in the environment the command runs in. Keep the line in the guarded initializer, so development commands see it too. Relative paths resolve against `Rails.root`.
+1. The **first** entry of `config.factory_bakery.definition_paths` when set, read as set in the environment the command runs in. Keep the line in the guarded initializer, so generators and rake tasks read it in the environment they run in (run them with RAILS_ENV=test). Relative paths resolve against `Rails.root`.
 2. Otherwise the default directory, which is also the one Rails loads at boot:
-   - factory_bot detected: `spec/bakery` (`test/bakery` for Minitest). Detected means the `FactoryBot` constant is defined, or a `*.rb` file under `spec/factories`, `test/factories` or `factories` has a line that starts with `FactoryBot.define`.
+   - factory_bot detected: `spec/bakery` (`test/bakery` for Minitest). Detected means the `FactoryBot` constant is defined, or a `*.rb` file under `spec/factories`, `test/factories` or `factories` has a line matching `FactoryBot.define` after optional indentation and a leading `::`.
    - else the first existing of `spec/factories`, `test/factories`, `factories`.
    - else `spec/factories` or `test/factories`. `spec` when the generators' test framework is `:rspec`, or when none is set and `spec/` exists. `test` otherwise.
 

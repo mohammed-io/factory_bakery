@@ -25,7 +25,7 @@ config.definition_paths = [Rails.root.join('spec/bakery').to_s]
 config.factory_bakery.associations     = { mode: :required_only }
 ```
 
-Keep `definition_paths` in the guarded initializer, not only in `test.rb`: generators and rake tasks read it in the environment the command runs in, development included.
+Keep `definition_paths` in the guarded initializer, not only in `test.rb`, so generators and rake tasks read it in the environment they run in (run them with RAILS_ENV=test).
 
 An initializer file has no `config` variable: use `Rails.application.config.factory_bakery.…` — or `config.definition_paths = …` inside the generated `tap` block, where `config` is already the factory_bakery options (`config.factory_bakery.…` there raises `NoMethodError`, and a bare `config.…` at the top level raises `NameError`).
 

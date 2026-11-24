@@ -50,7 +50,7 @@ Discovered from an `inclusion` list on the type column, or loaded `as:` inverses
 
 ### STI
 
-The `type` column is never filled. `create(:admin)` where `Admin < User` becomes `FactoryBakery.bake!(Admin)`, and `Admin` uses `User`'s definition when it has none of its own (nearest ancestor class, traits included, never `Object`). Give `Admin` its own definition only when it must differ: it replaces the inherited one, so repeat the lines it still needs. This applies in Phase 7. In the 1:1 step (Phase 3) a `parent:`/nested subclass factory with its own body is translated with the parent's lines copied in, and a bare `class:` factory keeps only its own lines (an exact definition, even an empty one — a bare `class:` inherits no factory_bot factory). For the bare `class:` case, keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. It may go only when the ancestor's reduced definition is empty. An abstract base needs a concrete subclass: `initialize_with(type: 'Sub')` or `define(:x, klass: Sub)`. Real case: Discourse `Chat::Channel`. A custom validator that rejects the drawn `type` is not searched around: declare it ([ADR-0008](../../../docs/adr/0008-user-chooses-domain-values.md)).
+The `type` column is never filled. `create(:admin)` where `Admin < User` becomes `FactoryBakery.bake!(Admin)`, and `Admin` uses `User`'s definition when it has none of its own (nearest ancestor class, traits included, never `Object`). Give `Admin` its own definition only when it must differ: it replaces the inherited one, so repeat the lines it still needs. This applies in Phase 7. In the 1:1 step (Phase 3) a `parent:`/nested subclass factory with its own body is translated with the parent's lines copied in, and a bare `class:` factory keeps only its own lines (an exact definition, even an empty one — a bare `class:` inherits no factory_bot factory). For the bare `class:` case, keep the exact definition in Phase 7 while `define(User)` keeps a line: without it `bake!(Admin)` inherits lines `create(:admin)` never had. Remove it in Phase 7 only when the effective ancestor's reduced definition reproduces it for every used call; an empty ancestor alone is not enough. An abstract base needs a concrete subclass: `initialize_with(type: 'Sub')` or `define(:x, klass: Sub)`. Real case: Discourse `Chat::Channel`. A custom validator that rejects the drawn `type` is not searched around: declare it ([ADR-0008](../../../docs/adr/0008-user-chooses-domain-values.md)).
 
 ### Read-only views and null objects
 
@@ -117,7 +117,7 @@ Check constraints, composite unique indexes and triggers are invisible. A block 
 
 ### Side-effecting setters
 
-`*_remote_url` writers are left blank automatically, with one WARN per model and attribute (`left Account#avatar_remote_url blank on purpose`). Nothing to write unless a test or a validation needs a value: then set it in a definition or an override. Other setters that fetch or enqueue need `skip`, or a definition returning a safe value.
+Left alone, never handed a generated value (`remote_url`, `*_remote_url`, `remote_*url`) by the Active Record/Active Model mapper; one WARN per model and attribute when the result is blank, none when a default is nonblank (`left Account#avatar_remote_url blank on purpose`). Nothing to write unless a test or a validation needs a value: then set it in a definition or an override. Other setters that fetch or enqueue need `skip`, or a definition returning a safe value.
 
 ## Definitions
 
