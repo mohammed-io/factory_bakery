@@ -196,14 +196,21 @@ module FactoryBakery
     # build. The registry knows which plugin's DSL method is executing, so the
     # entry lands in that plugin's own bucket and is handed back to its
     # after_instantiate hook.
-    def record_plugin_declaration(entry)
+    #
+    # `reusable: true` promises the entry is frozen and holds nothing that
+    # must be computed anew each bake, so the layer that declared it can be
+    # recorded once and its entries replayed to later builds. Without the
+    # promise, the layer is evaluated on every bake (ADR-0008).
+    def record_plugin_declaration(entry, reusable: false)
       plugin = PluginRegistry.current
       raise FactoryBakery::Error, 'No plugin DSL call is in progress' unless plugin
 
-      # A plugin's declaration is replayed by its own hook each build, so a
-      # layer that made one is not recorded.
-      @layer_uncacheable = true
-      plugin_declarations(plugin) << entry
+      @layer_uncacheable = true unless reusable
+      if @layer_plugin_entries
+        @layer_plugin_entries << [plugin, entry]
+      else
+        plugin_declarations(plugin) << entry
+      end
       entry
     end
 
@@ -221,9 +228,16 @@ module FactoryBakery
       scope = PluginRegistry.dsl_scope_module
       extend(scope) if scope && !is_a?(scope)
 
-      cache = DeclarationCache.for(@builder_proc)
+      cache = DeclarationCache.for(@builder_proc)&.for_plugins(scope)
       @declaration_set = cache&.composed(traits) || collect_declarations(traits, cache)
       @methods_to_be_called_on_object = @declaration_set.pairs
+      replay_plugin_entries(@declaration_set)
+    end
+
+    # Hands each plugin the entries its declarations made, in order, as if the
+    # blocks had just run.
+    def replay_plugin_entries(set)
+      set.plugin_entries.each { |plugin, entry| plugin_declarations(plugin) << entry }
     end
 
     def collect_declarations(traits, cache)
@@ -242,25 +256,31 @@ module FactoryBakery
       return DeclarationSet::EMPTY unless @builder_proc
       return cache.base if cache&.base
 
-      pairs = record_layer { instance_eval(&@builder_proc) if @builder_proc }
-      remember(DeclarationSet.new(pairs, @traits.dup), cache, &:store_base)
+      @traits = {}
+      remember(record_layer(with_traits: true) { instance_eval(&@builder_proc) }, cache, &:store_base)
     end
 
     def trait_layer(name, cache)
       raise FactoryBakery::Error, "Trait #{name.inspect} is not declared for #{@model_klass}" unless @traits.key?(name)
       return cache.trait(name) if cache&.trait(name)
 
-      pairs = record_layer { instance_eval(&@traits[name]) }
-      remember(DeclarationSet.new(pairs), cache) { |store, set| store.store_trait(name, set) }
+      layer = record_layer { instance_eval(&@traits[name]) }
+      remember(layer, cache) { |store, set| store.store_trait(name, set) }
     end
 
-    # Runs one layer's block and returns the pairs it declared. The DSL calls
-    # that make a layer unsafe to reuse flag it while it runs.
-    def record_layer
+    # Runs one layer's block and returns what it declared as a DeclarationSet:
+    # its attribute pairs, its plugin entries (collected here, and handed to
+    # the build when the set is adopted) and, for a base layer, its traits.
+    # The DSL calls that make a layer unsafe to reuse flag it while it runs.
+    def record_layer(with_traits: false)
       @layer_uncacheable = false
       @methods_to_be_called_on_object = []
+      @layer_plugin_entries = []
       yield
-      @methods_to_be_called_on_object
+      DeclarationSet.new(@methods_to_be_called_on_object, trait_procs: with_traits ? @traits.dup : {},
+                                                          plugin_entries: @layer_plugin_entries)
+    ensure
+      @layer_plugin_entries = nil
     end
 
     def remember(set, cache)

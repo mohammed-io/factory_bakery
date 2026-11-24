@@ -33,9 +33,20 @@ module FactoryBakery
     attr_reader :base
 
     def initialize
-      @base = nil
-      @traits = {}
-      @composed = {}
+      @plugin_scope = nil
+      clear
+    end
+
+    # What was recorded depends on which plugin DSL was available when the
+    # blocks ran (a plugin registered or removed changes what a block means),
+    # so a cache answers only for the plugin scope it was recorded under and
+    # starts over when that changes. Returns self.
+    def for_plugins(scope)
+      return self if scope.equal?(@plugin_scope)
+
+      clear
+      @plugin_scope = scope
+      self
     end
 
     def store_base(set)
@@ -58,6 +69,14 @@ module FactoryBakery
 
     def store_composed(traits, set)
       @composed[traits.dup.freeze] = set unless traits.empty?
+    end
+
+    private
+
+    def clear
+      @base = nil
+      @traits = {}
+      @composed = {}
     end
   end
 end

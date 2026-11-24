@@ -31,17 +31,20 @@ module FactoryBakery
         validate_persist!(persist, block)
         validate_block!(block, count, traits, factory, with)
 
+        # Frozen, and read-only for the plugin, so the definition that declares
+        # it can be recorded once and the entry replayed to every later bake.
         record_plugin_declaration(
           Declaration.new(
             name: name.to_sym,
-            traits: traits,
+            traits: traits.freeze,
             factory: factory,
             child_count: count,
-            overrides: with,
+            overrides: with.dup.freeze,
             block: block,
             strategy: strategy,
             persist: persist
-          )
+          ).freeze,
+          reusable: true
         )
       end
 

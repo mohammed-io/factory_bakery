@@ -187,7 +187,7 @@ The loader does not care. Convention: one file per model, named after it (`spec/
 
 ## Declare statically; make only values dynamic
 
-A `define` block (and each `trait` block) lists *which* attributes exist. The `{ ... }` blocks inside it say *what value* each one gets. The gem runs a `define` block (and each trait block) **once** and reuses what it declared on every later bake, so the list must be the same every time: decided by your code, not by the environment, the clock, the database or a counter. Put anything dynamic inside a value block, including locals your values use. A block that calls `initialize_with` or declares through a plugin (`association`) is not reused and runs on every bake. Defining the target again replaces what was recorded. See [ADR-0008](../adr/0008-definitions-declare-statically.md).
+A `define` block (and each `trait` block) lists *which* attributes exist. The `{ ... }` blocks inside it say *what value* each one gets. The gem runs a `define` block (and each trait block) **once** and reuses what it declared on every later bake, so the list must be the same every time: decided by your code, not by the environment, the clock, the database or a counter. Put anything dynamic inside a value block, including locals your values use. That includes `association` declarations and their `with:` values, which are read once. A block that calls `initialize_with`, or declares through a plugin that does not mark its entries reusable, is not reused and runs on every bake. Defining the target again replaces what was recorded. See [ADR-0008](../adr/0008-definitions-declare-statically.md).
 
 ```ruby
 FactoryBakery.define(User) do

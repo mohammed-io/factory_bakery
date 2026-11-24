@@ -283,6 +283,18 @@ module PerfBench
       status { 'active' }
       role { 'member' }
     end
+
+    # The same graphs as the automatic chain, with each edge declared inside
+    # the definition (as factory_bot's `author` / `post` lines do).
+    FactoryBakery.define(:declared_author, klass: Author) { name { 'Ada' } }
+    FactoryBakery.define(:declared_post, klass: Post) do
+      title { 'Title' }
+      association :author, factory: :declared_author
+    end
+    FactoryBakery.define(:declared_comment, klass: Comment) do
+      body { 'Nice post' }
+      association :post, factory: :declared_post
+    end
   end
 
   # -------------------------------------------------------------- scenarios
@@ -310,6 +322,18 @@ module PerfBench
                    settings: { mode: :required_only }),
       Scenario.new(key: :chain_create, label: 'belongs_to chain x3 (required_only): bake! vs create',
                    bakery: -> { fb.bake!(Comment) }, factory_bot: -> { bot.create(:comment) },
+                   settings: { mode: :required_only }),
+      Scenario.new(key: :declared_post_build, label: 'declared belongs_to x1: bake vs build',
+                   bakery: -> { fb.bake(:declared_post) }, factory_bot: -> { bot.build(:post) },
+                   settings: { mode: :required_only }),
+      Scenario.new(key: :declared_post_create, label: 'declared belongs_to x1: bake! vs create',
+                   bakery: -> { fb.bake!(:declared_post) }, factory_bot: -> { bot.create(:post) },
+                   settings: { mode: :required_only }),
+      Scenario.new(key: :declared_chain_build, label: 'declared belongs_to chain x3: bake vs build',
+                   bakery: -> { fb.bake(:declared_comment) }, factory_bot: -> { bot.build(:comment) },
+                   settings: { mode: :required_only }),
+      Scenario.new(key: :declared_chain_create, label: 'declared belongs_to chain x3: bake! vs create',
+                   bakery: -> { fb.bake!(:declared_comment) }, factory_bot: -> { bot.create(:comment) },
                    settings: { mode: :required_only }),
       Scenario.new(key: :has_many_build, label: 'has_many x3 (:all): bake vs build',
                    bakery: -> { fb.bake(Library) }, factory_bot: -> { bot.build(:library_with_books) },
