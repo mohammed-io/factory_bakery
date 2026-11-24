@@ -74,6 +74,18 @@ module FactoryBakery
         definitions[target] = Definition.new(blk, klass)
       end
 
+      def declared_trait_names(target)
+        definition = definitions[target]
+        return [] unless definition&.builder_proc
+
+        model = target.is_a?(Class) ? target : definition.klass
+        builder_proc = definition.builder_proc
+        declarations = for_current_plugins.new(model, builder_proc).instance_exec do
+          record_layer(with_traits: true) { instance_eval(&builder_proc) }
+        end
+        declarations.trait_procs.keys.select { |name| name.is_a?(Symbol) }
+      end
+
       # Normalizes a bake target into the class to instantiate and the
       # declaration block to apply. Classes bake with or without registration;
       # symbols must be registered and never fall back to constantization here.

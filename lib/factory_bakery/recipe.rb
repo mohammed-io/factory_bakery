@@ -18,11 +18,15 @@ module FactoryBakery
     # names of Recipe's own methods, add a trait through `trait(:name)`.
     TRAIT_NAME = /\A[a-z_][A-Za-z0-9_]*\z/
 
-    # `recipe(User, :admin, name: 'Ada')`: the entry point, extended onto
-    # FactoryBakery.
+    # Recipe entry points extended onto FactoryBakery.
     module Entry
       def recipe(target, *traits, **overrides)
         Recipe.new(target, traits, overrides)
+      end
+
+      # Reads the trait names declared by a class or symbol factory without building a record.
+      def trait_names(target)
+        BakeryBuilder.declared_trait_names(target)
       end
     end
 

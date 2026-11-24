@@ -8,14 +8,16 @@ require 'open3'
 # so agnosticism cannot silently regress. Excluded from the core set are the
 # default mapper plugin (lib/factory_bakery/active_record_mapper/**), the
 # opt-in associations plugin internals (lib/factory_bakery/associations/**)
-# and the Rails generators (lib/generators/factory_bakery/**).
+# the Rails generators (lib/generators/factory_bakery/**), and the opt-in
+# Tapioca compiler (lib/tapioca/dsl/compilers/factory_bakery.rb).
 RSpec.describe 'framework-agnostic core architecture guard' do
   let(:core_exclusions) do
     [
       %r{\Alib/factory_bakery/active_record_mapper(?:\.rb|/|\z)},
       %r{\Alib/factory_bakery/associations(?:/|\z)},
       %r{\Alib/factory_bakery/(?:rspec|minitest)\.rb\z},
-      %r{\Alib/generators/factory_bakery/}
+      %r{\Alib/generators/factory_bakery/},
+      %r{\Alib/tapioca/dsl/compilers/factory_bakery\.rb\z}
     ]
   end
 
@@ -118,6 +120,7 @@ RSpec.describe 'framework-agnostic core architecture guard' do
       require 'factory_bakery'
 
       abort 'the gem must not load the framework on its own' if defined?(Rails)
+      abort 'the gem must not load Sorbet tooling on its own' if defined?(Tapioca) || defined?(FactoryBakery::Sorbet)
 
       class GuardSpecPoro
         attr_accessor :greeting

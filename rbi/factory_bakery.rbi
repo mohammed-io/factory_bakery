@@ -1,4 +1,5 @@
 # typed: strict
+# frozen_string_literal: true
 
 # Sorbet signatures for FactoryBakery's public bake API.
 #
@@ -13,8 +14,16 @@
 # declare keyword arguments, and one generic signature cannot return the
 # class's type for a class and `T.untyped` for a symbol.
 #
-# Copy this file into your project's `sorbet/rbi/shims/`.
+# Copy this file into your project's `sorbet/rbi/shims/`. For `recipe`, also
+# copy factory_bakery_recipe.rbi or use the Tapioca DSL compiler.
+# In Tapioca, exclude factory_bakery from `gem` generation to use these shims.
 module FactoryBakery
+  # Tapioca can record this internal extension in its ActiveRecord gem RBI.
+  module ActiveRecordMapper
+    # Hook that flushes the mapper cache when the schema is reloaded.
+    module SchemaReload; end
+  end
+
   sig do
     type_parameters(:Model)
       .params(
@@ -46,17 +55,10 @@ module FactoryBakery
   end
   def self.bake!(target, *args, &blk); end
 
-  # `recipe(User, :admin)` is a bake waiting for the rest: `.bake(...)` finishes
-  # it unsaved, `.bake!(...)` saved, like the module methods. The recipe is
-  # generic in the model, so both return it.
-  sig do
-    type_parameters(:Model)
-      .params(target: T::Class[T.type_parameter(:Model)], args: T.untyped)
-      .returns(FactoryBakery::Recipe[T.type_parameter(:Model)])
-  end
-  sig { params(target: Symbol, args: T.untyped).returns(FactoryBakery::Recipe[T.untyped]) }
-  def self.recipe(target, *args); end
+  sig { params(target: T.any(T::Class[T.untyped], Symbol)).returns(T::Array[Symbol]) }
+  def self.trait_names(target); end
 
+  # A recipe returns and yields the model it was created for.
   class Recipe
     extend T::Generic
 
@@ -68,7 +70,7 @@ module FactoryBakery
     sig { params(more: T.untyped, blk: T.nilable(T.proc.params(record: Model).void)).returns(Model) }
     def bake!(**more, &blk); end
 
-    sig { params(names: Symbol).returns(FactoryBakery::Recipe[Model]) }
+    sig { params(names: Symbol).returns(T.self_type) }
     def trait(*names); end
   end
 end
