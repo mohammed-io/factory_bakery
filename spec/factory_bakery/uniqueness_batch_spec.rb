@@ -300,4 +300,31 @@ RSpec.describe 'batched uniqueness check' do
       expect(model.count).to eq(2)
     end
   end
+
+  describe 'read inside an enabled query cache' do
+    let!(:model) do
+      define_model('BatchCachedRow', code: :string) do
+        validates :code, uniqueness: true
+      end
+    end
+
+    def batch_answer(record, validators_by_attribute)
+      FactoryBakery::ActiveRecordMapper::UniquenessBatch.taken(record, { 'code' => 'alpha' }, validators_by_attribute)
+    end
+
+    it 'sees a row another worker committed after the cache answered' do
+      record = model.new(code: 'alpha')
+      validators = { 'code' => FactoryBakery::ActiveRecordMapper::Mapper.new.send(:uniqueness_validators_for, model, 'code') }
+
+      model.connection.cache do
+        expect(batch_answer(record, validators)).to eq('code' => false)
+
+        model.uncached(dirties: false) do
+          model.connection.execute("INSERT INTO #{model.quoted_table_name} (code) VALUES ('alpha')")
+        end
+
+        expect(batch_answer(record, validators)).to eq('code' => true)
+      end
+    end
+  end
 end

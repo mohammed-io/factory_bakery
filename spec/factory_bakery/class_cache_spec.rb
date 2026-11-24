@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'spec_helper'
+require 'timeout'
 
 RSpec.describe FactoryBakery::ClassCache do
   it 'memoizes values per class and key, and recomputes a block that returns nil' do
@@ -181,6 +182,59 @@ RSpec.describe FactoryBakery::ClassCache do
       FactoryBakery.reset_cache!
 
       expect(FactoryBakery.bake(model).score).to be_a(Integer)
+    end
+  end
+
+  describe 'under concurrent publication and freezing' do
+    # Waits until the thread is parked on the cache's lock, or has finished.
+    def wait_until_settled(thread)
+      Timeout.timeout(5) { Thread.pass until thread.stop? || !thread.alive? }
+    end
+
+    it 'clears a class frozen after the frozen check without raising' do
+      klass = Class.new
+      described_class.fetch(klass, :@factory_bakery_spec_drop) { :cached }
+      names = klass.instance_variables
+      klass.define_singleton_method(:instance_variables) do
+        freeze
+        names
+      end
+
+      expect { described_class.clear(klass) }.not_to raise_error
+    end
+
+    it 'lets a FrozenError raised by the computation itself reach the caller' do
+      klass = Class.new
+
+      expect do
+        described_class.fetch(klass, :@factory_bakery_spec_raised) { raise FrozenError, 'computation' }
+      end.to raise_error(FrozenError, 'computation')
+    end
+
+    it 'gives two first callers of a table one shared table' do
+      klass = Class.new
+      entered = Queue.new
+      proceed = Queue.new
+      klass.define_singleton_method(:instance_variable_set) do |name, value|
+        if Thread.current[:factory_bakery_spec_park]
+          Thread.current[:factory_bakery_spec_park] = false
+          entered << :parked
+          proceed.pop
+        end
+        super(name, value)
+      end
+
+      parked = Thread.new do
+        Thread.current[:factory_bakery_spec_park] = true
+        described_class.table(klass, :@factory_bakery_spec_tbl)
+      end
+      entered.pop
+      second = Thread.new { described_class.table(klass, :@factory_bakery_spec_tbl) }
+      wait_until_settled(second)
+      proceed << :go
+
+      expect(second.value).to equal(parked.value)
+      expect(described_class.table(klass, :@factory_bakery_spec_tbl)).to equal(parked.value)
     end
   end
 end

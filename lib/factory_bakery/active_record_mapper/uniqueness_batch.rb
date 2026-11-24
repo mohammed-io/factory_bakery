@@ -133,7 +133,12 @@ module FactoryBakery
           connection = klass.connection
           attributes = batchable.keys
           sql = cached_sql(klass, connection, attributes)
-          row = connection.select_rows(sql, 'FactoryBakery uniqueness', binds(klass, batchable)).first
+          # One statement, read from the database rather than the query cache: a
+          # cached negative answer would hide a row another worker committed after
+          # the cache filled.
+          row = klass.uncached do
+            connection.select_rows(sql, 'FactoryBakery uniqueness', binds(klass, batchable)).first
+          end
           return {} if row.nil?
 
           attributes.zip(row).to_h { |attribute, cell| [attribute, taken_cell?(cell)] }

@@ -14,8 +14,13 @@ module FactoryBakery
         return if object.frozen?
 
         scope = Randomness.scope
+        # A bake reports the seed it drew under, even if the seed has changed
+        # since; the global is read only when no bake is in flight.
         origin = Origin.new(
-          filled: filled_names.map(&:to_s), seed: Seed.current, model: scope&.model, ordinal: scope&.ordinal
+          filled: filled_names.map(&:to_s),
+          seed: scope ? scope.seed : Seed.current,
+          model: scope&.model,
+          ordinal: scope&.ordinal
         )
         object.instance_variable_set(IVAR, origin)
       end

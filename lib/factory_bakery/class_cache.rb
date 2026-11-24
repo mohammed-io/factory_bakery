@@ -19,6 +19,8 @@ module FactoryBakery
   # computation that started before the bump must not re-publish its stale
   # value. Two threads that miss together both compute; the first to store
   # wins, which is harmless because the facts are pure functions of the class.
+  # A per-class table is published the same way, so two first callers share
+  # one table instead of the second overwriting the first.
   #
   # A frozen class is never written to, and `fetch` recomputes on every call
   # for one frozen before anything was cached. A class frozen after being
@@ -53,22 +55,7 @@ module FactoryBakery
 
         epoch = @epoch
         value = yield
-        return value if klass.frozen?
-
-        # Publish under the invalidation mutex, with the epoch re-checked
-        # where `clear` bumps it: a computation that started before a clear
-        # must not re-publish its stale value after the epoch check has
-        # already passed.
-        @mutex.synchronize do
-          return value if @epoch != epoch
-
-          klass.instance_variable_get(ivar) || klass.instance_variable_set(ivar, value)
-        end
-      rescue FrozenError
-        # The class was frozen between the check and the write. The computed
-        # value is still returned, unpublished: `fetch` recomputes it next
-        # time, as it does for a class frozen all along.
-        value
+        publish(klass, ivar, value, epoch)
       end
 
       # A per-class Hash for callers that keep a keyed map (a frozen class
@@ -81,9 +68,7 @@ module FactoryBakery
       # registry replaces a stale `[generation, mapper]` pair with a fresh
       # one). Returns the value.
       def store(klass, ivar, value)
-        klass.instance_variable_set(ivar, value) unless klass.frozen?
-        value
-      rescue FrozenError
+        @mutex.synchronize { write(klass, ivar, value) } unless klass.frozen?
         value
       end
 
@@ -105,12 +90,33 @@ module FactoryBakery
 
       private
 
+      # Stores `value` unless the class is frozen or a `clear` happened since
+      # `epoch` was read. When another caller already published the fact, that
+      # published value wins and is returned. The value returned is the one the
+      # caller should use, whether or not it was stored.
+      def publish(klass, ivar, value, epoch)
+        return value if klass.frozen?
+
+        @mutex.synchronize do
+          return value if @epoch != epoch
+
+          klass.instance_variable_get(ivar) || write(klass, ivar, value)
+        end
+      end
+
       def create_table(klass, ivar)
         return {} if klass.frozen?
 
-        klass.instance_variable_get(ivar) || klass.instance_variable_set(ivar, {})
+        publish(klass, ivar, {}, @epoch)
+      end
+
+      # The one place a fact is written to a class. A class frozen between the
+      # caller's check and this write keeps nothing, and the value still goes back
+      # to the caller, unpublished.
+      def write(klass, ivar, value)
+        klass.instance_variable_set(ivar, value)
       rescue FrozenError
-        {}
+        value
       end
 
       # Never raises for a frozen class, so `clear_all` keeps going through
@@ -121,8 +127,16 @@ module FactoryBakery
         return if klass.frozen?
 
         klass.instance_variables.each do |name|
-          klass.remove_instance_variable(name) if name.start_with?('@factory_bakery_')
+          remove(klass, name) if name.start_with?('@factory_bakery_')
         end
+      end
+
+      # A class frozen after the check in `drop` keeps this fact and the sweep
+      # goes on; the rescue covers the removal only.
+      def remove(klass, name)
+        klass.remove_instance_variable(name)
+      rescue FrozenError
+        nil
       end
     end
   end

@@ -67,4 +67,46 @@ RSpec.describe FactoryBakery::ActiveRecordMapper::UniquenessProbe do
       expect(described_class.taken?(record, 'code', 'alpha', validators_for(model, 'code'))).to be(false)
     end
   end
+
+  # Another worker's commit, simulated on this connection: the write skips the
+  # query cache's invalidation, so this connection's cached answer is the only
+  # thing that could still hide the row.
+  def commit_elsewhere(model, value)
+    quoted = model.connection.quote(value)
+    model.uncached(dirties: false) do
+      model.connection.execute("INSERT INTO #{model.quoted_table_name} (code) VALUES (#{quoted})")
+    end
+  end
+
+  describe '.taken? inside an enabled query cache' do
+    let!(:model) do
+      define_model('ProbeCachedWidget', code: :string) do
+        validates :code, uniqueness: true
+      end
+    end
+
+    it 'sees a row another worker committed after the cache answered for the validator' do
+      record = model.new
+      model.connection.cache do
+        expect(described_class.taken?(record, 'code', 'alpha', validators_for(model, 'code'))).to be(false)
+
+        commit_elsewhere(model, 'alpha')
+
+        expect(described_class.taken?(record, 'code', 'alpha', validators_for(model, 'code'))).to be(true)
+      end
+    end
+
+    it 'sees a row another worker committed after the cache answered for a unique-index column' do
+      indexed = define_model('ProbeCachedIndexed', code: { type: :string, index: { unique: true } })
+      model.connection.cache do
+        expect(described_class.taken?(indexed.new, 'code', 'alpha', [])).to be(false)
+
+        indexed.uncached(dirties: false) do
+          indexed.connection.execute("INSERT INTO #{indexed.quoted_table_name} (code) VALUES ('alpha')")
+        end
+
+        expect(described_class.taken?(indexed.new, 'code', 'alpha', [])).to be(true)
+      end
+    end
+  end
 end

@@ -13,16 +13,30 @@ module FactoryBakery
         # validators reports a `:taken` error on the probe, or — with no
         # validator — the table itself holds the value under its unique index.
         def taken?(record, attr_name, value, validators)
-          return unique_index_taken?(record, attr_name, value) if validators.empty?
-
-          validators.any? do |validator|
-            probe = build_probe(record, attr_name, value)
-            validator.validate_each(probe, attr_name, value)
-            taken_error?(probe.errors, attr_name)
+          uncached(record) do
+            if validators.empty?
+              unique_index_taken?(record, attr_name, value)
+            else
+              validators.any? do |validator|
+                probe = build_probe(record, attr_name, value)
+                validator.validate_each(probe, attr_name, value)
+                taken_error?(probe.errors, attr_name)
+              end
+            end
           end
         end
 
         private
+
+        # The answer is read from the database, not from the connection's query
+        # cache: a cached negative answer would hide a row another worker
+        # committed after the cache filled. A non-AR record has no database read.
+        def uncached(record, &)
+          klass = record.class
+          return yield unless klass.respond_to?(:uncached)
+
+          klass.uncached(&)
+        end
 
         # Does the database already hold `value` in a unique-indexed column? The
         # record's own class scopes the query like the index's table (default
