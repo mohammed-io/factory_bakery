@@ -147,9 +147,11 @@ module FactoryBakery # rubocop:disable Metrics/ModuleLength
       PluginRegistry.reset!
     end
 
-    # Drops every per-class fact the gem has cached (a schema changed under it).
+    # Drops cached per-class facts and recorded declaration layers (a schema
+    # changed under them), so the next bake recomputes both. One line: this
+    # class is exactly at its length budget.
     def reset_cache!
-      ClassCache.clear_all
+      ClassCache.clear_all.then { DeclarationCache.bump_generation }
     end
 
     def define(target, klass: nil, &block)

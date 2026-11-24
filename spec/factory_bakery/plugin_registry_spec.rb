@@ -328,4 +328,50 @@ RSpec.describe 'FactoryBakery plugin registry' do
       expect(seen.first).to include('late')
     end
   end
+
+  describe 'the current-plugin key' do
+    # The key marks which plugin's DSL method is executing. It belongs to the
+    # executing fiber alone: a fiber created inside a DSL call and resumed
+    # after the call has ended must not report that plugin.
+    it 'does not report the plugin inside a fiber the DSL call created' do
+      seen = nil
+      inside = nil
+      FactoryBakery::PluginRegistry.with_current(:example) do
+        seen = Fiber.new { FactoryBakery::PluginRegistry.current }.resume
+        inside = FactoryBakery::PluginRegistry.current
+      end
+
+      expect(seen).to be_nil
+      expect(inside).to eq(:example)
+      expect(FactoryBakery::PluginRegistry.current).to be_nil
+    end
+
+    it 'restores the previous plugin when with_current returns' do
+      FactoryBakery::PluginRegistry.with_current(:outer) do
+        FactoryBakery::PluginRegistry.with_current(:inner) do
+          expect(FactoryBakery::PluginRegistry.current).to eq(:inner)
+        end
+
+        expect(FactoryBakery::PluginRegistry.current).to eq(:outer)
+      end
+
+      expect(FactoryBakery::PluginRegistry.current).to be_nil
+    end
+
+    it 'refuses a recording made from a fiber the DSL call spawned' do
+      plugin = plugin_with(
+        dsl: Module.new do
+          define_method(:spawned) do
+            Fiber.new { record_plugin_declaration(:late_entry) }.resume
+          end
+        end
+      )
+      FactoryBakery.register_plugin(plugin)
+      model = define_model('SpawnedFiberUser', name: :string)
+      FactoryBakery.define(model) { spawned }
+
+      expect { FactoryBakery.bake(model) }
+        .to raise_error(FactoryBakery::Error, 'No plugin DSL call is in progress')
+    end
+  end
 end

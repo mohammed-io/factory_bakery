@@ -9,8 +9,13 @@ module FactoryBakery
 
     # A reload replaces model classes, so cached polymorphic candidates would
     # point at stale constants; to_prepare runs on boot and on every reload.
+    # The declaration generation is bumped with the class facts: a recorded
+    # declaration layer can name a class it evaluated (`association :x,
+    # factory: SomeClass`), and a replayed entry must not carry an unloaded
+    # class into the next bake.
     config.to_prepare do
       FactoryBakery::ClassCache.clear_all
+      FactoryBakery::DeclarationCache.bump_generation
       FactoryBakery::ActiveRecordMapper::PolymorphicTargetDiscovery.reset!
     end
 

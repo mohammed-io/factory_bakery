@@ -40,6 +40,16 @@ module FactoryBakery
       @builder_proc = builder_proc
       @fill_optional = fill_optional
 
+      # One registry snapshot per build, captured at builder creation: the
+      # DSL scope the declarations record under, the plugin entries that are
+      # replayed and the plugin hooks that run afterwards all come from it,
+      # so a registration or reset that happens later cannot make one build
+      # straddle two registries. A builder of a class made by
+      # `for_current_plugins` keeps that class's snapshot; the registry may
+      # have changed since.
+      @plugin_snapshot = self.class.instance_variable_get(:@factory_bakery_plugin_snapshot) ||
+                         PluginRegistry.snapshot
+
       @methods_to_be_called_on_object = []
       @traits = {}
       @heuristic_attribute_names = []
@@ -58,13 +68,20 @@ module FactoryBakery
       # the plugins' DSL module included. Extending every new builder with the
       # module created a singleton class per bake; the class is built once per
       # module instead, and is kept on the module so it goes away with it when
-      # the registry rebuilds (a plugin registered or removed).
+      # the registry rebuilds (a plugin registered or removed). The class
+      # remembers the registry snapshot it was built from, so a builder made
+      # from it later answers every registry question from that one
+      # generation, even if the registry changed in between.
       def for_current_plugins
-        scope = PluginRegistry.dsl_scope_module
+        snapshot = PluginRegistry.snapshot
+        scope = snapshot.dsl_scope_module
         return self unless scope
 
         scope.instance_variable_get(:@factory_bakery_builder_class) ||
-          scope.instance_variable_set(:@factory_bakery_builder_class, Class.new(self) { include scope })
+          scope.instance_variable_set(:@factory_bakery_builder_class, Class.new(self) do
+            include scope
+            @factory_bakery_plugin_snapshot = snapshot
+          end)
       end
 
       # Registers a definition under a class or a symbol name. Class and symbol
@@ -235,9 +252,11 @@ module FactoryBakery
     # the rest are recorded by running their block once (ADR-0008).
     def evaluate_declarations(traits)
       @plugin_declarations = Hash.new { |hash, plugin| hash[plugin] = [] }
-      # A builder made through `for_current_plugins` already carries the DSL;
-      # one made with `new` is extended here, at the cost of a singleton class.
-      scope = PluginRegistry.dsl_scope_module
+      # The one snapshot captured at builder creation decides the DSL scope
+      # this build records under (and therefore the cache key), so a reset
+      # between builder creation and now cannot record under one scope while
+      # the builder still dispatches to another's DSL.
+      scope = @plugin_snapshot.dsl_scope_module
       extend(scope) if scope && !is_a?(scope)
 
       cache = DeclarationCache.for(@builder_proc)&.for_plugins(scope)
@@ -266,7 +285,9 @@ module FactoryBakery
 
     def base_layer(cache)
       return DeclarationSet::EMPTY unless @builder_proc
-      return cache.base if cache&.base
+
+      cached = cache&.base
+      return cached if cached
 
       @traits = {}
       remember(record_layer(with_traits: true) { instance_eval(&@builder_proc) }, cache, &:store_base)
@@ -274,7 +295,9 @@ module FactoryBakery
 
     def trait_layer(name, cache)
       raise FactoryBakery::Error, "Trait #{name.inspect} is not declared for #{@model_klass}" unless @traits.key?(name)
-      return cache.trait(name) if cache&.trait(name)
+
+      cached = cache&.trait(name)
+      return cached if cached
 
       layer = record_layer { instance_eval(&@traits[name]) }
       remember(layer, cache) { |store, set| store.store_trait(name, set) }
@@ -478,7 +501,7 @@ module FactoryBakery
     # hash insertion order.
     def plugin_heuristic_values(taken, groups)
       context = BuildContext.current
-      supplied = PluginRegistry.plugins.each_with_object({}) do |plugin, all|
+      supplied = @plugin_snapshot.plugins.each_with_object({}) do |plugin, all|
         next unless plugin.respond_to?(:heuristic_values)
 
         values = plugin.heuristic_values(@model_klass, context, taken)
@@ -516,7 +539,7 @@ module FactoryBakery
 
     def run_after_instantiate(object)
       context = BuildContext.current
-      PluginRegistry.plugins.each do |plugin|
+      @plugin_snapshot.plugins.each do |plugin|
         next unless plugin.respond_to?(:after_instantiate)
 
         plugin.after_instantiate(object, plugin_declarations(plugin), context)
