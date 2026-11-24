@@ -23,6 +23,7 @@ This guide describes the code in this checkout. If the guide and the code disagr
 | 13 | [Testing recipes](testing-recipes.md) | RSpec, Minitest, data per example, speed |
 | 14 | [FAQ](faq.md) | Short answers to common surprises |
 | 15 | [Types (Sorbet)](types.md) | Class-based return and block types for `bake`, `bake!`, and `recipe` |
+| 16 | [Agent skills](skills.md) | Install the setup, migration and diagnostics skills for your coding agent |
 
 ## Coming from another tool
 
@@ -31,7 +32,8 @@ This guide describes the code in this checkout. If the guide and the code disagr
 ## Reference
 
 - Diagnosing a failing bake: [`skills/factory-bakery-diagnostics/references/diagnostics.md`](../../skills/factory-bakery-diagnostics/references/diagnostics.md). Every error kind, with cause and fix.
-- Agent skills (setup, migration, diagnostics): [`skills/`](../../skills/).
+- Agent skills (setup, migration, diagnostics): [`skills/`](../../skills/). How to install them: [Agent skills](skills.md).
+- Compared with factory_bot, and benchmarks: see the [README](../../README.md#compared-with-factory_bot) sections of the same names.
 - Design decisions: [`docs/adr/`](../adr/).
 
 ## Glossary

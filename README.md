@@ -37,6 +37,22 @@ Then run:
 bundle install
 ```
 
+## Agent skills
+
+The gem ships three skills for coding agents (Claude Code and other agents that read `SKILL.md` folders): `factory-bakery-setup`, `factory-bakery-migrate` and `factory-bakery-diagnostics`. They are folders under [`skills/`](skills/) and are included in the installed gem. Copy them to where your agent looks for skills:
+
+```sh
+# for one project (Claude Code: .claude/skills/)
+mkdir -p .claude/skills
+cp -R "$(bundle show factory_bakery)/skills/"* .claude/skills/
+
+# for every project of your user (Claude Code: ~/.claude/skills/)
+mkdir -p ~/.claude/skills
+cp -R "$(bundle show factory_bakery)/skills/"* ~/.claude/skills/
+```
+
+Use a symlink instead of `cp -R` to follow the gem when you update it. Other agents read a different folder (for example `.agents/skills/`); copy there instead. Then ask the agent in plain words ("set up FactoryBakery", "migrate our factory_bot factories to FactoryBakery", "why won't this model bake?"). Details: [Agent skills](docs/guide/skills.md).
+
 ## Quick start
 
 `require 'factory_bakery'` is all the setup there is. `bake` returns an unsaved object. `bake!` calls `save!` when the object supports it. `recipe` lets you set up a bake to finish later.
@@ -741,6 +757,62 @@ Out of scope, documented rather than faked:
 - **`plugin :validation_helpers` declarations are not introspectable.** They run imperatively inside `Model#validate` — code, not data — so heuristics fall back to schema facts and the verified fallback probes the model (a `validate` override is treated as unreadable validation, so a validator that needs a column is satisfied by the rebuild). Use `plugin :validation_class_methods` (Sequel's reflective declaration API) when you want validator-driven generation without that probe.
 - **Sequel associations are never auto-built.** `many_to_one` foreign keys stay `nil`; assign the associated object yourself in an attribute block. The opt-in associations plugin above works against the default mapper's models and answers its clear "not supported" error on Sequel classes.
 - Persisting JSON columns depends on Sequel's `serialization` plugin — a model-level concern outside the mapper.
+
+## Compared with factory_bot
+
+Same idea (a factory per model, traits, overrides at the call site), different default: factory_bot fills what you list, FactoryBakery fills what the model's validators and columns need and you list only what a test cares about.
+
+| | factory_bot | FactoryBakery |
+| --- | --- | --- |
+| Attributes | every one you want must be declared | inferred from validators and column types; declare only the values a test asserts on |
+| Build, saved | `create(:user, :admin, name: 'x')` | `FactoryBakery.bake!(User, :admin, name: 'x')` or `recipe(User, :admin).bake!(name: 'x')` |
+| Build, unsaved | `build(:user)` | `FactoryBakery.bake(User)` |
+| `build_stubbed` | yes | no |
+| Traits | `trait :admin do ... end` | `trait :admin do ... end` inside `FactoryBakery.define` |
+| Sequences | `sequence(:email)` | a counter local in the definition file, or inference (uniqueness is enforced across the bake) |
+| Transient attributes, callbacks | yes | no (locals in a block, or work after the call) |
+| Associations | `association :author`, declared | built by the opt-in plugin, in `:required_only` or `:all` mode, or declared with `association` |
+| Validation | `build` does not validate; `create` validates through `save!` | a bake is verified and retried by default; `validate: false` turns the gem's own checks off |
+| Transactions | no savepoints of its own | the same by default (`FactoryBakery.savepoints = false`) |
+| Reproducible data | `Faker` seeding by hand | one seed for a run (`FACTORY_BAKERY_SEED`, RSpec/Minitest seed), printed on failure |
+| Types | none shipped | Sorbet signatures, and an opt-in Tapioca plugin that types traits and overrides per model |
+
+Migration is a rename of the factory calls, nothing else: see [Migrating from factory_bot](docs/guide/migrating-from-factory-bot.md) (it also ships as an agent skill, see [Agent skills](#agent-skills)).
+
+## Benchmarks
+
+Measured against factory_bot on the same schema with equivalent factories, inside a rolled-back transaction per call, the way a transactional test suite runs. Time is microseconds per call (lower is better).
+
+SQLite in memory, Ruby 4.0.1:
+
+| scenario | FactoryBakery | factory_bot | slower by | allocations (FB / fb) |
+| --- | ---: | ---: | ---: | ---: |
+| flat model, `bake` / `build` | 118 | 41 | 2.9x | 225 / 149 |
+| flat model, `bake!` / `create` | 250 | 166 | 1.5x | 396 / 313 |
+| validators, `bake` / `build` | 220 | 47 | 4.7x | 387 / 173 |
+| validators, `bake!` / `create` | 503 | 322 | 1.6x | 753 / 536 |
+| with a definition, `bake` / `build` | 98 | 49 | 2.0x | 250 / 173 |
+| with a definition, `bake!` / `create` | 374 | 310 | 1.2x | 618 / 536 |
+| declared `belongs_to` chain x3, `bake!` / `create` | 605 | 505 | 1.2x | 1019 / 875 |
+| `has_many` x3, `bake!` / `create` | 1132 | 873 | 1.3x | 1896 / 1467 |
+
+PostgreSQL 18, the same harness: `bake!` is level with factory_bot where a database round trip dominates (declared associations 0.96x to 1.0x, `has_many` 1.0x), and an unsaved validated `bake` is 2.5x slower (500 vs 199 µs).
+
+How to read these:
+
+- The gap is largest for an unsaved `bake` of a model with validators, where the gem does work factory_bot skips: it reads the model's rules, generates values from them and checks uniqueness with one query. It narrows when the record is saved, and again with a definition.
+- Retained memory per call is about 2 bytes (no leak); allocations are the extra objects per call.
+- The numbers are from one Apple M2 Pro with other jobs running, so timing carries 5-20% noise; allocation and SQL counts are exact. They are a synthetic schema, not your app.
+
+Reproduce:
+
+```sh
+bundle exec ruby benchmark/perf/compare.rb                                  # SQLite
+DATABASE_URL=postgres://localhost/factory_bakery_perf bundle exec ruby benchmark/perf/compare.rb
+PERF_ONLY=flat_build,validated_build PERF_TIME=3 bundle exec ruby benchmark/perf/compare.rb
+```
+
+The scenario list, profiling scripts and the full reports (profiles, the changes that made it faster and the ones that were reverted) are in [`benchmark/perf/`](benchmark/perf/) and [`docs/reports/perf/`](docs/reports/perf/).
 
 ## Not supported yet
 
